@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Receipt, DollarSign, Printer, Calculator, FileText, Bed, Pill, TestTube, Activity } from 'lucide-react';
+import { Receipt, DollarSign, Printer, Trash2, AlertCircle, CheckCircle, Clock } from 'lucide-react';
 import api from '../services/api';
 
 interface IPDAdmission {
@@ -21,9 +21,12 @@ interface IPDAdmission {
   bedNumber: string;
   admissionDate: string;
   dischargeDate?: string;
-  status: 'Active' | 'Discharged';
+  status: string;
   doctorName: string;
   diagnosis: string;
+  hasInvoice?: boolean;
+  invoiceId?: string;
+  invoiceStatus?: string;
 }
 
 interface BillCharge {
@@ -35,14 +38,20 @@ interface BillCharge {
   unitPrice: number;
   total: number;
   date: string;
+  orderId?: string;
 }
 
 interface IPDBill {
   id: string;
   admissionId: string;
+  encounterId?: string;
   patientId: string;
   patientName: string;
   patientMRN: string;
+  doctorName: string;
+  diagnosis: string;
+  wardName: string;
+  bedNumber: string;
   admissionDate: string;
   dischargeDate: string;
   totalDays: number;
@@ -57,6 +66,8 @@ interface IPDBill {
   balance: number;
   status: 'Pending' | 'Partial' | 'Paid';
   payments: Payment[];
+  invoiceId?: string;
+  isSaved: boolean;
 }
 
 interface Payment {
@@ -74,6 +85,7 @@ export default function IPDBilling() {
   const [isBillDialogOpen, setIsBillDialogOpen] = useState(false);
   const [isPaymentDialogOpen, setIsPaymentDialogOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [fetchingBill, setFetchingBill] = useState(false);
 
   const [billData, setBillData] = useState<IPDBill | null>(null);
 
@@ -106,60 +118,70 @@ export default function IPDBilling() {
     }
   };
 
+  const recalculateBill = (updatedCharges: BillCharge[], discPct: number, txPct: number) => {
+    const subtotal = updatedCharges.reduce((sum, charge) => sum + charge.total, 0);
+    const discount = (subtotal * discPct) / 100;
+    const afterDiscount = subtotal - discount;
+    const tax = (afterDiscount * txPct) / 100;
+    const total = afterDiscount + tax;
+    return { subtotal, discount, tax, total };
+  };
+
   const handleGenerateBill = async (admission: IPDAdmission) => {
-    setLoading(true);
+    setFetchingBill(true);
     setSelectedAdmission(admission);
 
     try {
-      // Fetch all charges for this admission
       const response = await api.get(`/api/ipd-billing/${admission.id}`);
+      const data = response.data;
 
-      // Calculate days of stay
-      const admitDate = new Date(admission.admissionDate);
-      const dischargeDate = admission.dischargeDate ? new Date(admission.dischargeDate) : new Date();
-      const totalDays = Math.ceil((dischargeDate.getTime() - admitDate.getTime()) / (1000 * 60 * 60 * 24)) || 1;
-
-      // Auto-calculate bed charges
-      const bedCharges: BillCharge[] = [{
-        id: 'bed-1',
-        admissionId: admission.id,
-        category: 'bed',
-        description: `${admission.wardName} - Bed ${admission.bedNumber}`,
-        quantity: totalDays,
-        unitPrice: 1500, // Rs. 1500 per day (should come from ward master)
-        total: totalDays * 1500,
-        date: new Date().toISOString()
-      }];
-
-      const allCharges = response.data.charges || bedCharges;
+      const allCharges: BillCharge[] = data.charges || [];
       setCharges(allCharges);
 
-      const subtotal = allCharges.reduce((sum: number, charge: BillCharge) => sum + charge.total, 0);
-      const discount = (subtotal * discountPercent) / 100;
-      const afterDiscount = subtotal - discount;
-      const tax = (afterDiscount * taxPercent) / 100;
-      const total = afterDiscount + tax;
+      // Check if there's an existing invoice
+      const existingInvoice = data.existingInvoice;
+      const hasExistingInvoice = !!existingInvoice;
+
+      // Use existing invoice data if available
+      const currentDiscountPercent = hasExistingInvoice ?
+        (existingInvoice.discount / existingInvoice.subtotal * 100) || 0 : discountPercent;
+      const currentTaxPercent = hasExistingInvoice ?
+        (existingInvoice.tax / (existingInvoice.subtotal - existingInvoice.discount) * 100) || taxPercent : taxPercent;
+
+      setDiscountPercent(currentDiscountPercent);
+      setTaxPercent(currentTaxPercent);
+
+      const { subtotal, discount, tax, total } = recalculateBill(allCharges, currentDiscountPercent, currentTaxPercent);
 
       const bill: IPDBill = {
-        id: Date.now().toString(),
+        id: existingInvoice?.id || Date.now().toString(),
         admissionId: admission.id,
-        patientId: admission.patientId,
-        patientName: admission.patientName,
-        patientMRN: admission.patientMRN,
-        admissionDate: admission.admissionDate,
-        dischargeDate: admission.dischargeDate || new Date().toISOString(),
-        totalDays,
+        encounterId: data.encounterId,
+        patientId: data.patientId,
+        patientName: data.patientName,
+        patientMRN: data.patientMRN,
+        doctorName: data.doctorName || admission.doctorName,
+        diagnosis: data.diagnosis || admission.diagnosis,
+        wardName: data.wardName || admission.wardName,
+        bedNumber: data.bedNumber || admission.bedNumber,
+        admissionDate: data.admissionDate,
+        dischargeDate: data.dischargeDate || new Date().toISOString(),
+        totalDays: data.totalDays,
         charges: allCharges,
-        subtotal,
-        discount,
-        discountPercent,
-        tax,
-        taxPercent,
-        total,
-        paid: 0,
-        balance: total,
-        status: 'Pending',
-        payments: []
+        subtotal: hasExistingInvoice ? existingInvoice.subtotal : subtotal,
+        discount: hasExistingInvoice ? existingInvoice.discount : discount,
+        discountPercent: currentDiscountPercent,
+        tax: hasExistingInvoice ? existingInvoice.tax : tax,
+        taxPercent: currentTaxPercent,
+        total: hasExistingInvoice ? existingInvoice.total : total,
+        paid: hasExistingInvoice ? existingInvoice.paid : 0,
+        balance: hasExistingInvoice ? existingInvoice.balance : total,
+        status: hasExistingInvoice ?
+          (existingInvoice.status === 'paid' ? 'Paid' : existingInvoice.status === 'partial' ? 'Partial' : 'Pending')
+          : 'Pending',
+        payments: existingInvoice?.payments || [],
+        invoiceId: existingInvoice?.id,
+        isSaved: hasExistingInvoice,
       };
 
       setBillData(bill);
@@ -168,7 +190,7 @@ export default function IPDBilling() {
       console.error('Error generating bill:', error);
       alert('Failed to generate bill');
     } finally {
-      setLoading(false);
+      setFetchingBill(false);
     }
   };
 
@@ -193,11 +215,7 @@ export default function IPDBilling() {
     setCharges(updatedCharges);
 
     if (billData) {
-      const subtotal = updatedCharges.reduce((sum, charge) => sum + charge.total, 0);
-      const discount = (subtotal * discountPercent) / 100;
-      const afterDiscount = subtotal - discount;
-      const tax = (afterDiscount * taxPercent) / 100;
-      const total = afterDiscount + tax;
+      const { subtotal, discount, tax, total } = recalculateBill(updatedCharges, discountPercent, taxPercent);
 
       setBillData({
         ...billData,
@@ -206,7 +224,8 @@ export default function IPDBilling() {
         discount,
         tax,
         total,
-        balance: total - billData.paid
+        balance: total - billData.paid,
+        isSaved: false, // Mark as unsaved after changes
       });
     }
 
@@ -216,6 +235,101 @@ export default function IPDBilling() {
       quantity: 1,
       unitPrice: 0
     });
+  };
+
+  const handleRemoveCharge = (chargeId: string) => {
+    const updatedCharges = charges.filter(c => c.id !== chargeId);
+    setCharges(updatedCharges);
+
+    if (billData) {
+      const { subtotal, discount, tax, total } = recalculateBill(updatedCharges, discountPercent, taxPercent);
+
+      setBillData({
+        ...billData,
+        charges: updatedCharges,
+        subtotal,
+        discount,
+        tax,
+        total,
+        balance: total - billData.paid,
+        isSaved: false,
+      });
+    }
+  };
+
+  const handleDiscountChange = (value: number) => {
+    setDiscountPercent(value);
+    if (billData) {
+      const { subtotal, discount, tax, total } = recalculateBill(charges, value, taxPercent);
+      setBillData({
+        ...billData,
+        discountPercent: value,
+        subtotal,
+        discount,
+        tax,
+        total,
+        balance: total - billData.paid,
+        isSaved: false,
+      });
+    }
+  };
+
+  const handleTaxChange = (value: number) => {
+    setTaxPercent(value);
+    if (billData) {
+      const { subtotal, discount, tax, total } = recalculateBill(charges, discountPercent, value);
+      setBillData({
+        ...billData,
+        taxPercent: value,
+        subtotal,
+        discount,
+        tax,
+        total,
+        balance: total - billData.paid,
+        isSaved: false,
+      });
+    }
+  };
+
+  const handleSaveBill = async (dischargePatient = false) => {
+    if (!billData) return;
+
+    setLoading(true);
+    try {
+      const response = await api.post('/api/ipd-billing', {
+        admissionId: billData.admissionId,
+        patientId: billData.patientId,
+        charges: billData.charges,
+        subtotal: billData.subtotal,
+        discount: billData.discount,
+        discountPercent: billData.discountPercent,
+        tax: billData.tax,
+        taxPercent: billData.taxPercent,
+        total: billData.total,
+        dischargePatient,
+      });
+
+      setBillData({
+        ...billData,
+        invoiceId: response.data.id,
+        isSaved: true,
+      });
+
+      if (dischargePatient) {
+        alert('Bill saved and patient discharged successfully!');
+        setIsBillDialogOpen(false);
+        setBillData(null);
+        setCharges([]);
+        await fetchAdmissions();
+      } else {
+        alert('Bill saved successfully!');
+      }
+    } catch (error) {
+      console.error('Error saving bill:', error);
+      alert('Failed to save bill');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleRecordPayment = async () => {
@@ -229,6 +343,32 @@ export default function IPDBilling() {
       return;
     }
 
+    // If bill is not saved, save it first
+    if (!billData.isSaved) {
+      setLoading(true);
+      try {
+        const saveResponse = await api.post('/api/ipd-billing', {
+          admissionId: billData.admissionId,
+          patientId: billData.patientId,
+          charges: billData.charges,
+          subtotal: billData.subtotal,
+          discount: billData.discount,
+          discountPercent: billData.discountPercent,
+          tax: billData.tax,
+          taxPercent: billData.taxPercent,
+          total: billData.total,
+        });
+
+        billData.invoiceId = saveResponse.data.id;
+        billData.isSaved = true;
+      } catch (error) {
+        console.error('Error saving bill before payment:', error);
+        alert('Failed to save bill. Please save the bill first.');
+        setLoading(false);
+        return;
+      }
+    }
+
     setLoading(true);
     try {
       const payment: Payment = {
@@ -239,13 +379,18 @@ export default function IPDBilling() {
         reference: paymentFormData.reference
       };
 
-      await api.post(`/api/ipd-billing/${billData.admissionId}/pay`, payment);
+      await api.post(`/api/ipd-billing/${billData.admissionId}/pay`, {
+        invoiceId: billData.invoiceId,
+        amount: paymentFormData.amount,
+        paymentMode: paymentFormData.paymentMode,
+        reference: paymentFormData.reference,
+      });
 
       const newPaid = billData.paid + paymentFormData.amount;
       const newBalance = billData.total - newPaid;
 
       const newStatus: 'Pending' | 'Partial' | 'Paid' =
-        newBalance === 0 ? 'Paid' : newBalance < billData.total ? 'Partial' : 'Pending';
+        newBalance <= 0 ? 'Paid' : newBalance < billData.total ? 'Partial' : 'Pending';
 
       setBillData({
         ...billData,
@@ -263,40 +408,39 @@ export default function IPDBilling() {
       });
 
       alert(`Payment of Rs. ${paymentFormData.amount.toFixed(2)} recorded successfully!`);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error recording payment:', error);
-      alert('Failed to record payment');
+      alert(error.response?.data?.error || 'Failed to record payment');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSaveBill = async () => {
-    if (!billData) return;
+  const handlePrintBill = () => {
+    window.print();
+  };
 
-    setLoading(true);
-    try {
-      await api.post('/api/ipd-billing', billData);
-      alert('IPD Bill saved successfully!');
-      setIsBillDialogOpen(false);
-      setBillData(null);
-      setCharges([]);
-      await fetchAdmissions();
-    } catch (error) {
-      console.error('Error saving bill:', error);
-      alert('Failed to save bill');
-    } finally {
-      setLoading(false);
-    }
+  const getCategoryColor = (category: string) => {
+    const colors: Record<string, string> = {
+      bed: 'bg-blue-100 text-blue-800',
+      consultation: 'bg-green-100 text-green-800',
+      procedure: 'bg-purple-100 text-purple-800',
+      lab: 'bg-yellow-100 text-yellow-800',
+      radiology: 'bg-pink-100 text-pink-800',
+      pharmacy: 'bg-orange-100 text-orange-800',
+      ot: 'bg-red-100 text-red-800',
+      other: 'bg-gray-100 text-gray-800',
+    };
+    return colors[category] || colors.other;
   };
 
   const stats = {
-    activeAdmissions: admissions.filter(a => a.status === 'Active').length,
+    activeAdmissions: admissions.filter(a => a.status === 'active').length,
     dischargedToday: admissions.filter(a =>
       a.dischargeDate && new Date(a.dischargeDate).toDateString() === new Date().toDateString()
     ).length,
-    pendingBills: 0, // Would come from backend
-    totalRevenue: 0 // Would come from backend
+    pendingBills: admissions.filter(a => a.hasInvoice && a.invoiceStatus !== 'paid').length,
+    paidBills: admissions.filter(a => a.invoiceStatus === 'paid').length,
   };
 
   return (
@@ -335,18 +479,18 @@ export default function IPDBilling() {
         </Card>
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">Today's Revenue</CardTitle>
+            <CardTitle className="text-sm font-medium">Paid Bills</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600">Rs. {stats.totalRevenue.toFixed(2)}</div>
+            <div className="text-2xl font-bold text-green-600">{stats.paidBills}</div>
           </CardContent>
         </Card>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Active Admissions</CardTitle>
-          <CardDescription>Generate bills for inpatients</CardDescription>
+          <CardTitle>Patient Admissions</CardTitle>
+          <CardDescription>Generate and manage bills for inpatients</CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
@@ -356,17 +500,19 @@ export default function IPDBilling() {
                 <TableHead>Patient</TableHead>
                 <TableHead>Ward/Bed</TableHead>
                 <TableHead>Doctor</TableHead>
+                <TableHead>Diagnosis</TableHead>
                 <TableHead>Admitted On</TableHead>
                 <TableHead>Days</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>Bill Status</TableHead>
                 <TableHead>Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {admissions.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center py-8 text-slate-500">
-                    No active admissions
+                  <TableCell colSpan={10} className="text-center py-8 text-slate-500">
+                    No admissions found
                   </TableCell>
                 </TableRow>
               ) : (
@@ -385,23 +531,49 @@ export default function IPDBilling() {
                         {admission.wardName} - {admission.bedNumber}
                       </TableCell>
                       <TableCell>{admission.doctorName}</TableCell>
+                      <TableCell className="max-w-[150px] truncate" title={admission.diagnosis}>
+                        {admission.diagnosis || '-'}
+                      </TableCell>
                       <TableCell>{new Date(admission.admissionDate).toLocaleDateString()}</TableCell>
                       <TableCell>
                         <Badge variant="secondary">{days} day(s)</Badge>
                       </TableCell>
                       <TableCell>
-                        <Badge variant={admission.status === 'Active' ? 'default' : 'secondary'}>
-                          {admission.status}
+                        <Badge variant={admission.status === 'active' ? 'default' : 'secondary'}>
+                          {admission.status === 'active' ? 'Active' : 'Discharged'}
                         </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {admission.hasInvoice ? (
+                          <Badge
+                            variant="outline"
+                            className={
+                              admission.invoiceStatus === 'paid'
+                                ? 'border-green-500 text-green-600'
+                                : admission.invoiceStatus === 'partial'
+                                ? 'border-yellow-500 text-yellow-600'
+                                : 'border-orange-500 text-orange-600'
+                            }
+                          >
+                            {admission.invoiceStatus === 'paid' && <CheckCircle className="w-3 h-3 mr-1" />}
+                            {admission.invoiceStatus === 'partial' && <Clock className="w-3 h-3 mr-1" />}
+                            {admission.invoiceStatus === 'pending' && <AlertCircle className="w-3 h-3 mr-1" />}
+                            {admission.invoiceStatus?.charAt(0).toUpperCase() + admission.invoiceStatus?.slice(1)}
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="border-slate-300 text-slate-500">
+                            No Bill
+                          </Badge>
+                        )}
                       </TableCell>
                       <TableCell>
                         <Button
                           size="sm"
                           onClick={() => handleGenerateBill(admission)}
-                          disabled={loading}
+                          disabled={fetchingBill}
                         >
                           <Receipt className="w-4 h-4 mr-1" />
-                          Generate Bill
+                          {admission.hasInvoice ? 'View Bill' : 'Generate Bill'}
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -417,9 +589,26 @@ export default function IPDBilling() {
       <Dialog open={isBillDialogOpen} onOpenChange={setIsBillDialogOpen}>
         <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>IPD Bill - {selectedAdmission?.patientName}</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              IPD Bill - {billData?.patientName}
+              {billData?.isSaved && (
+                <Badge variant="outline" className="border-green-500 text-green-600">
+                  <CheckCircle className="w-3 h-3 mr-1" /> Saved
+                </Badge>
+              )}
+              {!billData?.isSaved && (
+                <Badge variant="outline" className="border-yellow-500 text-yellow-600">
+                  <AlertCircle className="w-3 h-3 mr-1" /> Unsaved
+                </Badge>
+              )}
+            </DialogTitle>
             <DialogDescription>
-              Admission: {selectedAdmission?.admissionId} | MRN: {selectedAdmission?.patientMRN}
+              <div className="flex flex-wrap gap-4 text-sm">
+                <span>MRN: <strong>{billData?.patientMRN}</strong></span>
+                <span>Doctor: <strong>{billData?.doctorName}</strong></span>
+                <span>Ward: <strong>{billData?.wardName} - Bed {billData?.bedNumber}</strong></span>
+                <span>Diagnosis: <strong>{billData?.diagnosis || 'Not specified'}</strong></span>
+              </div>
             </DialogDescription>
           </DialogHeader>
 
@@ -427,16 +616,16 @@ export default function IPDBilling() {
             <TabsList>
               <TabsTrigger value="charges">Charges</TabsTrigger>
               <TabsTrigger value="summary">Summary</TabsTrigger>
-              <TabsTrigger value="payments">Payments</TabsTrigger>
+              <TabsTrigger value="payments">Payments ({billData?.payments.length || 0})</TabsTrigger>
             </TabsList>
 
             <TabsContent value="charges" className="space-y-4">
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-lg">Add Charges</CardTitle>
+                  <CardTitle className="text-lg">Add Manual Charge</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid grid-cols-4 gap-3">
+                  <div className="grid grid-cols-5 gap-3">
                     <div className="space-y-2">
                       <Label>Category</Label>
                       <Select value={chargeFormData.category} onValueChange={(value: any) => setChargeFormData(prev => ({ ...prev, category: value }))}>
@@ -482,16 +671,19 @@ export default function IPDBilling() {
                         onChange={(e) => setChargeFormData(prev => ({ ...prev, unitPrice: parseFloat(e.target.value) || 0 }))}
                       />
                     </div>
+                    <div className="space-y-2">
+                      <Label>&nbsp;</Label>
+                      <Button onClick={handleAddCharge} className="w-full">
+                        Add
+                      </Button>
+                    </div>
                   </div>
-                  <Button onClick={handleAddCharge} className="w-full mt-3">
-                    Add Charge
-                  </Button>
                 </CardContent>
               </Card>
 
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-lg">Bill Charges</CardTitle>
+                  <CardTitle className="text-lg">Bill Charges ({charges.length})</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <Table>
@@ -499,23 +691,45 @@ export default function IPDBilling() {
                       <TableRow>
                         <TableHead>Category</TableHead>
                         <TableHead>Description</TableHead>
-                        <TableHead>Qty</TableHead>
-                        <TableHead>Unit Price</TableHead>
-                        <TableHead>Total</TableHead>
+                        <TableHead className="text-right">Qty</TableHead>
+                        <TableHead className="text-right">Unit Price</TableHead>
+                        <TableHead className="text-right">Total</TableHead>
+                        <TableHead></TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {charges.map(charge => (
-                        <TableRow key={charge.id}>
-                          <TableCell>
-                            <Badge variant="outline">{charge.category}</Badge>
+                      {charges.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={6} className="text-center py-4 text-slate-500">
+                            No charges added yet
                           </TableCell>
-                          <TableCell>{charge.description}</TableCell>
-                          <TableCell>{charge.quantity}</TableCell>
-                          <TableCell>Rs. {charge.unitPrice.toFixed(2)}</TableCell>
-                          <TableCell className="font-semibold">Rs. {charge.total.toFixed(2)}</TableCell>
                         </TableRow>
-                      ))}
+                      ) : (
+                        charges.map(charge => (
+                          <TableRow key={charge.id}>
+                            <TableCell>
+                              <Badge className={getCategoryColor(charge.category)}>
+                                {charge.category}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>{charge.description}</TableCell>
+                            <TableCell className="text-right">{charge.quantity}</TableCell>
+                            <TableCell className="text-right">Rs. {charge.unitPrice.toFixed(2)}</TableCell>
+                            <TableCell className="text-right font-semibold">Rs. {charge.total.toFixed(2)}</TableCell>
+                            <TableCell>
+                              {!charge.orderId && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleRemoveCharge(charge.id)}
+                                >
+                                  <Trash2 className="w-4 h-4 text-red-500" />
+                                </Button>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
                     </TableBody>
                   </Table>
                 </CardContent>
@@ -528,10 +742,14 @@ export default function IPDBilling() {
                   <CardTitle>Bill Summary</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4 p-4 bg-slate-50 rounded-lg">
+                  <div className="grid grid-cols-3 gap-4 p-4 bg-slate-50 rounded-lg">
                     <div>
                       <div className="text-sm text-slate-600">Admission Date</div>
                       <div className="font-semibold">{billData && new Date(billData.admissionDate).toLocaleDateString()}</div>
+                    </div>
+                    <div>
+                      <div className="text-sm text-slate-600">Discharge Date</div>
+                      <div className="font-semibold">{billData?.dischargeDate ? new Date(billData.dischargeDate).toLocaleDateString() : 'Not discharged'}</div>
                     </div>
                     <div>
                       <div className="text-sm text-slate-600">Total Days</div>
@@ -539,79 +757,72 @@ export default function IPDBilling() {
                     </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
+                  <div className="space-y-3 p-4 border rounded-lg">
+                    <div className="flex justify-between text-lg">
                       <span>Subtotal:</span>
                       <span className="font-semibold">Rs. {billData?.subtotal.toFixed(2)}</span>
                     </div>
 
                     <div className="flex gap-4 items-center">
-                      <Label className="flex-1">Discount (%):</Label>
+                      <Label className="w-32">Discount (%):</Label>
                       <Input
                         type="number"
                         min="0"
                         max="100"
                         className="w-24"
                         value={discountPercent}
-                        onChange={(e) => {
-                          const val = parseFloat(e.target.value) || 0;
-                          setDiscountPercent(val);
-                          if (billData) {
-                            const discount = (billData.subtotal * val) / 100;
-                            const afterDiscount = billData.subtotal - discount;
-                            const tax = (afterDiscount * taxPercent) / 100;
-                            setBillData({ ...billData, discount, tax, total: afterDiscount + tax, balance: afterDiscount + tax - billData.paid });
-                          }
-                        }}
+                        onChange={(e) => handleDiscountChange(parseFloat(e.target.value) || 0)}
                       />
-                      <span className="font-semibold text-red-600 w-32 text-right">- Rs. {billData?.discount.toFixed(2)}</span>
+                      <span className="font-semibold text-red-600 flex-1 text-right">- Rs. {billData?.discount.toFixed(2)}</span>
                     </div>
 
                     <div className="flex gap-4 items-center">
-                      <Label className="flex-1">Tax (%):</Label>
+                      <Label className="w-32">Tax (%):</Label>
                       <Input
                         type="number"
                         min="0"
                         max="100"
                         className="w-24"
                         value={taxPercent}
-                        onChange={(e) => {
-                          const val = parseFloat(e.target.value) || 0;
-                          setTaxPercent(val);
-                          if (billData) {
-                            const afterDiscount = billData.subtotal - billData.discount;
-                            const tax = (afterDiscount * val) / 100;
-                            setBillData({ ...billData, tax, taxPercent: val, total: afterDiscount + tax, balance: afterDiscount + tax - billData.paid });
-                          }
-                        }}
+                        onChange={(e) => handleTaxChange(parseFloat(e.target.value) || 0)}
                       />
-                      <span className="font-semibold text-green-600 w-32 text-right">+ Rs. {billData?.tax.toFixed(2)}</span>
+                      <span className="font-semibold text-green-600 flex-1 text-right">+ Rs. {billData?.tax.toFixed(2)}</span>
                     </div>
 
-                    <div className="border-t pt-2 flex justify-between text-lg font-bold">
+                    <div className="border-t pt-3 flex justify-between text-xl font-bold">
                       <span>Grand Total:</span>
                       <span className="text-blue-600">Rs. {billData?.total.toFixed(2)}</span>
                     </div>
 
-                    <div className="flex justify-between text-green-600">
-                      <span>Paid:</span>
+                    <div className="flex justify-between text-green-600 text-lg">
+                      <span>Amount Paid:</span>
                       <span className="font-semibold">Rs. {billData?.paid.toFixed(2)}</span>
                     </div>
 
-                    <div className="flex justify-between text-orange-600 text-xl font-bold">
+                    <div className="flex justify-between text-orange-600 text-xl font-bold pt-2 border-t">
                       <span>Balance Due:</span>
                       <span>Rs. {billData?.balance.toFixed(2)}</span>
                     </div>
                   </div>
 
-                  <Button
-                    className="w-full"
-                    onClick={() => setIsPaymentDialogOpen(true)}
-                    disabled={!billData || billData.balance <= 0}
-                  >
-                    <DollarSign className="w-4 h-4 mr-2" />
-                    Record Payment
-                  </Button>
+                  <div className="flex gap-3">
+                    <Button
+                      className="flex-1"
+                      variant="outline"
+                      onClick={() => handleSaveBill(false)}
+                      disabled={loading}
+                    >
+                      {loading ? 'Saving...' : 'Save Bill'}
+                    </Button>
+                    <Button
+                      className="flex-1"
+                      onClick={() => setIsPaymentDialogOpen(true)}
+                      disabled={!billData || billData.balance <= 0}
+                    >
+                      <DollarSign className="w-4 h-4 mr-2" />
+                      Record Payment
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             </TabsContent>
@@ -635,40 +846,59 @@ export default function IPDBilling() {
                       {(!billData?.payments || billData.payments.length === 0) ? (
                         <TableRow>
                           <TableCell colSpan={4} className="text-center py-8 text-slate-500">
-                            No payments recorded
+                            No payments recorded yet
                           </TableCell>
                         </TableRow>
                       ) : (
                         billData.payments.map(payment => (
                           <TableRow key={payment.id}>
-                            <TableCell>{new Date(payment.paymentDate).toLocaleDateString()}</TableCell>
+                            <TableCell>{new Date(payment.paymentDate).toLocaleString()}</TableCell>
                             <TableCell className="font-semibold text-green-600">Rs. {payment.amount.toFixed(2)}</TableCell>
                             <TableCell>
                               <Badge variant="secondary">{payment.paymentMode.toUpperCase()}</Badge>
                             </TableCell>
-                            <TableCell className="text-sm">{payment.reference}</TableCell>
+                            <TableCell className="text-sm">{payment.reference || '-'}</TableCell>
                           </TableRow>
                         ))
                       )}
                     </TableBody>
                   </Table>
+
+                  {billData && billData.payments.length > 0 && (
+                    <div className="mt-4 p-4 bg-slate-50 rounded-lg">
+                      <div className="flex justify-between font-semibold">
+                        <span>Total Paid:</span>
+                        <span className="text-green-600">Rs. {billData.paid.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between font-semibold mt-2">
+                        <span>Remaining Balance:</span>
+                        <span className="text-orange-600">Rs. {billData.balance.toFixed(2)}</span>
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </TabsContent>
           </Tabs>
 
-          <DialogFooter>
+          <DialogFooter className="flex gap-2">
             <Button variant="outline" onClick={() => setIsBillDialogOpen(false)}>
-              Cancel
+              Close
             </Button>
-            <Button variant="outline">
+            <Button variant="outline" onClick={handlePrintBill}>
               <Printer className="w-4 h-4 mr-2" />
               Print Bill
             </Button>
-            <Button onClick={handleSaveBill} disabled={loading}>
-              <Receipt className="w-4 h-4 mr-2" />
-              {loading ? 'Saving...' : 'Save & Discharge'}
-            </Button>
+            {selectedAdmission?.status === 'active' && (
+              <Button
+                onClick={() => handleSaveBill(true)}
+                disabled={loading}
+                variant="default"
+              >
+                <Receipt className="w-4 h-4 mr-2" />
+                {loading ? 'Processing...' : 'Save & Discharge'}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -682,7 +912,15 @@ export default function IPDBilling() {
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="p-4 bg-slate-50 rounded-lg">
-              <div className="flex justify-between text-lg font-bold">
+              <div className="flex justify-between">
+                <span>Bill Total:</span>
+                <span className="font-semibold">Rs. {billData?.total.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between mt-1">
+                <span>Already Paid:</span>
+                <span className="font-semibold text-green-600">Rs. {billData?.paid.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between text-lg font-bold mt-2 pt-2 border-t">
                 <span>Balance Due:</span>
                 <span className="text-orange-600">Rs. {billData?.balance.toFixed(2)}</span>
               </div>
@@ -699,6 +937,15 @@ export default function IPDBilling() {
                 onChange={(e) => setPaymentFormData(prev => ({ ...prev, amount: parseFloat(e.target.value) || 0 }))}
                 placeholder="0.00"
               />
+              <div className="flex gap-2 mt-1">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setPaymentFormData(prev => ({ ...prev, amount: billData?.balance || 0 }))}
+                >
+                  Full Amount
+                </Button>
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -711,6 +958,7 @@ export default function IPDBilling() {
                   <SelectItem value="cash">Cash</SelectItem>
                   <SelectItem value="card">Card</SelectItem>
                   <SelectItem value="upi">UPI</SelectItem>
+                  <SelectItem value="netbanking">Net Banking</SelectItem>
                   <SelectItem value="insurance">Insurance</SelectItem>
                   <SelectItem value="cheque">Cheque</SelectItem>
                 </SelectContent>
@@ -730,7 +978,7 @@ export default function IPDBilling() {
             <Button variant="outline" onClick={() => setIsPaymentDialogOpen(false)} disabled={loading}>
               Cancel
             </Button>
-            <Button onClick={handleRecordPayment} disabled={loading}>
+            <Button onClick={handleRecordPayment} disabled={loading || paymentFormData.amount <= 0}>
               {loading ? 'Recording...' : 'Record Payment'}
             </Button>
           </DialogFooter>

@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Search, Plus, Pill, Package, AlertTriangle, CheckCircle, Barcode, ShoppingCart, Trash2, FileText, Calendar } from 'lucide-react';
+import { Search, Package, CheckCircle, Barcode, Trash2, ShoppingCart, AlertTriangle, Plus, FileText } from 'lucide-react';
 import api from '../services/api';
 
 interface Drug {
@@ -63,7 +63,6 @@ export default function Pharmacy() {
   const [cart, setCart] = useState<CartItem[]>([]);
 
   const [isAddStockDialogOpen, setIsAddStockDialogOpen] = useState(false);
-  const [isRemoveStockDialogOpen, setIsRemoveStockDialogOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [barcodeInput, setBarcodeInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -279,7 +278,6 @@ export default function Pharmacy() {
   };
 
   const lowStockDrugs = drugs.filter(d => d.stockQuantity <= d.reorderLevel && d.stockQuantity > 0);
-  const outOfStockDrugs = drugs.filter(d => d.stockQuantity === 0);
   const expiringSoon = stockItems.filter(s => {
     const daysUntilExpiry = Math.floor((new Date(s.expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
     return daysUntilExpiry <= 90 && daysUntilExpiry >= 0;

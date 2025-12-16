@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Users, TrendingUp, DollarSign, Percent, Calculator, FileText } from 'lucide-react';
+import { DollarSign, Plus } from 'lucide-react';
 import api from '../services/api';
 
 interface ReferralDoctor {
@@ -232,10 +232,10 @@ export default function ReferralCommission() {
     setLoading(true);
     try {
       const paymentData = {
+        ...paymentFormData,
         referralDoctorId: doctorId,
         referralIds: pendingReferrals.map(r => r.id),
-        totalAmount,
-        ...paymentFormData
+        totalAmount
       };
 
       const response = await api.post('/api/commission-payments', paymentData);

@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Package, Plus, AlertTriangle, TrendingDown, ShoppingCart, FileText } from 'lucide-react';
+import { Package, Plus, AlertTriangle, TrendingDown, FileText } from 'lucide-react';
 import api from '../services/api';
 
 interface InventoryItem {
@@ -48,7 +48,6 @@ export default function Inventory() {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [isItemDialogOpen, setIsItemDialogOpen] = useState(false);
-  const [isPODialogOpen, setIsPODialogOpen] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const [itemFormData, setItemFormData] = useState<ItemFormData>({
@@ -133,16 +132,10 @@ export default function Inventory() {
           <h1 className="text-3xl font-bold text-slate-900">Inventory & Procurement</h1>
           <p className="text-slate-600">Stock management, purchase orders, and supplier tracking</p>
         </div>
-        <div className="flex gap-2">
-          <Button onClick={() => setIsPODialogOpen(true)} variant="outline">
-            <ShoppingCart className="w-5 h-5 mr-2" />
-            New Purchase Order
-          </Button>
-          <Button onClick={() => setIsItemDialogOpen(true)}>
-            <Plus className="w-5 h-5 mr-2" />
-            Add Item
-          </Button>
-        </div>
+        <Button onClick={() => setIsItemDialogOpen(true)}>
+          <Plus className="w-5 h-5 mr-2" />
+          Add Item
+        </Button>
       </div>
 
       {/* Stats Cards */}

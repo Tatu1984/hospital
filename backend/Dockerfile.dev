@@ -1,0 +1,21 @@
+# Backend Development Dockerfile
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install dependencies
+COPY package*.json ./
+COPY prisma ./prisma/
+RUN npm install
+
+# Generate Prisma client
+RUN npx prisma generate
+
+# Copy source
+COPY . .
+
+# Expose port
+EXPOSE 4000
+
+# Start in dev mode
+CMD ["npm", "run", "dev"]

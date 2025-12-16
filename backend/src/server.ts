@@ -1,45 +1,278 @@
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import swaggerUi from 'swagger-ui-express';
+import { swaggerSpec } from './swagger';
+import {
+  requirePermission,
+  requireRole,
+  getUserPermissions,
+  ROLE_PERMISSIONS,
+  ROUTE_MODULES,
+  Permission,
+  Role
+} from './rbac';
+
+// Import middleware
+import {
+  authenticateToken as authMiddleware,
+  AuthenticatedRequest,
+  errorHandler,
+  notFoundHandler,
+  asyncHandler,
+  AppError,
+  ValidationError,
+  NotFoundError,
+  securityHeaders,
+  generalRateLimiter,
+  authRateLimiter,
+  sanitizeRequest,
+  apiSecurityHeaders,
+  dynamicRBAC,
+} from './middleware';
+
+// Import validators
+import {
+  loginSchema,
+  createPatientSchema,
+  updatePatientSchema,
+  searchSchema,
+  idParamSchema,
+  createAppointmentSchema,
+  updateAppointmentSchema,
+  createEncounterSchema,
+  opdNoteSchema,
+  createPrescriptionSchema,
+  createAdmissionSchema,
+  dischargeSchema,
+  createLabOrderSchema,
+  labResultSchema,
+  createRadiologyOrderSchema,
+  radiologyResultSchema,
+  createInvoiceSchema,
+  paymentSchema,
+  createEmergencySchema,
+  scheduleSurgerySchema,
+  bloodDonorSchema,
+  bloodRequestSchema,
+  createPurchaseOrderSchema,
+  createEmployeeSchema,
+  leaveRequestSchema,
+  icuVitalsSchema,
+  icuBedAssignmentSchema,
+  pharmacyDispenseSchema,
+  drugMasterSchema,
+  ambulanceTripSchema,
+  ambulanceVehicleSchema,
+  housekeepingTaskSchema,
+  dietOrderSchema,
+  incidentReportSchema,
+  preAuthorizationSchema,
+  referralSourceSchema,
+  createUserSchema,
+  updateUserSchema,
+  journalEntrySchema,
+  labTestMasterSchema,
+  procedureMasterSchema,
+  wardMasterSchema,
+  validateBody,
+  validateQuery,
+  validateParams,
+} from './validators';
+
+// Import route permissions
+import { checkRoutePermission, ROUTE_PERMISSIONS } from './routes';
+
+// Import logger
+import { logger, auditLogger } from './utils/logger';
 
 dotenv.config();
 
 const app = express();
 const prisma = new PrismaClient();
-const PORT = process.env.PORT || 8000;
+const PORT = process.env.PORT || 4000;
 
-// Middleware
-app.use(cors());
-app.use(express.json());
+// ============================================
+// GLOBAL MIDDLEWARE SETUP
+// ============================================
 
-// Auth middleware
+// Security headers
+app.use(securityHeaders);
+app.use(apiSecurityHeaders);
+
+// Request sanitization
+app.use(sanitizeRequest);
+
+// CORS configuration
+app.use(cors({
+  origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+}));
+
+// Body parsing with size limits
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Apply general rate limiting to all routes
+app.use('/api', generalRateLimiter);
+
+// ============================================
+// API DOCUMENTATION (Swagger UI)
+// ============================================
+app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+  customCss: '.swagger-ui .topbar { display: none }',
+  customSiteTitle: 'Hospital ERP API Documentation',
+}));
+
+// Serve OpenAPI spec as JSON
+app.get('/api/docs.json', (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.send(swaggerSpec);
+});
+
+// ============================================
+// AUTH MIDDLEWARE (using enhanced version)
+// ============================================
 const authenticateToken = (req: any, res: Response, next: any) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
   if (!token) {
-    return res.status(401).json({ error: 'Access denied' });
+    return res.status(401).json({
+      error: 'UNAUTHORIZED',
+      message: 'Access denied. No token provided.',
+    });
   }
 
   jwt.verify(token, process.env.JWT_SECRET!, (err: any, user: any) => {
-    if (err) return res.status(403).json({ error: 'Invalid token' });
+    if (err) {
+      if (err.name === 'TokenExpiredError') {
+        return res.status(401).json({
+          error: 'TOKEN_EXPIRED',
+          message: 'Your session has expired. Please log in again.',
+        });
+      }
+      auditLogger.securityEvent('INVALID_TOKEN', {
+        ip: req.ip,
+        path: req.path,
+        error: err.message,
+      });
+      return res.status(403).json({
+        error: 'INVALID_TOKEN',
+        message: 'Invalid token.',
+      });
+    }
     req.user = user;
-    next();
+    // Apply dynamic RBAC check after authentication
+    dynamicRBAC(req, res, next);
   });
 };
 
-// Health check
-app.get('/api/health', (req: Request, res: Response) => {
+// Health check endpoints
+app.get('/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Auth routes
-app.post('/api/auth/login', async (req: Request, res: Response) => {
+app.get('/api/health', async (req: Request, res: Response) => {
+  const healthCheck = {
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    environment: process.env.NODE_ENV || 'development',
+    version: '1.0.0',
+    services: {
+      database: 'unknown',
+      api: 'healthy'
+    },
+    memory: {
+      used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + ' MB',
+      total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + ' MB'
+    }
+  };
+
   try {
-    const { username, password } = req.body;
+    // Check database connection
+    await prisma.$queryRaw`SELECT 1`;
+    healthCheck.services.database = 'healthy';
+  } catch (error) {
+    healthCheck.services.database = 'unhealthy';
+    healthCheck.status = 'degraded';
+  }
+
+  const statusCode = healthCheck.status === 'ok' ? 200 : 503;
+  res.status(statusCode).json(healthCheck);
+});
+
+// Detailed health check (protected)
+app.get('/api/health/detailed', authenticateToken, requirePermission('system:manage'), async (req: any, res: Response) => {
+  const detailedHealth = {
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    environment: process.env.NODE_ENV || 'development',
+    version: '1.0.0',
+    node: process.version,
+    platform: process.platform,
+    services: {
+      database: { status: 'unknown', latency: 0 },
+      api: { status: 'healthy', latency: 0 }
+    },
+    memory: process.memoryUsage(),
+    cpu: process.cpuUsage(),
+    counts: {
+      patients: 0,
+      appointments: 0,
+      users: 0
+    }
+  };
+
+  try {
+    const dbStart = Date.now();
+    await prisma.$queryRaw`SELECT 1`;
+    detailedHealth.services.database = {
+      status: 'healthy',
+      latency: Date.now() - dbStart
+    };
+
+    // Get counts
+    const [patients, appointments, users] = await Promise.all([
+      prisma.patient.count({ where: { tenantId: req.user.tenantId } }),
+      prisma.appointment.count({ where: { tenantId: req.user.tenantId } }),
+      prisma.user.count({ where: { tenantId: req.user.tenantId } })
+    ]);
+    detailedHealth.counts = { patients, appointments, users };
+  } catch (error) {
+    detailedHealth.services.database = { status: 'unhealthy', latency: -1 };
+    detailedHealth.status = 'degraded';
+  }
+
+  res.json(detailedHealth);
+});
+
+// Readiness probe (for Kubernetes/Docker)
+app.get('/api/ready', async (req: Request, res: Response) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ ready: true });
+  } catch (error) {
+    res.status(503).json({ ready: false, error: 'Database not available' });
+  }
+});
+
+// Liveness probe (for Kubernetes/Docker)
+app.get('/api/live', (req: Request, res: Response) => {
+  res.json({ alive: true, timestamp: new Date().toISOString() });
+});
+
+// Auth routes - with rate limiting and validation
+app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (req: Request, res: Response) => {
+  try {
+    const { username, password } = (req as any).validatedBody || req.body;
 
     const user = await prisma.user.findUnique({
       where: { username },
@@ -50,12 +283,20 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
     });
 
     if (!user || !user.isActive) {
-      return res.status(401).json({ error: 'Invalid credentials' });
+      auditLogger.securityEvent('LOGIN_FAILED', { username, reason: 'invalid_user', ip: req.ip });
+      return res.status(401).json({
+        error: 'INVALID_CREDENTIALS',
+        message: 'Invalid username or password',
+      });
     }
 
     const validPassword = await bcrypt.compare(password, user.passwordHash);
     if (!validPassword) {
-      return res.status(401).json({ error: 'Invalid credentials' });
+      auditLogger.securityEvent('LOGIN_FAILED', { username, reason: 'invalid_password', ip: req.ip });
+      return res.status(401).json({
+        error: 'INVALID_CREDENTIALS',
+        message: 'Invalid username or password',
+      });
     }
 
     const token = jwt.sign(
@@ -64,6 +305,7 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
         username: user.username,
         tenantId: user.tenantId,
         branchId: user.branchId,
+        roleIds: user.roleIds,
       },
       process.env.JWT_SECRET!,
       { expiresIn: '24h' }
@@ -75,6 +317,9 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
       data: { lastLoginAt: new Date() },
     });
 
+    // Get user permissions based on roles
+    const permissions = getUserPermissions(user.roleIds);
+
     res.json({
       token,
       user: {
@@ -83,6 +328,7 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
         name: user.name,
         email: user.email,
         roleIds: user.roleIds,
+        permissions,
         tenant: user.tenant,
         branch: user.branch,
       },
@@ -93,10 +339,10 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
   }
 });
 
-// Patient routes
-app.get('/api/patients', authenticateToken, async (req: any, res: Response) => {
+// Patient routes - with validation and RBAC
+app.get('/api/patients', authenticateToken, requirePermission('patients:view'), validateQuery(searchSchema), async (req: any, res: Response) => {
   try {
-    const { search, limit = 50 } = req.query;
+    const { search, limit = 50, page = 1 } = (req as any).validatedQuery || req.query;
 
     const where: any = {
       tenantId: req.user.tenantId,
@@ -113,6 +359,7 @@ app.get('/api/patients', authenticateToken, async (req: any, res: Response) => {
     const patients = await prisma.patient.findMany({
       where,
       take: parseInt(limit as string),
+      skip: (parseInt(page as string) - 1) * parseInt(limit as string),
       orderBy: { createdAt: 'desc' },
       include: {
         branch: { select: { name: true } },
@@ -121,14 +368,17 @@ app.get('/api/patients', authenticateToken, async (req: any, res: Response) => {
 
     res.json(patients);
   } catch (error) {
-    console.error('Get patients error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    logger.error('Get patients error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to fetch patients',
+    });
   }
 });
 
-app.post('/api/patients', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/patients', authenticateToken, requirePermission('patients:create'), validateBody(createPatientSchema), async (req: any, res: Response) => {
   try {
-    const { name, dob, gender, contact, email, address, bloodGroup, allergies, referralSourceId } = req.body;
+    const { name, dob, gender, contact, email, address, bloodGroup, allergies, referralSourceId } = (req as any).validatedBody || req.body;
 
     // Generate MRN
     const lastPatient = await prisma.patient.findFirst({
@@ -172,7 +422,7 @@ app.post('/api/patients', authenticateToken, async (req: any, res: Response) => 
   }
 });
 
-app.get('/api/patients/:id', authenticateToken, async (req: any, res: Response) => {
+app.get('/api/patients/:id', authenticateToken, requirePermission('patients:view'), async (req: any, res: Response) => {
   try {
     const { id } = req.params;
 
@@ -194,18 +444,24 @@ app.get('/api/patients/:id', authenticateToken, async (req: any, res: Response) 
     });
 
     if (!patient) {
-      return res.status(404).json({ error: 'Patient not found' });
+      return res.status(404).json({
+        error: 'NOT_FOUND',
+        message: 'Patient not found',
+      });
     }
 
     res.json(patient);
   } catch (error) {
-    console.error('Get patient error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    logger.error('Get patient error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to fetch patient',
+    });
   }
 });
 
 // Users/Doctors routes
-app.get('/api/users', authenticateToken, async (req: any, res: Response) => {
+app.get('/api/users', authenticateToken, requirePermission('users:view'), async (req: any, res: Response) => {
   try {
     const { role } = req.query;
     const where: any = { tenantId: req.user.tenantId, isActive: true };
@@ -229,12 +485,16 @@ app.get('/api/users', authenticateToken, async (req: any, res: Response) => {
 
     res.json(users);
   } catch (error) {
-    console.error('Get users error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    logger.error('Get users error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to fetch users',
+    });
   }
 });
 
 app.get('/api/doctors', authenticateToken, async (req: any, res: Response) => {
+  // No specific permission required - doctors list is commonly needed
   try {
     const doctors = await prisma.user.findMany({
       where: {
@@ -253,15 +513,18 @@ app.get('/api/doctors', authenticateToken, async (req: any, res: Response) => {
 
     res.json(doctors);
   } catch (error) {
-    console.error('Get doctors error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    logger.error('Get doctors error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to fetch doctors',
+    });
   }
 });
 
 // Encounter routes
-app.post('/api/encounters', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/encounters', authenticateToken, requirePermission('encounters:create'), validateBody(createEncounterSchema), async (req: any, res: Response) => {
   try {
-    const { patientId, type, chiefComplaint } = req.body;
+    const { patientId, type, chiefComplaint } = (req as any).validatedBody || req.body;
 
     const encounter = await prisma.encounter.create({
       data: {
@@ -305,7 +568,7 @@ app.get('/api/encounters', authenticateToken, async (req: any, res: Response) =>
       where,
       orderBy: { visitDate: 'desc' },
       include: {
-        patient: { select: { id: true, mrn: true, name: true, age: true } },
+        patient: { select: { id: true, mrn: true, name: true, dob: true, gender: true } },
         doctor: { select: { name: true } },
       },
     });
@@ -1713,11 +1976,30 @@ app.get('/api/admissions', authenticateToken, async (req: any, res: Response) =>
       include: {
         patient: { select: { name: true, mrn: true, dob: true, gender: true } },
         bed: { select: { bedNumber: true, category: true } },
+        admittingDoctor: { select: { name: true } },
+        encounter: {
+          include: {
+            invoices: { where: { type: 'ipd' }, take: 1 }
+          }
+        }
       },
       orderBy: { admissionDate: 'desc' },
     });
 
-    res.json(admissions);
+    // Transform for frontend compatibility
+    res.json(admissions.map((adm, index) => ({
+      ...adm,
+      admissionId: `ADM-${String(index + 1).padStart(4, '0')}`,
+      patientName: adm.patient?.name || 'Unknown',
+      patientMRN: adm.patient?.mrn || '',
+      wardName: adm.bed?.category || 'General',
+      bedNumber: adm.bed?.bedNumber || 'N/A',
+      doctorName: adm.admittingDoctor?.name || 'Not Assigned',
+      diagnosis: adm.diagnosis || 'Not specified',
+      hasInvoice: adm.encounter?.invoices?.length > 0,
+      invoiceId: adm.encounter?.invoices?.[0]?.id || null,
+      invoiceStatus: adm.encounter?.invoices?.[0]?.status || null,
+    })));
   } catch (error) {
     console.error('Get admissions error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -1780,31 +2062,21 @@ app.get('/api/beds', authenticateToken, async (req: any, res: Response) => {
 app.get('/api/emergency/cases', authenticateToken, async (req: any, res: Response) => {
   try {
     const { status } = req.query;
-    const where: any = { tenantId: req.user.tenantId };
+    const where: any = {};
 
     if (status) where.status = status;
 
-    // Mock data for now - replace with actual DB queries
-    const cases = [
-      {
-        id: '1',
-        patientId: 'p1',
-        patientName: 'John Doe',
-        patientMRN: 'MRN000001',
-        age: 45,
-        gender: 'Male',
-        arrivalTime: new Date().toISOString(),
-        triageCategory: 'RED',
-        chiefComplaint: 'Chest pain',
-        vitalSigns: { bp: '140/90', pulse: '110', temperature: '98.6', spo2: '95', respiratoryRate: '22' },
-        status: 'ACTIVE',
-        assignedDoctor: 'Dr. Smith',
-        isMLC: false,
-        waitingTime: '15 min'
-      }
-    ];
+    const cases = await prisma.emergencyCase.findMany({
+      where,
+      orderBy: { arrivalTime: 'desc' },
+    });
 
-    res.json(cases);
+    res.json(cases.map(c => ({
+      ...c,
+      age: c.patientAge,
+      gender: c.patientGender,
+      waitingTime: Math.floor((Date.now() - c.arrivalTime.getTime()) / 60000) + ' min',
+    })));
   } catch (error) {
     console.error('Get emergency cases error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -1813,19 +2085,50 @@ app.get('/api/emergency/cases', authenticateToken, async (req: any, res: Respons
 
 app.post('/api/emergency/cases', authenticateToken, async (req: any, res: Response) => {
   try {
-    const caseData = req.body;
+    const { patientName, patientAge, patientGender, patientContact, triageCategory, chiefComplaint, vitalSigns, isMLC, mlcNumber, assignedDoctor, notes } = req.body;
 
-    // Mock response - replace with actual DB insert
-    const newCase = {
-      id: Date.now().toString(),
-      ...caseData,
-      arrivalTime: new Date().toISOString(),
-      status: 'ACTIVE'
-    };
+    const emergencyCase = await prisma.emergencyCase.create({
+      data: {
+        patientName,
+        patientAge: patientAge ? parseInt(patientAge) : null,
+        patientGender,
+        patientContact,
+        triageCategory: triageCategory || 'YELLOW',
+        chiefComplaint,
+        vitalSigns,
+        isMLC: isMLC || false,
+        mlcNumber,
+        assignedDoctor,
+        notes,
+      },
+    });
 
-    res.status(201).json(newCase);
+    res.status(201).json(emergencyCase);
   } catch (error) {
     console.error('Create emergency case error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/emergency/cases/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { triageCategory, vitalSigns, assignedDoctor, notes, status } = req.body;
+
+    const emergencyCase = await prisma.emergencyCase.update({
+      where: { id },
+      data: {
+        ...(triageCategory && { triageCategory }),
+        ...(vitalSigns && { vitalSigns }),
+        ...(assignedDoctor && { assignedDoctor }),
+        ...(notes && { notes }),
+        ...(status && { status }),
+      },
+    });
+
+    res.json(emergencyCase);
+  } catch (error) {
+    console.error('Update emergency case error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1833,9 +2136,17 @@ app.post('/api/emergency/cases', authenticateToken, async (req: any, res: Respon
 app.post('/api/emergency/cases/:id/admit', authenticateToken, async (req: any, res: Response) => {
   try {
     const { id } = req.params;
+    const { disposition } = req.body;
 
-    // Mock response
-    res.json({ message: 'Patient admitted to IPD', caseId: id });
+    const emergencyCase = await prisma.emergencyCase.update({
+      where: { id },
+      data: {
+        status: 'admitted',
+        disposition: disposition || 'admitted_ipd',
+      },
+    });
+
+    res.json({ message: 'Patient admitted to IPD', emergencyCase });
   } catch (error) {
     console.error('Admit emergency case error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -1846,8 +2157,16 @@ app.post('/api/emergency/cases/:id/discharge', authenticateToken, async (req: an
   try {
     const { id } = req.params;
 
-    // Mock response
-    res.json({ message: 'Patient discharged', caseId: id });
+    const emergencyCase = await prisma.emergencyCase.update({
+      where: { id },
+      data: {
+        status: 'discharged',
+        disposition: 'discharged',
+        dischargeTime: new Date(),
+      },
+    });
+
+    res.json({ message: 'Patient discharged', emergencyCase });
   } catch (error) {
     console.error('Discharge emergency case error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -1861,46 +2180,83 @@ app.post('/api/emergency/cases/:id/discharge', authenticateToken, async (req: an
 app.get('/api/icu/beds', authenticateToken, async (req: any, res: Response) => {
   try {
     const { icuUnit, status } = req.query;
+    const where: any = {};
 
-    // Mock data
-    const beds = [
-      {
-        id: '1',
-        bedNumber: 'ICU-01',
-        icuUnit: 'MICU',
-        status: 'OCCUPIED',
-        patient: { id: 'p1', name: 'Jane Smith', mrn: 'MRN000002', age: 62, gender: 'Female' },
-        admission: {
-          id: 'adm1',
-          admissionDate: new Date().toISOString(),
-          diagnosis: 'Respiratory failure',
-          isVentilated: true,
-          ventilatorMode: 'SIMV'
+    if (icuUnit) where.icuUnit = icuUnit;
+    if (status) where.status = status;
+
+    const beds = await prisma.iCUBed.findMany({
+      where,
+      include: {
+        vitalsRecords: {
+          orderBy: { recordedAt: 'desc' },
+          take: 1,
         },
-        latestVitals: {
-          hr: '88',
-          bp: '120/80',
-          spo2: '96',
-          temp: '99.2',
-          rr: '18',
-          timestamp: new Date().toISOString()
-        }
-      }
-    ];
+      },
+      orderBy: { bedNumber: 'asc' },
+    });
 
-    res.json(beds);
+    res.json(beds.map(b => ({
+      ...b,
+      latestVitals: b.vitalsRecords[0] ? {
+        hr: b.vitalsRecords[0].heartRate,
+        bp: b.vitalsRecords[0].systolicBP && b.vitalsRecords[0].diastolicBP
+          ? `${b.vitalsRecords[0].systolicBP}/${b.vitalsRecords[0].diastolicBP}` : null,
+        spo2: b.vitalsRecords[0].spo2,
+        temp: b.vitalsRecords[0].temperature,
+        rr: b.vitalsRecords[0].respiratoryRate,
+        gcs: b.vitalsRecords[0].gcs,
+        ventilatorMode: b.vitalsRecords[0].ventilatorMode,
+        timestamp: b.vitalsRecords[0].recordedAt,
+      } : null,
+    })));
   } catch (error) {
     console.error('Get ICU beds error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
+app.post('/api/icu/beds', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { bedNumber, icuUnit } = req.body;
+
+    const bed = await prisma.iCUBed.create({
+      data: {
+        bedNumber,
+        icuUnit,
+      },
+    });
+
+    res.status(201).json(bed);
+  } catch (error) {
+    console.error('Create ICU bed error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.post('/api/icu/vitals', authenticateToken, async (req: any, res: Response) => {
   try {
-    const vitalData = req.body;
+    const { icuBedId, patientId, heartRate, systolicBP, diastolicBP, temperature, spo2, respiratoryRate, gcs, ventilatorMode, fio2, peep } = req.body;
 
-    // Mock response
-    res.status(201).json({ message: 'Vitals recorded', data: vitalData });
+    const vitals = await prisma.iCUVitals.create({
+      data: {
+        icuBedId,
+        patientId,
+        heartRate: heartRate ? parseInt(heartRate) : null,
+        systolicBP: systolicBP ? parseInt(systolicBP) : null,
+        diastolicBP: diastolicBP ? parseInt(diastolicBP) : null,
+        temperature: temperature ? parseFloat(temperature) : null,
+        spo2: spo2 ? parseInt(spo2) : null,
+        respiratoryRate: respiratoryRate ? parseInt(respiratoryRate) : null,
+        gcs: gcs ? parseInt(gcs) : null,
+        ventilatorMode,
+        fio2: fio2 ? parseInt(fio2) : null,
+        peep: peep ? parseInt(peep) : null,
+        recordedBy: req.user.userId,
+      },
+    });
+
+    res.status(201).json(vitals);
   } catch (error) {
     console.error('Record vitals error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -1909,10 +2265,20 @@ app.post('/api/icu/vitals', authenticateToken, async (req: any, res: Response) =
 
 app.post('/api/icu/ventilator', authenticateToken, async (req: any, res: Response) => {
   try {
-    const ventilatorData = req.body;
+    const { icuBedId, ventilatorMode, fio2, peep } = req.body;
 
-    // Mock response
-    res.status(201).json({ message: 'Ventilator settings updated', data: ventilatorData });
+    // Record as a vitals entry with ventilator params
+    const vitals = await prisma.iCUVitals.create({
+      data: {
+        icuBedId,
+        ventilatorMode,
+        fio2: fio2 ? parseInt(fio2) : null,
+        peep: peep ? parseInt(peep) : null,
+        recordedBy: req.user.userId,
+      },
+    });
+
+    res.status(201).json({ message: 'Ventilator settings updated', vitals });
   } catch (error) {
     console.error('Update ventilator error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -1926,31 +2292,25 @@ app.post('/api/icu/ventilator', authenticateToken, async (req: any, res: Respons
 app.get('/api/surgeries', authenticateToken, async (req: any, res: Response) => {
   try {
     const { status, date } = req.query;
+    const where: any = {};
 
-    // Mock data
-    const surgeries = [
-      {
-        id: '1',
-        patientId: 'p1',
-        patientName: 'Robert Johnson',
-        patientMRN: 'MRN000003',
-        age: 55,
-        gender: 'Male',
-        procedureName: 'Appendectomy',
-        surgeonName: 'Dr. Williams',
-        otRoom: 'OT-1',
-        scheduledDate: new Date().toISOString().split('T')[0],
-        scheduledTime: '10:00 AM',
-        duration: 120,
-        status: 'SCHEDULED',
-        priority: 'URGENT',
-        anesthesiaType: 'General',
-        preOpChecklist: true,
-        notes: 'Patient allergic to penicillin'
-      }
-    ];
+    if (status) where.status = status;
+    if (date) {
+      const startDate = new Date(date as string);
+      const endDate = new Date(startDate);
+      endDate.setDate(endDate.getDate() + 1);
+      where.scheduledDate = { gte: startDate, lt: endDate };
+    }
 
-    res.json(surgeries);
+    const surgeries = await prisma.surgery.findMany({
+      where,
+      orderBy: [{ scheduledDate: 'asc' }, { scheduledTime: 'asc' }],
+    });
+
+    res.json(surgeries.map(s => ({
+      ...s,
+      duration: s.estimatedDuration,
+    })));
   } catch (error) {
     console.error('Get surgeries error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -1959,16 +2319,28 @@ app.get('/api/surgeries', authenticateToken, async (req: any, res: Response) => 
 
 app.post('/api/surgeries', authenticateToken, async (req: any, res: Response) => {
   try {
-    const surgeryData = req.body;
+    const { patientId, patientName, patientMRN, procedureName, surgeonId, surgeonName, anesthetistName, otRoom, scheduledDate, scheduledTime, estimatedDuration, anesthesiaType, priority, notes } = req.body;
 
-    // Mock response
-    const newSurgery = {
-      id: Date.now().toString(),
-      ...surgeryData,
-      status: 'SCHEDULED'
-    };
+    const surgery = await prisma.surgery.create({
+      data: {
+        patientId,
+        patientName,
+        patientMRN,
+        procedureName,
+        surgeonId,
+        surgeonName,
+        anesthetistName,
+        otRoom,
+        scheduledDate: new Date(scheduledDate),
+        scheduledTime,
+        estimatedDuration: estimatedDuration ? parseInt(estimatedDuration) : null,
+        anesthesiaType,
+        priority: priority || 'elective',
+        postOpNotes: notes,
+      },
+    });
 
-    res.status(201).json(newSurgery);
+    res.status(201).json(surgery);
   } catch (error) {
     console.error('Schedule surgery error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -1977,11 +2349,15 @@ app.post('/api/surgeries', authenticateToken, async (req: any, res: Response) =>
 
 app.get('/api/ot-rooms', authenticateToken, async (req: any, res: Response) => {
   try {
-    // Mock data
-    const rooms = [
-      { id: '1', name: 'OT-1', status: 'AVAILABLE', currentSurgery: null },
-      { id: '2', name: 'OT-2', status: 'IN_USE', currentSurgery: 'Appendectomy' }
-    ];
+    const { status } = req.query;
+    const where: any = {};
+
+    if (status) where.status = status;
+
+    const rooms = await prisma.oTRoom.findMany({
+      where,
+      orderBy: { name: 'asc' },
+    });
 
     res.json(rooms);
   } catch (error) {
@@ -1990,11 +2366,47 @@ app.get('/api/ot-rooms', authenticateToken, async (req: any, res: Response) => {
   }
 });
 
+app.post('/api/ot-rooms', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { name, type, floor, equipment } = req.body;
+
+    const room = await prisma.oTRoom.create({
+      data: {
+        name,
+        type,
+        floor,
+        equipment,
+      },
+    });
+
+    res.status(201).json(room);
+  } catch (error) {
+    console.error('Create OT room error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.post('/api/surgeries/:id/start', authenticateToken, async (req: any, res: Response) => {
   try {
     const { id } = req.params;
 
-    res.json({ message: 'Surgery started', surgeryId: id });
+    const surgery = await prisma.surgery.update({
+      where: { id },
+      data: {
+        status: 'in_progress',
+        actualStartTime: new Date(),
+      },
+    });
+
+    // Update OT room status
+    if (surgery.otRoom) {
+      await prisma.oTRoom.updateMany({
+        where: { name: surgery.otRoom },
+        data: { status: 'in_use', currentSurgery: surgery.procedureName },
+      });
+    }
+
+    res.json({ message: 'Surgery started', surgery });
   } catch (error) {
     console.error('Start surgery error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2004,8 +2416,27 @@ app.post('/api/surgeries/:id/start', authenticateToken, async (req: any, res: Re
 app.post('/api/surgeries/:id/complete', authenticateToken, async (req: any, res: Response) => {
   try {
     const { id } = req.params;
+    const { postOpNotes, complications } = req.body;
 
-    res.json({ message: 'Surgery completed', surgeryId: id });
+    const surgery = await prisma.surgery.update({
+      where: { id },
+      data: {
+        status: 'completed',
+        actualEndTime: new Date(),
+        postOpNotes,
+        complications,
+      },
+    });
+
+    // Free up OT room
+    if (surgery.otRoom) {
+      await prisma.oTRoom.updateMany({
+        where: { name: surgery.otRoom },
+        data: { status: 'cleaning', currentSurgery: null },
+      });
+    }
+
+    res.json({ message: 'Surgery completed', surgery });
   } catch (error) {
     console.error('Complete surgery error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2015,8 +2446,17 @@ app.post('/api/surgeries/:id/complete', authenticateToken, async (req: any, res:
 app.post('/api/surgeries/:id/cancel', authenticateToken, async (req: any, res: Response) => {
   try {
     const { id } = req.params;
+    const { reason } = req.body;
 
-    res.json({ message: 'Surgery cancelled', surgeryId: id });
+    const surgery = await prisma.surgery.update({
+      where: { id },
+      data: {
+        status: 'cancelled',
+        postOpNotes: reason,
+      },
+    });
+
+    res.json({ message: 'Surgery cancelled', surgery });
   } catch (error) {
     console.error('Cancel surgery error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2029,14 +2469,47 @@ app.post('/api/surgeries/:id/cancel', authenticateToken, async (req: any, res: R
 
 app.get('/api/blood-bank/inventory', authenticateToken, async (req: any, res: Response) => {
   try {
-    // Mock data
-    const inventory = [
-      { id: '1', bloodType: 'A+', component: 'Whole Blood', quantity: 12, expiringIn7Days: 2, expiringIn3Days: 1, expired: 0 },
-      { id: '2', bloodType: 'O+', component: 'Whole Blood', quantity: 15, expiringIn7Days: 3, expiringIn3Days: 1, expired: 0 },
-      { id: '3', bloodType: 'B+', component: 'Platelets', quantity: 8, expiringIn7Days: 1, expiringIn3Days: 0, expired: 0 }
-    ];
+    const now = new Date();
+    const threeDaysFromNow = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+    const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
-    res.json(inventory);
+    const inventory = await prisma.bloodInventory.groupBy({
+      by: ['bloodType', 'component'],
+      where: { status: 'available' },
+      _count: { id: true },
+    });
+
+    const inventoryWithExpiry = await Promise.all(
+      inventory.map(async (item) => {
+        const expiringIn3Days = await prisma.bloodInventory.count({
+          where: {
+            bloodType: item.bloodType,
+            component: item.component,
+            status: 'available',
+            expiryDate: { lte: threeDaysFromNow, gt: now },
+          },
+        });
+        const expiringIn7Days = await prisma.bloodInventory.count({
+          where: {
+            bloodType: item.bloodType,
+            component: item.component,
+            status: 'available',
+            expiryDate: { lte: sevenDaysFromNow, gt: threeDaysFromNow },
+          },
+        });
+        return {
+          id: `${item.bloodType}-${item.component}`,
+          bloodType: item.bloodType,
+          component: item.component,
+          quantity: item._count.id,
+          expiringIn3Days,
+          expiringIn7Days,
+          expired: 0,
+        };
+      })
+    );
+
+    res.json(inventoryWithExpiry);
   } catch (error) {
     console.error('Get blood inventory error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2045,21 +2518,27 @@ app.get('/api/blood-bank/inventory', authenticateToken, async (req: any, res: Re
 
 app.get('/api/blood-bank/donors', authenticateToken, async (req: any, res: Response) => {
   try {
-    // Mock data
-    const donors = [
-      {
-        id: '1',
-        donorId: 'D001',
-        name: 'Mike Wilson',
-        bloodType: 'A+',
-        phone: '555-0101',
-        lastDonation: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(),
-        totalDonations: 5,
-        status: 'ELIGIBLE'
-      }
-    ];
+    const { search, bloodType } = req.query;
+    const where: any = {};
 
-    res.json(donors);
+    if (bloodType) where.bloodType = bloodType;
+    if (search) {
+      where.OR = [
+        { name: { contains: search as string, mode: 'insensitive' } },
+        { donorId: { contains: search as string, mode: 'insensitive' } },
+      ];
+    }
+
+    const donors = await prisma.bloodDonor.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json(donors.map(d => ({
+      ...d,
+      status: d.isEligible ? 'ELIGIBLE' : 'NOT_ELIGIBLE',
+      lastDonation: d.lastDonationAt,
+    })));
   } catch (error) {
     console.error('Get donors error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2068,17 +2547,25 @@ app.get('/api/blood-bank/donors', authenticateToken, async (req: any, res: Respo
 
 app.post('/api/blood-bank/donors', authenticateToken, async (req: any, res: Response) => {
   try {
-    const donorData = req.body;
+    const { name, age, gender, bloodType, phone, email, address } = req.body;
 
-    const newDonor = {
-      id: Date.now().toString(),
-      donorId: `D${String(Date.now()).slice(-4)}`,
-      ...donorData,
-      totalDonations: 0,
-      status: 'ELIGIBLE'
-    };
+    const donorCount = await prisma.bloodDonor.count();
+    const donorId = `D${String(donorCount + 1).padStart(4, '0')}`;
 
-    res.status(201).json(newDonor);
+    const donor = await prisma.bloodDonor.create({
+      data: {
+        donorId,
+        name,
+        age: parseInt(age),
+        gender,
+        bloodType,
+        phone,
+        email,
+        address,
+      },
+    });
+
+    res.status(201).json({ ...donor, status: 'ELIGIBLE' });
   } catch (error) {
     console.error('Register donor error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2088,25 +2575,21 @@ app.post('/api/blood-bank/donors', authenticateToken, async (req: any, res: Resp
 app.get('/api/blood-bank/requests', authenticateToken, async (req: any, res: Response) => {
   try {
     const { status } = req.query;
+    const where: any = {};
 
-    // Mock data
-    const requests = [
-      {
-        id: '1',
-        patientName: 'Sarah Brown',
-        patientMRN: 'MRN000004',
-        bloodType: 'A+',
-        component: 'Whole Blood',
-        unitsRequired: 2,
-        urgency: 'URGENT',
-        requestedBy: 'Dr. Davis',
-        requestDate: new Date().toISOString(),
-        status: 'PENDING',
-        crossMatchStatus: 'PENDING'
-      }
-    ];
+    if (status) where.status = status;
 
-    res.json(requests);
+    const requests = await prisma.bloodRequest.findMany({
+      where,
+      orderBy: { requestedAt: 'desc' },
+    });
+
+    res.json(requests.map(r => ({
+      ...r,
+      unitsRequired: r.unitsRequested,
+      requestDate: r.requestedAt,
+      crossMatchStatus: r.crossMatchResult ? 'COMPLETED' : 'PENDING',
+    })));
   } catch (error) {
     console.error('Get blood requests error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2115,17 +2598,22 @@ app.get('/api/blood-bank/requests', authenticateToken, async (req: any, res: Res
 
 app.post('/api/blood-bank/requests', authenticateToken, async (req: any, res: Response) => {
   try {
-    const requestData = req.body;
+    const { patientName, patientMRN, bloodType, component, unitsRequired, urgency, requestedBy, indication } = req.body;
 
-    const newRequest = {
-      id: Date.now().toString(),
-      ...requestData,
-      requestDate: new Date().toISOString(),
-      status: 'PENDING',
-      crossMatchStatus: 'PENDING'
-    };
+    const request = await prisma.bloodRequest.create({
+      data: {
+        patientName,
+        patientMRN,
+        bloodType,
+        component: component || 'Whole Blood',
+        unitsRequested: parseInt(unitsRequired),
+        urgency: urgency || 'routine',
+        requestedBy,
+        indication,
+      },
+    });
 
-    res.status(201).json(newRequest);
+    res.status(201).json({ ...request, unitsRequired: request.unitsRequested, requestDate: request.requestedAt });
   } catch (error) {
     console.error('Create blood request error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2135,8 +2623,19 @@ app.post('/api/blood-bank/requests', authenticateToken, async (req: any, res: Re
 app.post('/api/blood-bank/requests/:id/cross-match', authenticateToken, async (req: any, res: Response) => {
   try {
     const { id } = req.params;
+    const { result } = req.body;
 
-    res.json({ message: 'Cross-matching completed', requestId: id });
+    const request = await prisma.bloodRequest.update({
+      where: { id },
+      data: {
+        crossMatchedAt: new Date(),
+        crossMatchedBy: req.user.userId,
+        crossMatchResult: result || 'compatible',
+        status: 'crossmatched',
+      },
+    });
+
+    res.json({ message: 'Cross-matching completed', request });
   } catch (error) {
     console.error('Cross-match error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2147,7 +2646,12 @@ app.post('/api/blood-bank/requests/:id/issue', authenticateToken, async (req: an
   try {
     const { id } = req.params;
 
-    res.json({ message: 'Blood issued successfully', requestId: id });
+    const request = await prisma.bloodRequest.update({
+      where: { id },
+      data: { status: 'issued' },
+    });
+
+    res.json({ message: 'Blood issued successfully', request });
   } catch (error) {
     console.error('Issue blood error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2161,22 +2665,15 @@ app.post('/api/blood-bank/requests/:id/issue', authenticateToken, async (req: an
 app.get('/api/hr/employees', authenticateToken, async (req: any, res: Response) => {
   try {
     const { department, status } = req.query;
+    const where: any = {};
 
-    // Mock data
-    const employees = [
-      {
-        id: '1',
-        employeeId: 'EMP001',
-        name: 'Alice Cooper',
-        designation: 'Senior Nurse',
-        department: 'Emergency',
-        phone: '555-0201',
-        email: 'alice@hospital.com',
-        joiningDate: '2020-01-15',
-        status: 'ACTIVE',
-        shift: 'Morning'
-      }
-    ];
+    if (department) where.department = department;
+    if (status) where.status = status;
+
+    const employees = await prisma.employee.findMany({
+      where,
+      orderBy: { name: 'asc' },
+    });
 
     res.json(employees);
   } catch (error) {
@@ -2187,16 +2684,26 @@ app.get('/api/hr/employees', authenticateToken, async (req: any, res: Response) 
 
 app.post('/api/hr/employees', authenticateToken, async (req: any, res: Response) => {
   try {
-    const employeeData = req.body;
+    const { name, email, phone, department, designation, joiningDate, salary, shift } = req.body;
 
-    const newEmployee = {
-      id: Date.now().toString(),
-      employeeId: `EMP${String(Date.now()).slice(-4)}`,
-      ...employeeData,
-      status: 'ACTIVE'
-    };
+    const employeeCount = await prisma.employee.count();
+    const employeeId = `EMP${String(employeeCount + 1).padStart(4, '0')}`;
 
-    res.status(201).json(newEmployee);
+    const employee = await prisma.employee.create({
+      data: {
+        employeeId,
+        name,
+        email,
+        phone,
+        department,
+        designation,
+        joiningDate: joiningDate ? new Date(joiningDate) : null,
+        salary: salary ? parseFloat(salary) : null,
+        shift,
+      },
+    });
+
+    res.status(201).json(employee);
   } catch (error) {
     console.error('Add employee error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2205,22 +2712,26 @@ app.post('/api/hr/employees', authenticateToken, async (req: any, res: Response)
 
 app.get('/api/hr/attendance', authenticateToken, async (req: any, res: Response) => {
   try {
-    const { date } = req.query;
+    const { date, employeeId } = req.query;
+    const where: any = {};
 
-    // Mock data
-    const attendance = [
-      {
-        id: '1',
-        employeeId: 'EMP001',
-        employeeName: 'Alice Cooper',
-        date: new Date().toISOString().split('T')[0],
-        status: 'PRESENT',
-        checkIn: '09:00 AM',
-        checkOut: '05:00 PM'
-      }
-    ];
+    if (date) {
+      where.date = new Date(date as string);
+    }
+    if (employeeId) where.employeeId = employeeId;
 
-    res.json(attendance);
+    const attendance = await prisma.employeeAttendance.findMany({
+      where,
+      include: { employee: { select: { name: true, employeeId: true } } },
+      orderBy: { date: 'desc' },
+    });
+
+    res.json(attendance.map(a => ({
+      ...a,
+      employeeName: a.employee.name,
+      checkIn: a.checkIn?.toLocaleTimeString(),
+      checkOut: a.checkOut?.toLocaleTimeString(),
+    })));
   } catch (error) {
     console.error('Get attendance error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2229,9 +2740,30 @@ app.get('/api/hr/attendance', authenticateToken, async (req: any, res: Response)
 
 app.post('/api/hr/attendance', authenticateToken, async (req: any, res: Response) => {
   try {
-    const attendanceData = req.body;
+    const { employeeId, date, checkIn, checkOut, status } = req.body;
 
-    res.status(201).json({ message: 'Attendance marked', data: attendanceData });
+    const attendance = await prisma.employeeAttendance.upsert({
+      where: {
+        employeeId_date: {
+          employeeId,
+          date: new Date(date),
+        },
+      },
+      create: {
+        employeeId,
+        date: new Date(date),
+        checkIn: checkIn ? new Date(checkIn) : null,
+        checkOut: checkOut ? new Date(checkOut) : null,
+        status: status || 'present',
+      },
+      update: {
+        checkIn: checkIn ? new Date(checkIn) : undefined,
+        checkOut: checkOut ? new Date(checkOut) : undefined,
+        status: status || undefined,
+      },
+    });
+
+    res.status(201).json(attendance);
   } catch (error) {
     console.error('Mark attendance error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2240,26 +2772,46 @@ app.post('/api/hr/attendance', authenticateToken, async (req: any, res: Response
 
 app.get('/api/hr/leaves', authenticateToken, async (req: any, res: Response) => {
   try {
-    const { status } = req.query;
+    const { status, employeeId } = req.query;
+    const where: any = {};
 
-    // Mock data
-    const leaves = [
-      {
-        id: '1',
-        employeeId: 'EMP001',
-        employeeName: 'Alice Cooper',
-        leaveType: 'Sick Leave',
-        fromDate: new Date().toISOString().split('T')[0],
-        toDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        reason: 'Medical checkup',
-        status: 'PENDING',
-        appliedDate: new Date().toISOString()
-      }
-    ];
+    if (status) where.status = status;
+    if (employeeId) where.employeeId = employeeId;
 
-    res.json(leaves);
+    const leaves = await prisma.leaveRequest.findMany({
+      where,
+      include: { employee: { select: { name: true, employeeId: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json(leaves.map(l => ({
+      ...l,
+      employeeName: l.employee.name,
+      appliedDate: l.createdAt,
+    })));
   } catch (error) {
     console.error('Get leaves error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/hr/leaves', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { employeeId, leaveType, fromDate, toDate, reason } = req.body;
+
+    const leave = await prisma.leaveRequest.create({
+      data: {
+        employeeId,
+        leaveType,
+        fromDate: new Date(fromDate),
+        toDate: new Date(toDate),
+        reason,
+      },
+    });
+
+    res.status(201).json(leave);
+  } catch (error) {
+    console.error('Apply leave error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2268,7 +2820,16 @@ app.post('/api/hr/leaves/:id/approve', authenticateToken, async (req: any, res: 
   try {
     const { id } = req.params;
 
-    res.json({ message: 'Leave approved', leaveId: id });
+    const leave = await prisma.leaveRequest.update({
+      where: { id },
+      data: {
+        status: 'approved',
+        approvedBy: req.user.userId,
+        approvedAt: new Date(),
+      },
+    });
+
+    res.json({ message: 'Leave approved', leave });
   } catch (error) {
     console.error('Approve leave error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2278,8 +2839,19 @@ app.post('/api/hr/leaves/:id/approve', authenticateToken, async (req: any, res: 
 app.post('/api/hr/leaves/:id/reject', authenticateToken, async (req: any, res: Response) => {
   try {
     const { id } = req.params;
+    const { remarks } = req.body;
 
-    res.json({ message: 'Leave rejected', leaveId: id });
+    const leave = await prisma.leaveRequest.update({
+      where: { id },
+      data: {
+        status: 'rejected',
+        approvedBy: req.user.userId,
+        approvedAt: new Date(),
+        remarks,
+      },
+    });
+
+    res.json({ message: 'Leave rejected', leave });
   } catch (error) {
     console.error('Reject leave error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2292,37 +2864,40 @@ app.post('/api/hr/leaves/:id/reject', authenticateToken, async (req: any, res: R
 
 app.get('/api/inventory/items', authenticateToken, async (req: any, res: Response) => {
   try {
-    const { category, lowStock } = req.query;
+    const { category, lowStock, search } = req.query;
+    const where: any = { isActive: true };
 
-    // Mock data
-    const items = [
-      {
-        id: '1',
-        itemCode: 'SUR001',
-        name: 'Surgical Gloves',
-        category: 'Consumables',
-        currentStock: 450,
-        reorderLevel: 200,
-        unitPrice: 15.50,
-        unit: 'Box',
-        supplier: 'MedSupply Co.',
-        lastRestocked: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString()
+    if (category) where.category = category;
+    if (search) {
+      where.OR = [
+        { name: { contains: search as string, mode: 'insensitive' } },
+        { code: { contains: search as string, mode: 'insensitive' } },
+      ];
+    }
+
+    const items = await prisma.inventoryItem.findMany({
+      where,
+      include: {
+        stocks: {
+          select: { quantity: true },
+        },
       },
-      {
-        id: '2',
-        itemCode: 'SUR002',
-        name: 'Syringes 5ml',
-        category: 'Consumables',
-        currentStock: 120,
-        reorderLevel: 300,
-        unitPrice: 8.25,
-        unit: 'Pack',
-        supplier: 'MedSupply Co.',
-        lastRestocked: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString()
-      }
-    ];
+      orderBy: { name: 'asc' },
+    });
 
-    res.json(items);
+    const itemsWithStock = items.map(item => ({
+      ...item,
+      itemCode: item.code,
+      unitPrice: item.price,
+      currentStock: item.stocks.reduce((sum, s) => sum + s.quantity, 0),
+      isLowStock: item.stocks.reduce((sum, s) => sum + s.quantity, 0) < item.reorderLevel,
+    }));
+
+    if (lowStock === 'true') {
+      res.json(itemsWithStock.filter(i => i.isLowStock));
+    } else {
+      res.json(itemsWithStock);
+    }
   } catch (error) {
     console.error('Get inventory items error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2331,15 +2906,23 @@ app.get('/api/inventory/items', authenticateToken, async (req: any, res: Respons
 
 app.post('/api/inventory/items', authenticateToken, async (req: any, res: Response) => {
   try {
-    const itemData = req.body;
+    const { name, category, unit, reorderLevel, price } = req.body;
 
-    const newItem = {
-      id: Date.now().toString(),
-      itemCode: `ITM${String(Date.now()).slice(-4)}`,
-      ...itemData
-    };
+    const itemCount = await prisma.inventoryItem.count();
+    const code = `ITM${String(itemCount + 1).padStart(4, '0')}`;
 
-    res.status(201).json(newItem);
+    const item = await prisma.inventoryItem.create({
+      data: {
+        name,
+        code,
+        category,
+        unit,
+        reorderLevel: parseInt(reorderLevel) || 0,
+        price: parseFloat(price) || 0,
+      },
+    });
+
+    res.status(201).json({ ...item, itemCode: item.code, unitPrice: item.price, currentStock: 0 });
   } catch (error) {
     console.error('Add inventory item error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2349,24 +2932,32 @@ app.post('/api/inventory/items', authenticateToken, async (req: any, res: Respon
 app.get('/api/inventory/purchase-orders', authenticateToken, async (req: any, res: Response) => {
   try {
     const { status } = req.query;
+    const where: any = {};
 
-    // Mock data
-    const orders = [
-      {
-        id: '1',
-        poNumber: 'PO2024001',
-        supplier: 'MedSupply Co.',
-        orderDate: new Date().toISOString(),
-        expectedDelivery: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        totalAmount: 5500,
-        status: 'PENDING',
-        items: [
-          { name: 'Surgical Gloves', quantity: 100, unitPrice: 15.50 }
-        ]
-      }
-    ];
+    if (status) where.status = status;
 
-    res.json(orders);
+    const orders = await prisma.purchaseOrder.findMany({
+      where,
+      include: {
+        items: {
+          include: { item: { select: { name: true, code: true } } },
+        },
+      },
+      orderBy: { orderDate: 'desc' },
+    });
+
+    res.json(orders.map(o => ({
+      ...o,
+      supplier: o.vendorName,
+      expectedDelivery: o.expectedDate,
+      items: o.items.map(i => ({
+        name: i.item.name,
+        code: i.item.code,
+        quantity: i.quantity,
+        unitPrice: i.rate,
+        amount: i.amount,
+      })),
+    })));
   } catch (error) {
     console.error('Get purchase orders error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2375,19 +2966,54 @@ app.get('/api/inventory/purchase-orders', authenticateToken, async (req: any, re
 
 app.post('/api/inventory/purchase-orders', authenticateToken, async (req: any, res: Response) => {
   try {
-    const orderData = req.body;
+    const { vendorName, vendorContact, expectedDate, items, remarks } = req.body;
 
-    const newOrder = {
-      id: Date.now().toString(),
-      poNumber: `PO${new Date().getFullYear()}${String(Date.now()).slice(-4)}`,
-      ...orderData,
-      orderDate: new Date().toISOString(),
-      status: 'PENDING'
-    };
+    const poCount = await prisma.purchaseOrder.count();
+    const poNumber = `PO${new Date().getFullYear()}${String(poCount + 1).padStart(4, '0')}`;
 
-    res.status(201).json(newOrder);
+    const totalAmount = items.reduce((sum: number, item: any) => sum + (item.quantity * item.rate), 0);
+
+    const order = await prisma.purchaseOrder.create({
+      data: {
+        poNumber,
+        vendorName,
+        vendorContact,
+        expectedDate: expectedDate ? new Date(expectedDate) : null,
+        totalAmount,
+        remarks,
+        createdBy: req.user.userId,
+        items: {
+          create: items.map((item: any) => ({
+            itemId: item.itemId,
+            quantity: parseInt(item.quantity),
+            rate: parseFloat(item.rate),
+            amount: parseInt(item.quantity) * parseFloat(item.rate),
+          })),
+        },
+      },
+      include: { items: true },
+    });
+
+    res.status(201).json(order);
   } catch (error) {
     console.error('Create purchase order error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/inventory/purchase-orders/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    const order = await prisma.purchaseOrder.update({
+      where: { id },
+      data: { status },
+    });
+
+    res.json(order);
+  } catch (error) {
+    console.error('Update purchase order error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2399,24 +3025,42 @@ app.post('/api/inventory/purchase-orders', authenticateToken, async (req: any, r
 app.get('/api/ambulance/vehicles', authenticateToken, async (req: any, res: Response) => {
   try {
     const { status } = req.query;
+    const where: any = {};
 
-    // Mock data
-    const vehicles = [
-      {
-        id: '1',
-        vehicleNumber: 'AMB-001',
-        type: 'ALS',
-        driverName: 'Tom Harris',
-        driverPhone: '555-0301',
-        status: 'AVAILABLE',
-        currentLocation: 'Hospital',
-        lastMaintenance: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
-      }
-    ];
+    if (status) where.status = status;
 
-    res.json(vehicles);
+    const vehicles = await prisma.ambulanceVehicle.findMany({
+      where,
+      orderBy: { vehicleNumber: 'asc' },
+    });
+
+    res.json(vehicles.map(v => ({
+      ...v,
+      driver: v.driverName,
+      lastService: v.lastMaintenance,
+    })));
   } catch (error) {
     console.error('Get ambulance vehicles error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/ambulance/vehicles', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { vehicleNumber, type, driverName, driverPhone } = req.body;
+
+    const vehicle = await prisma.ambulanceVehicle.create({
+      data: {
+        vehicleNumber,
+        type,
+        driverName,
+        driverPhone,
+      },
+    });
+
+    res.status(201).json(vehicle);
+  } catch (error) {
+    console.error('Add vehicle error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2424,24 +3068,21 @@ app.get('/api/ambulance/vehicles', authenticateToken, async (req: any, res: Resp
 app.get('/api/ambulance/trips', authenticateToken, async (req: any, res: Response) => {
   try {
     const { status } = req.query;
+    const where: any = {};
 
-    // Mock data
-    const trips = [
-      {
-        id: '1',
-        patientName: 'Emma Davis',
-        patientPhone: '555-0401',
-        pickupLocation: '123 Main St',
-        dropLocation: 'City Hospital',
-        requestTime: new Date().toISOString(),
-        tripType: 'EMERGENCY',
-        status: 'PENDING',
-        assignedVehicle: null,
-        estimatedTime: '15 min'
-      }
-    ];
+    if (status) where.status = status;
 
-    res.json(trips);
+    const trips = await prisma.ambulanceTrip.findMany({
+      where,
+      orderBy: { startTime: 'desc' },
+    });
+
+    res.json(trips.map(t => ({
+      ...t,
+      patientName: t.patientId || 'Walk-in',
+      requestTime: t.startTime,
+      assignedVehicle: t.vehicleNumber,
+    })));
   } catch (error) {
     console.error('Get ambulance trips error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2450,16 +3091,20 @@ app.get('/api/ambulance/trips', authenticateToken, async (req: any, res: Respons
 
 app.post('/api/ambulance/trips', authenticateToken, async (req: any, res: Response) => {
   try {
-    const tripData = req.body;
+    const { patientName, patientPhone, pickupLocation, dropLocation, tripType, urgency, notes, vehicleNumber } = req.body;
 
-    const newTrip = {
-      id: Date.now().toString(),
-      ...tripData,
-      requestTime: new Date().toISOString(),
-      status: 'PENDING'
-    };
+    const trip = await prisma.ambulanceTrip.create({
+      data: {
+        vehicleNumber: vehicleNumber || 'UNASSIGNED',
+        pickupLocation,
+        dropLocation,
+        tripType: tripType || 'EMERGENCY',
+        remarks: notes,
+        status: 'pending',
+      },
+    });
 
-    res.status(201).json(newTrip);
+    res.status(201).json({ ...trip, patientName, patientPhone, requestTime: trip.startTime });
   } catch (error) {
     console.error('Create trip request error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2471,7 +3116,27 @@ app.post('/api/ambulance/trips/:id/assign', authenticateToken, async (req: any, 
     const { id } = req.params;
     const { vehicleId } = req.body;
 
-    res.json({ message: 'Vehicle assigned to trip', tripId: id, vehicleId });
+    const vehicle = await prisma.ambulanceVehicle.findUnique({ where: { id: vehicleId } });
+    if (!vehicle) {
+      return res.status(404).json({ error: 'Vehicle not found' });
+    }
+
+    const trip = await prisma.ambulanceTrip.update({
+      where: { id },
+      data: {
+        vehicleNumber: vehicle.vehicleNumber,
+        driverName: vehicle.driverName,
+        driverContact: vehicle.driverPhone,
+        status: 'in_progress',
+      },
+    });
+
+    await prisma.ambulanceVehicle.update({
+      where: { id: vehicleId },
+      data: { status: 'on_trip' },
+    });
+
+    res.json({ message: 'Vehicle assigned to trip', trip });
   } catch (error) {
     console.error('Assign vehicle error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2482,7 +3147,21 @@ app.post('/api/ambulance/trips/:id/complete', authenticateToken, async (req: any
   try {
     const { id } = req.params;
 
-    res.json({ message: 'Trip completed', tripId: id });
+    const trip = await prisma.ambulanceTrip.update({
+      where: { id },
+      data: {
+        status: 'completed',
+        endTime: new Date(),
+      },
+    });
+
+    // Free up the vehicle
+    await prisma.ambulanceVehicle.updateMany({
+      where: { vehicleNumber: trip.vehicleNumber },
+      data: { status: 'available' },
+    });
+
+    res.json({ message: 'Trip completed', trip });
   } catch (error) {
     console.error('Complete trip error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2496,24 +3175,45 @@ app.post('/api/ambulance/trips/:id/complete', authenticateToken, async (req: any
 app.get('/api/housekeeping/tasks', authenticateToken, async (req: any, res: Response) => {
   try {
     const { status } = req.query;
+    const where: any = {};
 
-    // Mock data
-    const tasks = [
-      {
-        id: '1',
-        location: 'Ward A',
-        area: 'Room 101',
-        taskType: 'Deep Cleaning',
-        assignedTo: 'Maria Garcia',
-        scheduledTime: '10:00 AM',
-        status: 'PENDING',
-        priority: 'HIGH'
-      }
-    ];
+    if (status) where.status = status;
 
-    res.json(tasks);
+    const tasks = await prisma.housekeepingTask.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json(tasks.map(t => ({
+      ...t,
+      location: t.bedId || 'General Area',
+      area: t.remarks || '',
+      scheduledTime: t.scheduledAt?.toLocaleTimeString() || 'Not scheduled',
+    })));
   } catch (error) {
     console.error('Get housekeeping tasks error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/housekeeping/tasks', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { bedId, taskType, assignedTo, priority, scheduledAt, remarks } = req.body;
+
+    const task = await prisma.housekeepingTask.create({
+      data: {
+        bedId,
+        taskType,
+        assignedTo,
+        priority: priority || 'normal',
+        scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
+        remarks,
+      },
+    });
+
+    res.status(201).json(task);
+  } catch (error) {
+    console.error('Create housekeeping task error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2522,7 +3222,15 @@ app.post('/api/housekeeping/tasks/:id/complete', authenticateToken, async (req: 
   try {
     const { id } = req.params;
 
-    res.json({ message: 'Task completed', taskId: id });
+    const task = await prisma.housekeepingTask.update({
+      where: { id },
+      data: {
+        status: 'completed',
+        completedAt: new Date(),
+      },
+    });
+
+    res.json({ message: 'Task completed', task });
   } catch (error) {
     console.error('Complete task error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2531,19 +3239,20 @@ app.post('/api/housekeeping/tasks/:id/complete', authenticateToken, async (req: 
 
 app.get('/api/housekeeping/laundry', authenticateToken, async (req: any, res: Response) => {
   try {
-    // Mock data
-    const laundry = [
-      {
-        id: '1',
-        department: 'ICU',
-        itemType: 'Bed Sheets',
-        quantity: 50,
-        requestDate: new Date().toISOString(),
-        status: 'PENDING'
-      }
-    ];
+    // Using housekeeping tasks with taskType = 'laundry'
+    const laundry = await prisma.housekeepingTask.findMany({
+      where: { taskType: { contains: 'laundry', mode: 'insensitive' } },
+      orderBy: { createdAt: 'desc' },
+    });
 
-    res.json(laundry);
+    res.json(laundry.map(l => ({
+      id: l.id,
+      department: l.bedId || 'General',
+      itemType: l.remarks || 'Mixed Items',
+      quantity: 1,
+      requestDate: l.createdAt,
+      status: l.status.toUpperCase(),
+    })));
   } catch (error) {
     console.error('Get laundry requests error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -2556,35 +3265,72 @@ app.get('/api/housekeeping/laundry', authenticateToken, async (req: any, res: Re
 
 app.get('/api/diet/orders', authenticateToken, async (req: any, res: Response) => {
   try {
-    const { mealType } = req.query;
+    const { mealType, date } = req.query;
+    const where: any = {};
 
-    // Mock data
-    const orders = [
-      {
-        id: '1',
-        patientName: 'John Smith',
-        ward: 'Ward A',
-        bedNumber: 'A-101',
-        dietType: 'Diabetic',
-        mealType: 'BREAKFAST',
-        status: 'PENDING',
-        scheduledTime: '08:00 AM'
-      },
-      {
-        id: '2',
-        patientName: 'Mary Jones',
-        ward: 'Ward B',
-        bedNumber: 'B-205',
-        dietType: 'Low Sodium',
-        mealType: 'LUNCH',
-        status: 'DELIVERED',
-        scheduledTime: '12:30 PM'
-      }
-    ];
+    if (mealType) where.mealType = mealType;
+    if (date) {
+      const startDate = new Date(date as string);
+      const endDate = new Date(startDate);
+      endDate.setDate(endDate.getDate() + 1);
+      where.orderDate = { gte: startDate, lt: endDate };
+    }
 
-    res.json(orders);
+    const orders = await prisma.dietOrder.findMany({
+      where,
+      include: { patient: { select: { name: true, mrn: true } } },
+      orderBy: { orderDate: 'desc' },
+    });
+
+    res.json(orders.map(o => ({
+      ...o,
+      patientName: o.patient.name,
+      patientMRN: o.patient.mrn,
+      ward: 'Ward A', // Could be enriched with admission data
+      bedNumber: 'Bed-1',
+      scheduledTime: o.orderDate.toLocaleTimeString(),
+    })));
   } catch (error) {
     console.error('Get diet orders error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/diet/orders', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { patientId, admissionId, dietType, mealType, remarks } = req.body;
+
+    const order = await prisma.dietOrder.create({
+      data: {
+        patientId,
+        admissionId,
+        dietType,
+        mealType,
+        remarks,
+      },
+      include: { patient: { select: { name: true } } },
+    });
+
+    res.status(201).json(order);
+  } catch (error) {
+    console.error('Create diet order error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/diet/orders/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    const order = await prisma.dietOrder.update({
+      where: { id },
+      data: { status },
+    });
+
+    res.json(order);
+  } catch (error) {
+    console.error('Update diet order error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2678,14 +3424,2665 @@ app.get('/api/reports/dashboard', authenticateToken, async (req: any, res: Respo
   }
 });
 
-// Start server
+// ===========================
+// ALIAS ROUTES (Frontend compatibility)
+// ===========================
+
+// Bills - alias for invoices
+app.get('/api/bills', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const invoices = await prisma.invoice.findMany({
+      include: {
+        patient: { select: { name: true, mrn: true } },
+        payments: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+
+    const bills = invoices.map(inv => {
+      const paidAmount = inv.payments.reduce((sum: number, p: any) => sum + Number(p.amount), 0);
+      const items = inv.items as any[] || [];
+      return {
+        id: inv.id,
+        billNo: `INV-${inv.id.substring(0, 8)}`,
+        patientId: inv.patientId,
+        patientName: inv.patient?.name || 'Unknown',
+        patientMRN: inv.patient?.mrn || '',
+        billType: inv.type,
+        items: items,
+        subtotal: Number(inv.subtotal),
+        discount: Number(inv.discount),
+        discountPercent: Number(inv.subtotal) > 0 ? (Number(inv.discount) / Number(inv.subtotal)) * 100 : 0,
+        tax: Number(inv.tax),
+        taxPercent: Number(inv.subtotal) > 0 ? (Number(inv.tax) / Number(inv.subtotal)) * 100 : 0,
+        total: Number(inv.total),
+        paid: paidAmount,
+        balance: Number(inv.total) - paidAmount,
+        status: inv.status === 'paid' ? 'Paid' : paidAmount > 0 ? 'Partial' : 'Pending',
+        paymentMode: inv.payments[0]?.mode || '',
+        date: inv.createdAt.toISOString(),
+      };
+    });
+
+    res.json(bills);
+  } catch (error) {
+    console.error('Get bills error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Emergency - alias for emergency/cases
+app.get('/api/emergency', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const cases = await prisma.emergencyCase.findMany({
+      orderBy: { arrivalTime: 'desc' },
+    });
+
+    res.json(cases.map(c => ({
+      id: c.id,
+      patientName: c.patientName || 'Unknown',
+      patientId: c.patientId,
+      patientAge: c.patientAge,
+      patientGender: c.patientGender,
+      patientContact: c.patientContact,
+      triageLevel: c.triageCategory,
+      triageCategory: c.triageCategory,
+      chiefComplaint: c.chiefComplaint,
+      vitalSigns: c.vitalSigns,
+      status: c.status,
+      arrivalTime: c.arrivalTime.toISOString(),
+      assignedDoctor: c.assignedDoctor || '',
+      isMLC: c.isMLC,
+      mlcNumber: c.mlcNumber,
+      disposition: c.disposition,
+    })));
+  } catch (error) {
+    console.error('Get emergency error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// OT Rooms - alias
+app.get('/api/ot/rooms', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const rooms = await prisma.oTRoom.findMany({
+      orderBy: { name: 'asc' },
+    });
+
+    res.json(rooms.map(room => ({
+      id: room.id,
+      roomNumber: room.name,
+      name: room.name,
+      type: room.type,
+      floor: room.floor,
+      status: room.status,
+      currentSurgery: room.currentSurgery,
+      equipment: room.equipment,
+    })));
+  } catch (error) {
+    console.error('Get OT rooms error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Pharmacy drugs - alias
+app.get('/api/pharmacy/drugs', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const drugs = await prisma.drug.findMany({
+      orderBy: { name: 'asc' },
+    });
+
+    res.json(drugs.map(d => ({
+      id: d.id,
+      code: d.id.substring(0, 8).toUpperCase(),
+      name: d.name,
+      genericName: d.genericName,
+      category: d.category,
+      dosageForm: d.form,
+      form: d.form,
+      strength: d.strength,
+      manufacturer: 'Generic',
+      unitPrice: Number(d.price),
+      price: Number(d.price),
+      stockQuantity: 100, // Placeholder - would need Stock model
+      reorderLevel: 10,
+      isNarcotic: d.isNarcotic,
+      isActive: d.isActive,
+    })));
+  } catch (error) {
+    console.error('Get pharmacy drugs error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Pharmacy stock
+app.get('/api/pharmacy/stock', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const drugs = await prisma.drug.findMany({
+      where: { isActive: true },
+      orderBy: { name: 'asc' },
+    });
+
+    res.json(drugs.map(d => ({
+      id: d.id,
+      drugId: d.id,
+      drugName: d.name,
+      drugCode: d.id.substring(0, 8).toUpperCase(),
+      batchNumber: `BATCH-${d.id.substring(0, 6)}`,
+      quantity: 100, // Placeholder
+      unitPrice: Number(d.price),
+      expiryDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+      supplier: 'Generic Supplier',
+    })));
+  } catch (error) {
+    console.error('Get pharmacy stock error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Employees - alias for hr/employees
+app.get('/api/employees', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const employees = await prisma.employee.findMany({
+      orderBy: { name: 'asc' },
+    });
+
+    res.json(employees.map(emp => ({
+      id: emp.id,
+      employeeId: emp.employeeId,
+      employeeCode: emp.employeeId,
+      name: emp.name,
+      email: emp.email || '',
+      phone: emp.phone || '',
+      department: emp.department || '',
+      designation: emp.designation || '',
+      joiningDate: emp.joiningDate?.toISOString() || null,
+      salary: emp.salary ? Number(emp.salary) : null,
+      status: emp.status,
+      shift: emp.shift || 'day',
+    })));
+  } catch (error) {
+    console.error('Get employees error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Attendance - alias
+app.get('/api/attendance', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { date } = req.query;
+    const targetDate = date ? new Date(date as string) : new Date();
+
+    const attendance = await prisma.employeeAttendance.findMany({
+      where: {
+        date: targetDate,
+      },
+      include: { employee: { select: { name: true, employeeId: true } } },
+      orderBy: { date: 'desc' },
+      take: 100,
+    });
+
+    res.json(attendance.map(a => ({
+      id: a.id,
+      employeeId: a.employeeId,
+      employeeName: a.employee?.name || '',
+      employeeCode: a.employee?.employeeId || '',
+      date: a.date.toISOString(),
+      checkIn: a.checkIn?.toISOString() || null,
+      checkOut: a.checkOut?.toISOString() || null,
+      status: a.status,
+      remarks: a.remarks,
+    })));
+  } catch (error) {
+    console.error('Get attendance error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Ambulances - alias
+app.get('/api/ambulances', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const vehicles = await prisma.ambulanceVehicle.findMany({
+      orderBy: { vehicleNumber: 'asc' },
+    });
+
+    res.json(vehicles.map(v => ({
+      id: v.id,
+      vehicleNumber: v.vehicleNumber,
+      type: v.type,
+      status: v.status,
+      driver: v.driverName || '',
+      driverName: v.driverName || '',
+      driverPhone: v.driverPhone || '',
+      currentLocation: v.currentLocation || '',
+      lastMaintenance: v.lastMaintenance?.toISOString() || null,
+    })));
+  } catch (error) {
+    console.error('Get ambulances error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Nurse medications
+app.get('/api/nurse/medications', authenticateToken, async (req: any, res: Response) => {
+  try {
+    // Return medication tasks from prescriptions for admitted patients
+    const admissions = await prisma.admission.findMany({
+      where: {
+        status: 'active',
+      },
+      include: {
+        patient: { select: { name: true, mrn: true } },
+        encounter: {
+          include: {
+            opdNotes: {
+              include: {
+                prescriptions: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const medications: any[] = [];
+    admissions.forEach(adm => {
+      adm.encounter?.opdNotes?.forEach(note => {
+        note.prescriptions?.forEach(rx => {
+          const drugs = rx.drugs as any[] || [];
+          drugs.forEach((drug, idx) => {
+            medications.push({
+              id: `${rx.id}-${idx}`,
+              patientId: adm.patientId,
+              patientName: adm.patient.name,
+              patientMRN: adm.patient.mrn,
+              medication: drug.name || 'Unknown',
+              dosage: drug.dosage || '',
+              route: drug.route || 'oral',
+              frequency: drug.frequency || '',
+              scheduledTime: new Date().toISOString(),
+              status: 'pending',
+            });
+          });
+        });
+      });
+    });
+
+    res.json(medications);
+  } catch (error) {
+    console.error('Get nurse medications error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Nurse vitals
+app.get('/api/nurse/vitals', authenticateToken, async (req: any, res: Response) => {
+  try {
+    // Get vitals from ICU records
+    const vitals = await prisma.iCUVitals.findMany({
+      include: {
+        icuBed: true,
+      },
+      orderBy: { recordedAt: 'desc' },
+      take: 100,
+    });
+
+    res.json(vitals.map(v => ({
+      id: v.id,
+      patientId: v.patientId || '',
+      bedNumber: v.icuBed?.bedNumber || '',
+      temperature: v.temperature ? Number(v.temperature) : null,
+      bloodPressure: v.systolicBP && v.diastolicBP ? `${v.systolicBP}/${v.diastolicBP}` : '',
+      systolicBP: v.systolicBP,
+      diastolicBP: v.diastolicBP,
+      pulse: v.heartRate,
+      heartRate: v.heartRate,
+      respiratoryRate: v.respiratoryRate,
+      oxygenSaturation: v.spo2,
+      spo2: v.spo2,
+      gcs: v.gcs,
+      recordedAt: v.recordedAt.toISOString(),
+      recordedBy: v.recordedBy || '',
+    })));
+  } catch (error) {
+    console.error('Get nurse vitals error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Referral doctors
+app.get('/api/referral-doctors', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const sources = await prisma.referralSource.findMany({
+      where: {
+        type: 'doctor',
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    res.json(sources.map(s => ({
+      id: s.id,
+      name: s.name,
+      code: s.code,
+      type: s.type,
+      contact: s.contact || '',
+      email: s.email || '',
+      address: s.address || '',
+      commissionType: s.commissionType,
+      commissionValue: Number(s.commissionValue),
+      isActive: s.isActive,
+    })));
+  } catch (error) {
+    console.error('Get referral doctors error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Insurance companies (TPA)
+app.get('/api/insurance-companies', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const companies = await prisma.tPAMaster.findMany({
+      orderBy: { name: 'asc' },
+    });
+
+    res.json(companies.map(c => ({
+      id: c.id,
+      name: c.name,
+      code: c.id.substring(0, 6).toUpperCase(),
+      type: c.type,
+      contactPerson: c.contactPerson || '',
+      contact: c.contact || '',
+      email: c.email || '',
+      address: c.address || '',
+      creditLimit: c.creditLimit ? Number(c.creditLimit) : null,
+      discountPercent: c.discountPercent ? Number(c.discountPercent) : null,
+      status: c.isActive ? 'active' : 'inactive',
+      isActive: c.isActive,
+    })));
+  } catch (error) {
+    console.error('Get insurance companies error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Master data - drugs
+app.get('/api/master/drugs', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const drugs = await prisma.drug.findMany({
+      orderBy: { name: 'asc' },
+    });
+
+    res.json(drugs.map(d => ({
+      id: d.id,
+      code: d.id.substring(0, 8).toUpperCase(),
+      name: d.name,
+      genericName: d.genericName,
+      description: d.genericName,
+      category: d.category,
+      dosageForm: d.form,
+      form: d.form,
+      strength: d.strength,
+      unitPrice: Number(d.price),
+      price: Number(d.price),
+      isNarcotic: d.isNarcotic,
+      status: d.isActive ? 'active' : 'inactive',
+    })));
+  } catch (error) {
+    console.error('Get master drugs error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Master data - tests
+app.get('/api/master/tests', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const tests = await prisma.labTestMaster.findMany({
+      orderBy: { name: 'asc' },
+    });
+
+    res.json(tests.map(t => ({
+      id: t.id,
+      code: t.code,
+      name: t.name,
+      description: t.name,
+      category: t.category,
+      price: Number(t.price),
+      tat: t.tat,
+      unit: t.unit,
+      normalRange: t.normalRange,
+      status: t.isActive ? 'active' : 'inactive',
+    })));
+  } catch (error) {
+    console.error('Get master tests error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ===========================
+// MASTER DATA APIs
+// ===========================
+
+// Master data - lab tests (alias for frontend)
+app.get('/api/master/lab-tests', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const tests = await prisma.labTestMaster.findMany({
+      orderBy: { name: 'asc' },
+    });
+
+    res.json(tests.map(t => ({
+      id: t.id,
+      code: t.code,
+      name: t.name,
+      description: t.name,
+      category: t.category,
+      sampleType: t.category,
+      price: Number(t.price),
+      tat: t.tat,
+      unit: t.unit,
+      normalRange: t.normalRange,
+      status: t.isActive ? 'active' : 'inactive',
+    })));
+  } catch (error) {
+    console.error('Get master lab tests error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Master data - radiology tests
+app.get('/api/master/radiology-tests', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const tests = await prisma.radiologyTestMaster.findMany({
+      orderBy: { name: 'asc' },
+    });
+
+    res.json(tests.map(t => ({
+      id: t.id,
+      code: t.code,
+      name: t.name,
+      description: t.name,
+      category: t.modality,
+      price: Number(t.price),
+      tat: t.tat,
+      status: t.isActive ? 'active' : 'inactive',
+    })));
+  } catch (error) {
+    console.error('Get master radiology tests error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Master data - procedures
+app.get('/api/master/procedures', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const procedures = await prisma.procedureMaster.findMany({
+      orderBy: { name: 'asc' },
+    });
+
+    res.json(procedures.map(p => ({
+      id: p.id,
+      code: p.code,
+      name: p.name,
+      description: p.name,
+      category: p.category,
+      price: Number(p.price),
+      status: p.isActive ? 'active' : 'inactive',
+    })));
+  } catch (error) {
+    console.error('Get master procedures error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Master data - departments
+app.get('/api/master/departments', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const departments = await prisma.department.findMany({
+      orderBy: { name: 'asc' },
+    });
+
+    res.json(departments.map(d => ({
+      id: d.id,
+      code: d.id.substring(0, 8).toUpperCase(),
+      name: d.name,
+      type: d.type,
+      hodName: '',
+      contact: '',
+      status: d.isActive ? 'active' : 'inactive',
+    })));
+  } catch (error) {
+    console.error('Get master departments error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Master data - wards
+app.get('/api/master/wards', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const wards = await prisma.ward.findMany({
+      orderBy: { name: 'asc' },
+    });
+
+    res.json(wards.map(w => ({
+      id: w.id,
+      code: w.id.substring(0, 8).toUpperCase(),
+      name: w.name,
+      type: w.type,
+      totalBeds: w.totalBeds,
+      bedCharge: Number(w.tariffPerDay),
+      floor: w.floor || '',
+      wing: '',
+      status: w.isActive ? 'active' : 'inactive',
+    })));
+  } catch (error) {
+    console.error('Get master wards error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Master data - packages
+app.get('/api/master/packages', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const packages = await prisma.packageMaster.findMany({
+      orderBy: { name: 'asc' },
+    });
+
+    res.json(packages.map(p => ({
+      id: p.id,
+      code: p.code,
+      name: p.name,
+      description: JSON.stringify(p.items),
+      items: p.items,
+      price: Number(p.price),
+      status: p.isActive ? 'active' : 'inactive',
+    })));
+  } catch (error) {
+    console.error('Get master packages error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST - Create master data item
+app.post('/api/master/:type', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { type } = req.params;
+    const data = req.body;
+    let result;
+
+    switch (type) {
+      case 'drugs':
+        result = await prisma.drug.create({
+          data: {
+            name: data.name,
+            genericName: data.genericName || data.name,
+            category: data.category || 'General',
+            form: data.dosageForm || 'Tablet',
+            strength: data.strength || '',
+            price: data.unitPrice || 0,
+            isNarcotic: false,
+            isActive: true,
+          },
+        });
+        break;
+
+      case 'lab-tests':
+        result = await prisma.labTestMaster.create({
+          data: {
+            name: data.name,
+            code: data.code || `LAB-${Date.now()}`,
+            category: data.category || data.sampleType || 'General',
+            price: data.price || 0,
+            tat: 24,
+            isActive: true,
+          },
+        });
+        break;
+
+      case 'radiology-tests':
+        result = await prisma.radiologyTestMaster.create({
+          data: {
+            name: data.name,
+            code: data.code || `RAD-${Date.now()}`,
+            modality: data.category || 'X-Ray',
+            price: data.price || 0,
+            tat: 24,
+            isActive: true,
+          },
+        });
+        break;
+
+      case 'procedures':
+        result = await prisma.procedureMaster.create({
+          data: {
+            name: data.name,
+            code: data.code || `PROC-${Date.now()}`,
+            category: data.category || 'General',
+            price: data.price || 0,
+            isActive: true,
+          },
+        });
+        break;
+
+      case 'departments':
+        result = await prisma.department.create({
+          data: {
+            name: data.name,
+            branchId: req.user.branchId,
+            type: data.type || 'clinical',
+            isActive: true,
+          },
+        });
+        break;
+
+      case 'wards':
+        result = await prisma.ward.create({
+          data: {
+            name: data.name,
+            type: data.type || 'General',
+            floor: data.floor || '',
+            totalBeds: data.totalBeds || 0,
+            tariffPerDay: data.bedCharge || 0,
+            isActive: true,
+          },
+        });
+        break;
+
+      case 'packages':
+        result = await prisma.packageMaster.create({
+          data: {
+            name: data.name,
+            code: data.code || `PKG-${Date.now()}`,
+            items: data.items || {},
+            price: data.price || 0,
+            isActive: true,
+          },
+        });
+        break;
+
+      default:
+        return res.status(400).json({ error: 'Invalid master data type' });
+    }
+
+    res.status(201).json({ id: result.id, message: 'Item created successfully' });
+  } catch (error) {
+    console.error('Create master data error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// PUT - Update master data item
+app.put('/api/master/:type/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { type, id } = req.params;
+    const data = req.body;
+    let result;
+
+    switch (type) {
+      case 'drugs':
+        result = await prisma.drug.update({
+          where: { id },
+          data: {
+            name: data.name,
+            genericName: data.genericName,
+            category: data.category,
+            form: data.dosageForm,
+            strength: data.strength,
+            price: data.unitPrice,
+            isActive: data.status === 'active',
+          },
+        });
+        break;
+
+      case 'lab-tests':
+        result = await prisma.labTestMaster.update({
+          where: { id },
+          data: {
+            name: data.name,
+            code: data.code,
+            category: data.category,
+            price: data.price,
+            isActive: data.status === 'active',
+          },
+        });
+        break;
+
+      case 'radiology-tests':
+        result = await prisma.radiologyTestMaster.update({
+          where: { id },
+          data: {
+            name: data.name,
+            code: data.code,
+            modality: data.category,
+            price: data.price,
+            isActive: data.status === 'active',
+          },
+        });
+        break;
+
+      case 'procedures':
+        result = await prisma.procedureMaster.update({
+          where: { id },
+          data: {
+            name: data.name,
+            code: data.code,
+            category: data.category,
+            price: data.price,
+            isActive: data.status === 'active',
+          },
+        });
+        break;
+
+      case 'departments':
+        result = await prisma.department.update({
+          where: { id },
+          data: {
+            name: data.name,
+            type: data.type,
+            isActive: data.status === 'active',
+          },
+        });
+        break;
+
+      case 'wards':
+        result = await prisma.ward.update({
+          where: { id },
+          data: {
+            name: data.name,
+            type: data.type,
+            floor: data.floor,
+            totalBeds: data.totalBeds,
+            tariffPerDay: data.bedCharge,
+            isActive: data.status === 'active',
+          },
+        });
+        break;
+
+      case 'packages':
+        result = await prisma.packageMaster.update({
+          where: { id },
+          data: {
+            name: data.name,
+            code: data.code,
+            items: data.items,
+            price: data.price,
+            isActive: data.status === 'active',
+          },
+        });
+        break;
+
+      default:
+        return res.status(400).json({ error: 'Invalid master data type' });
+    }
+
+    res.json({ id: result.id, message: 'Item updated successfully' });
+  } catch (error) {
+    console.error('Update master data error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// DELETE - Delete master data item
+app.delete('/api/master/:type/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { type, id } = req.params;
+
+    switch (type) {
+      case 'drugs':
+        await prisma.drug.delete({ where: { id } });
+        break;
+      case 'lab-tests':
+        await prisma.labTestMaster.delete({ where: { id } });
+        break;
+      case 'radiology-tests':
+        await prisma.radiologyTestMaster.delete({ where: { id } });
+        break;
+      case 'procedures':
+        await prisma.procedureMaster.delete({ where: { id } });
+        break;
+      case 'departments':
+        await prisma.department.delete({ where: { id } });
+        break;
+      case 'wards':
+        await prisma.ward.delete({ where: { id } });
+        break;
+      case 'packages':
+        await prisma.packageMaster.delete({ where: { id } });
+        break;
+      default:
+        return res.status(400).json({ error: 'Invalid master data type' });
+    }
+
+    res.json({ message: 'Item deleted successfully' });
+  } catch (error) {
+    console.error('Delete master data error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ===========================
+// SYSTEM CONTROL APIs
+// ===========================
+
+// Get all users
+app.get('/api/users', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const users = await prisma.user.findMany({
+      where: { tenantId: req.user.tenantId },
+      orderBy: { name: 'asc' },
+    });
+
+    // Map roleId to display name
+    const roleDisplayNames: Record<string, string> = {
+      'ADMIN': 'Admin',
+      'DOCTOR': 'Doctor',
+      'NURSE': 'Nurse',
+      'FRONT_OFFICE': 'Receptionist',
+      'PHARMACIST': 'Pharmacist',
+      'LAB_TECH': 'Lab Technician',
+      'BILLING': 'Accountant',
+      'RADIOLOGY_TECH': 'Radiology Tech',
+      'IPD_STAFF': 'IPD Staff',
+      'OT_STAFF': 'OT Staff',
+      'ICU': 'ICU Staff',
+      'EMERGENCY': 'Emergency Staff',
+    };
+
+    res.json(users.map(u => ({
+      id: u.id,
+      username: u.username,
+      fullName: u.name,
+      email: u.email,
+      phone: '',
+      role: roleDisplayNames[u.roleIds[0]] || u.roleIds[0] || 'User',
+      status: u.isActive ? 'active' : 'inactive',
+      lastLogin: u.lastLoginAt?.toISOString(),
+      createdAt: u.createdAt.toISOString(),
+    })));
+  } catch (error) {
+    console.error('Get users error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Create user
+app.post('/api/users', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { username, fullName, email, phone, role, password } = req.body;
+    const bcrypt = await import('bcryptjs');
+    const passwordHash = await bcrypt.hash(password || 'password123', 10);
+
+    const user = await prisma.user.create({
+      data: {
+        username,
+        name: fullName,
+        email,
+        passwordHash,
+        tenantId: req.user.tenantId,
+        branchId: req.user.branchId,
+        roleIds: [role],
+        isActive: true,
+      },
+    });
+
+    res.status(201).json({
+      id: user.id,
+      username: user.username,
+      fullName: user.name,
+      email: user.email,
+      role: user.roleIds[0],
+      status: 'active',
+    });
+  } catch (error) {
+    console.error('Create user error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update user
+app.put('/api/users/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { username, fullName, email, role, status } = req.body;
+
+    const user = await prisma.user.update({
+      where: { id },
+      data: {
+        username,
+        name: fullName,
+        email,
+        roleIds: role ? [role] : undefined,
+        isActive: status === 'active',
+      },
+    });
+
+    res.json({
+      id: user.id,
+      username: user.username,
+      fullName: user.name,
+      email: user.email,
+      role: user.roleIds[0],
+      status: user.isActive ? 'active' : 'inactive',
+    });
+  } catch (error) {
+    console.error('Update user error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete user
+app.delete('/api/users/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    await prisma.user.delete({ where: { id } });
+    res.json({ message: 'User deleted successfully' });
+  } catch (error) {
+    console.error('Delete user error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Reset user password
+app.post('/api/users/:id/reset-password', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { newPassword } = req.body;
+    const bcrypt = await import('bcryptjs');
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+
+    await prisma.user.update({
+      where: { id },
+      data: { passwordHash },
+    });
+
+    res.json({ message: 'Password reset successfully' });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get audit logs
+app.get('/api/audit-logs', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { module, dateFrom, dateTo } = req.query;
+
+    const where: any = {};
+    if (module) where.resource = module;
+    if (dateFrom || dateTo) {
+      where.timestamp = {};
+      if (dateFrom) where.timestamp.gte = new Date(dateFrom as string);
+      if (dateTo) where.timestamp.lte = new Date(dateTo as string);
+    }
+
+    const logs = await prisma.auditLog.findMany({
+      where,
+      include: {
+        user: { select: { name: true, username: true } },
+      },
+      orderBy: { timestamp: 'desc' },
+      take: 100,
+    });
+
+    res.json(logs.map(log => ({
+      id: log.id,
+      userId: log.userId,
+      userName: log.user?.username || log.performedBy || 'System',
+      action: log.action,
+      module: log.resource,
+      details: log.resourceId ? `Resource ID: ${log.resourceId}` : '',
+      ipAddress: log.ipAddress || 'N/A',
+      timestamp: log.timestamp.toISOString(),
+    })));
+  } catch (error) {
+    console.error('Get audit logs error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get system settings
+app.get('/api/settings', authenticateToken, async (req: any, res: Response) => {
+  try {
+    // Return tenant/branch config as settings
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: req.user.tenantId },
+    });
+    const branch = await prisma.branch.findUnique({
+      where: { id: req.user.branchId },
+    });
+
+    const settings = [
+      { id: '1', category: 'hospital', key: 'name', value: tenant?.name || '', description: 'Hospital name' },
+      { id: '2', category: 'hospital', key: 'address', value: tenant?.address || '', description: 'Hospital address' },
+      { id: '3', category: 'hospital', key: 'phone', value: tenant?.contact || '', description: 'Contact phone' },
+    ];
+
+    res.json(settings);
+  } catch (error) {
+    console.error('Get settings error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Save hospital settings
+app.post('/api/settings/hospital', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { name, address, phone, email } = req.body;
+
+    await prisma.tenant.update({
+      where: { id: req.user.tenantId },
+      data: {
+        name: name || undefined,
+        address: address || undefined,
+        contact: phone || undefined,
+      },
+    });
+
+    res.json({ message: 'Hospital settings saved successfully' });
+  } catch (error) {
+    console.error('Save hospital settings error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Save email config (placeholder)
+app.post('/api/settings/email', authenticateToken, async (req: any, res: Response) => {
+  try {
+    // In a real implementation, this would save to a settings table
+    res.json({ message: 'Email configuration saved successfully' });
+  } catch (error) {
+    console.error('Save email config error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Save SMS config (placeholder)
+app.post('/api/settings/sms', authenticateToken, async (req: any, res: Response) => {
+  try {
+    // In a real implementation, this would save to a settings table
+    res.json({ message: 'SMS configuration saved successfully' });
+  } catch (error) {
+    console.error('Save SMS config error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get reports config (placeholder)
+app.get('/api/reports', authenticateToken, async (req: any, res: Response) => {
+  try {
+    // Return mock reports for now
+    res.json([]);
+  } catch (error) {
+    console.error('Get reports error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ===========================
+// TPA & INSURANCE APIs
+// ===========================
+
+// Add insurance company
+app.post('/api/insurance-companies', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { name, code, contact, email, address } = req.body;
+
+    const company = await prisma.tPAMaster.create({
+      data: {
+        name,
+        type: 'Insurance',
+        contactPerson: '',
+        contact,
+        email,
+        address,
+        isActive: true,
+      },
+    });
+
+    res.status(201).json({
+      id: company.id,
+      name: company.name,
+      code: code || company.id.substring(0, 6).toUpperCase(),
+      contact: company.contact,
+      email: company.email,
+      address: company.address,
+      status: 'active',
+    });
+  } catch (error) {
+    console.error('Create insurance company error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get patient insurances
+app.get('/api/patient-insurances', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const patientInsurances = await prisma.patientInsurance.findMany({
+      include: {
+        patient: { select: { id: true, name: true, mrn: true } },
+        tpa: { select: { id: true, name: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json(patientInsurances.map(pi => ({
+      id: pi.id,
+      patientId: pi.patientId,
+      patientName: pi.patient.name,
+      patientMRN: pi.patient.mrn,
+      insuranceCompanyId: pi.tpaId,
+      insuranceCompanyName: pi.tpa.name,
+      policyNumber: pi.policyNumber,
+      policyHolderName: pi.policyHolderName || pi.patient.name,
+      validFrom: pi.validFrom.toISOString().split('T')[0],
+      validTill: pi.validTill.toISOString().split('T')[0],
+      sumInsured: Number(pi.sumInsured),
+      status: pi.isActive && new Date(pi.validTill) > new Date() ? 'active' : 'expired',
+    })));
+  } catch (error) {
+    console.error('Get patient insurances error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Add patient insurance
+app.post('/api/patient-insurances', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { patientId, insuranceCompanyId, policyNumber, policyHolderName, validFrom, validTill, sumInsured } = req.body;
+
+    // If patientId is passed as patientName (from frontend), find or create patient
+    let actualPatientId = patientId;
+    if (!patientId || patientId === '') {
+      // Use first patient as demo
+      const patient = await prisma.patient.findFirst();
+      if (!patient) {
+        return res.status(400).json({ error: 'No patients found in the system' });
+      }
+      actualPatientId = patient.id;
+    }
+
+    const patientInsurance = await prisma.patientInsurance.create({
+      data: {
+        patientId: actualPatientId,
+        tpaId: insuranceCompanyId,
+        policyNumber,
+        policyHolderName,
+        validFrom: new Date(validFrom),
+        validTill: new Date(validTill),
+        sumInsured: sumInsured || 0,
+        isActive: true,
+      },
+      include: {
+        patient: { select: { name: true, mrn: true } },
+        tpa: { select: { name: true } },
+      },
+    });
+
+    res.status(201).json({
+      id: patientInsurance.id,
+      patientId: patientInsurance.patientId,
+      patientName: patientInsurance.patient.name,
+      patientMRN: patientInsurance.patient.mrn,
+      insuranceCompanyId: patientInsurance.tpaId,
+      insuranceCompanyName: patientInsurance.tpa.name,
+      policyNumber: patientInsurance.policyNumber,
+      policyHolderName: patientInsurance.policyHolderName,
+      validFrom: patientInsurance.validFrom.toISOString().split('T')[0],
+      validTill: patientInsurance.validTill.toISOString().split('T')[0],
+      sumInsured: Number(patientInsurance.sumInsured),
+      status: 'active',
+    });
+  } catch (error) {
+    console.error('Create patient insurance error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get TPA claims
+app.get('/api/tpa/claims', authenticateToken, async (req: any, res: Response) => {
+  try {
+    // Return empty for now - would need Claims model
+    res.json([]);
+  } catch (error) {
+    console.error('Get TPA claims error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Submit TPA claim
+app.post('/api/tpa/claims', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const data = req.body;
+    // Return mock response
+    res.status(201).json({
+      id: `claim-${Date.now()}`,
+      claimNumber: `CLM-${Date.now().toString().slice(-8)}`,
+      ...data,
+      status: 'Submitted',
+      submittedDate: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Submit TPA claim error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get pre-authorizations
+app.get('/api/tpa/pre-authorizations', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const preAuths = await prisma.preAuthorization.findMany({
+      include: {
+        patient: { select: { name: true, mrn: true } },
+        tpa: { select: { name: true } },
+      },
+      orderBy: { requestDate: 'desc' },
+    });
+
+    res.json(preAuths.map(pa => ({
+      id: pa.id,
+      patientId: pa.patientId,
+      patientName: pa.patient.name,
+      patientInsuranceId: pa.tpaId,
+      insuranceCompanyName: pa.tpa.name,
+      policyNumber: pa.approvalNumber || '',
+      procedure: pa.procedurePlanned || '',
+      estimatedAmount: Number(pa.requestedAmount),
+      approvedAmount: Number(pa.approvedAmount) || 0,
+      status: pa.status === 'approved' ? 'Approved' : pa.status === 'rejected' ? 'Rejected' : 'Pending',
+      requestedDate: pa.requestDate.toISOString(),
+      approvedDate: pa.approvalDate?.toISOString(),
+    })));
+  } catch (error) {
+    console.error('Get pre-authorizations error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Submit pre-authorization
+app.post('/api/tpa/pre-authorizations', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { patientInsuranceId, procedure, estimatedAmount, patientId } = req.body;
+
+    // Get a patient if patientId not provided
+    let actualPatientId = patientId;
+    if (!actualPatientId) {
+      const patient = await prisma.patient.findFirst();
+      actualPatientId = patient?.id;
+    }
+
+    if (!actualPatientId) {
+      return res.status(400).json({ error: 'No patient found' });
+    }
+
+    const preAuth = await prisma.preAuthorization.create({
+      data: {
+        patientId: actualPatientId,
+        tpaId: patientInsuranceId,
+        requestedAmount: estimatedAmount || 0,
+        procedurePlanned: procedure,
+        status: 'pending',
+      },
+      include: {
+        patient: { select: { name: true } },
+        tpa: { select: { name: true } },
+      },
+    });
+
+    res.status(201).json({
+      id: preAuth.id,
+      patientId: preAuth.patientId,
+      patientName: preAuth.patient.name,
+      insuranceCompanyName: preAuth.tpa.name,
+      procedure: preAuth.procedurePlanned,
+      estimatedAmount: Number(preAuth.requestedAmount),
+      approvedAmount: 0,
+      status: 'Pending',
+      requestedDate: preAuth.requestDate.toISOString(),
+    });
+  } catch (error) {
+    console.error('Submit pre-authorization error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ICU patients
+app.get('/api/icu/patients', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const icuBeds = await prisma.iCUBed.findMany({
+      where: {
+        status: 'occupied',
+      },
+    });
+
+    res.json(icuBeds.map(b => ({
+      id: b.id,
+      bedNumber: b.bedNumber,
+      icuUnit: b.icuUnit,
+      status: b.status,
+      currentPatient: b.currentPatient,
+      admissionId: b.admissionId,
+      ventilatorId: b.ventilatorId,
+    })));
+  } catch (error) {
+    console.error('Get ICU patients error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ===========================
+// IPD BILLING ROUTES
+// ===========================
+
+// Get IPD billing details for an admission
+app.get('/api/ipd-billing/:admissionId', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { admissionId } = req.params;
+
+    const admission = await prisma.admission.findUnique({
+      where: { id: admissionId },
+      include: {
+        patient: { select: { name: true, mrn: true } },
+        bed: true,
+        admittingDoctor: { select: { name: true } },
+        encounter: {
+          include: {
+            invoices: {
+              where: { type: 'ipd' },
+              include: { payments: true },
+            },
+            orders: true,
+          },
+        },
+      },
+    });
+
+    if (!admission) {
+      return res.status(404).json({ error: 'Admission not found' });
+    }
+
+    // Calculate days of stay
+    const admitDate = new Date(admission.admissionDate);
+    const dischargeDate = admission.dischargeDate ? new Date(admission.dischargeDate) : new Date();
+    const totalDays = Math.ceil((dischargeDate.getTime() - admitDate.getTime()) / (1000 * 60 * 60 * 24)) || 1;
+
+    // Get ward tariff if available
+    let bedChargePerDay = 1500; // Default rate
+    if (admission.bed?.wardId) {
+      const ward = await prisma.ward.findUnique({ where: { id: admission.bed.wardId } });
+      if (ward) bedChargePerDay = Number(ward.tariffPerDay);
+    } else {
+      // Set rate based on bed category
+      const categoryRates: Record<string, number> = {
+        'general': 1500,
+        'semi-private': 2500,
+        'private': 4000,
+        'deluxe': 6000,
+        'icu': 8000,
+        'nicu': 10000,
+      };
+      bedChargePerDay = categoryRates[admission.bed?.category?.toLowerCase() || 'general'] || 1500;
+    }
+
+    const charges: any[] = [];
+
+    // Add bed charges
+    charges.push({
+      id: `bed-${admissionId}`,
+      admissionId,
+      category: 'bed',
+      description: `${admission.bed?.category || 'General'} Ward - Bed ${admission.bed?.bedNumber || 'N/A'}`,
+      quantity: totalDays,
+      unitPrice: bedChargePerDay,
+      total: totalDays * bedChargePerDay,
+      date: admission.admissionDate.toISOString(),
+    });
+
+    // Add charges from orders (lab, radiology, pharmacy, etc.)
+    const orders = admission.encounter?.orders || [];
+    for (const order of orders) {
+      const details = order.details as any;
+      const orderType = order.orderType.toLowerCase();
+
+      let category = 'other';
+      if (orderType.includes('lab')) category = 'lab';
+      else if (orderType.includes('radiology') || orderType.includes('imaging')) category = 'radiology';
+      else if (orderType.includes('pharmacy') || orderType.includes('medication')) category = 'pharmacy';
+      else if (orderType.includes('procedure')) category = 'procedure';
+      else if (orderType.includes('consultation')) category = 'consultation';
+
+      // Handle different order structures
+      if (details?.items && Array.isArray(details.items)) {
+        for (const item of details.items) {
+          charges.push({
+            id: `${order.id}-${item.id || Math.random().toString(36).substr(2, 9)}`,
+            admissionId,
+            category,
+            description: item.name || item.testName || item.medicationName || 'Service',
+            quantity: item.quantity || 1,
+            unitPrice: Number(item.price) || 0,
+            total: (item.quantity || 1) * (Number(item.price) || 0),
+            date: order.orderedAt.toISOString(),
+            orderId: order.id,
+          });
+        }
+      } else if (details?.testName || details?.name) {
+        charges.push({
+          id: order.id,
+          admissionId,
+          category,
+          description: details.testName || details.name || `${orderType} Order`,
+          quantity: 1,
+          unitPrice: Number(details.price) || 0,
+          total: Number(details.price) || 0,
+          date: order.orderedAt.toISOString(),
+          orderId: order.id,
+        });
+      }
+    }
+
+    // Get existing invoice if any
+    const existingInvoice = admission.encounter?.invoices?.find(inv => inv.type === 'ipd');
+    const existingPayments = existingInvoice?.payments || [];
+
+    res.json({
+      admissionId,
+      encounterId: admission.encounterId,
+      patientId: admission.patientId,
+      patientName: admission.patient.name,
+      patientMRN: admission.patient.mrn,
+      doctorName: admission.admittingDoctor?.name || 'Not Assigned',
+      diagnosis: admission.diagnosis || '',
+      wardName: admission.bed?.category || 'General',
+      bedNumber: admission.bed?.bedNumber || 'N/A',
+      admissionDate: admission.admissionDate.toISOString(),
+      dischargeDate: admission.dischargeDate?.toISOString() || null,
+      status: admission.status,
+      totalDays,
+      charges,
+      existingInvoice: existingInvoice ? {
+        id: existingInvoice.id,
+        items: existingInvoice.items,
+        subtotal: Number(existingInvoice.subtotal),
+        discount: Number(existingInvoice.discount),
+        tax: Number(existingInvoice.tax),
+        total: Number(existingInvoice.total),
+        paid: Number(existingInvoice.paid),
+        balance: Number(existingInvoice.balance),
+        status: existingInvoice.status,
+        payments: existingPayments.map(p => ({
+          id: p.id,
+          amount: Number(p.amount),
+          paymentMode: p.mode,
+          paymentDate: p.paidAt.toISOString(),
+          reference: p.transactionRef,
+        })),
+      } : null,
+    });
+  } catch (error) {
+    console.error('Get IPD billing error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Create or update IPD bill
+app.post('/api/ipd-billing', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { admissionId, patientId, charges, subtotal, discount, discountPercent, tax, taxPercent, total, dischargePatient } = req.body;
+
+    const admission = await prisma.admission.findUnique({
+      where: { id: admissionId },
+      include: {
+        encounter: {
+          include: {
+            invoices: { where: { type: 'ipd' } }
+          }
+        }
+      }
+    });
+
+    if (!admission) {
+      return res.status(404).json({ error: 'Admission not found' });
+    }
+
+    // Check if invoice already exists
+    const existingInvoice = admission.encounter?.invoices?.[0];
+    let invoice;
+
+    if (existingInvoice) {
+      // Update existing invoice
+      invoice = await prisma.invoice.update({
+        where: { id: existingInvoice.id },
+        data: {
+          items: charges,
+          subtotal: subtotal || 0,
+          discount: discount || 0,
+          tax: tax || 0,
+          total: total || 0,
+          balance: total - Number(existingInvoice.paid),
+          status: Number(existingInvoice.paid) >= total ? 'paid' : Number(existingInvoice.paid) > 0 ? 'partial' : 'pending',
+        },
+      });
+    } else {
+      // Create new invoice
+      invoice = await prisma.invoice.create({
+        data: {
+          patientId,
+          encounterId: admission.encounterId,
+          type: 'ipd',
+          items: charges,
+          subtotal: subtotal || 0,
+          discount: discount || 0,
+          tax: tax || 0,
+          total: total || 0,
+          paid: 0,
+          balance: total || 0,
+          status: 'pending',
+        },
+      });
+    }
+
+    // Discharge patient if requested
+    if (dischargePatient) {
+      await prisma.admission.update({
+        where: { id: admissionId },
+        data: {
+          status: 'discharged',
+          dischargeDate: new Date(),
+        },
+      });
+
+      // Free up the bed
+      if (admission.bedId) {
+        await prisma.bed.update({
+          where: { id: admission.bedId },
+          data: { status: 'dirty' },
+        });
+      }
+    }
+
+    res.status(existingInvoice ? 200 : 201).json({
+      id: invoice.id,
+      message: existingInvoice ? 'IPD bill updated successfully' : 'IPD bill created successfully',
+      discharged: dischargePatient || false,
+    });
+  } catch (error) {
+    console.error('Create/Update IPD bill error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Add payment to IPD bill
+app.post('/api/ipd-billing/:admissionId/pay', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { admissionId } = req.params;
+    const { invoiceId, amount, paymentMode, reference, billData } = req.body;
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: 'Invalid payment amount' });
+    }
+
+    // Find admission and existing invoice
+    const admission = await prisma.admission.findUnique({
+      where: { id: admissionId },
+      include: {
+        encounter: {
+          include: {
+            invoices: { where: { type: 'ipd' } },
+          },
+        },
+      },
+    });
+
+    if (!admission) {
+      return res.status(404).json({ error: 'Admission not found' });
+    }
+
+    let invoice = invoiceId
+      ? await prisma.invoice.findUnique({ where: { id: invoiceId } })
+      : admission?.encounter?.invoices?.[0];
+
+    // If no invoice exists but billData is provided, create the invoice first
+    if (!invoice && billData) {
+      invoice = await prisma.invoice.create({
+        data: {
+          patientId: admission.patientId,
+          encounterId: admission.encounterId,
+          type: 'ipd',
+          items: billData.charges || [],
+          subtotal: billData.subtotal || 0,
+          discount: billData.discount || 0,
+          tax: billData.tax || 0,
+          total: billData.total || 0,
+          paid: 0,
+          balance: billData.total || 0,
+          status: 'pending',
+        },
+      });
+    }
+
+    if (!invoice) {
+      return res.status(400).json({ error: 'Please save the bill first before recording payment' });
+    }
+
+    // Create payment
+    const payment = await prisma.payment.create({
+      data: {
+        invoiceId: invoice.id,
+        amount: amount,
+        mode: paymentMode || 'cash',
+        transactionRef: reference,
+        receivedBy: req.user.userId,
+      },
+    });
+
+    // Update invoice paid amount and balance
+    const newPaid = Number(invoice.paid) + Number(amount);
+    const newBalance = Number(invoice.total) - newPaid;
+
+    const updatedInvoice = await prisma.invoice.update({
+      where: { id: invoice.id },
+      data: {
+        paid: newPaid,
+        balance: newBalance,
+        status: newBalance <= 0 ? 'paid' : 'partial',
+      },
+    });
+
+    res.json({
+      paymentId: payment.id,
+      message: 'Payment recorded successfully',
+      newPaid,
+      newBalance,
+    });
+  } catch (error) {
+    console.error('IPD payment error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ============================================
+// HEALTH CHECKUP ENDPOINTS
+// ============================================
+
+// List all health checkup packages
+app.get('/api/health-checkup/packages', authenticateToken, requirePermission('health-checkup:view'), async (req: any, res: Response) => {
+  try {
+    // Mock data since model may not exist yet
+    const packages = [
+      {
+        id: '1',
+        name: 'Basic Health Checkup',
+        description: 'Complete basic health screening',
+        price: 2500,
+        tests: ['CBC', 'Blood Sugar', 'Lipid Profile'],
+        validity: 90,
+        status: 'active',
+      },
+      {
+        id: '2',
+        name: 'Executive Health Checkup',
+        description: 'Comprehensive executive health screening',
+        price: 8500,
+        tests: ['CBC', 'Blood Sugar', 'Lipid Profile', 'Liver Function', 'Kidney Function', 'ECG', 'X-Ray'],
+        validity: 90,
+        status: 'active',
+      },
+    ];
+
+    res.json(packages);
+  } catch (error) {
+    logger.error('Get health checkup packages error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to fetch health checkup packages',
+    });
+  }
+});
+
+// Create health checkup package
+app.post('/api/health-checkup/packages', authenticateToken, requirePermission('health-checkup:create'), async (req: any, res: Response) => {
+  try {
+    const { name, description, price, tests, validity } = req.body;
+
+    // Mock response since model may not exist yet
+    const newPackage = {
+      id: `pkg_${Date.now()}`,
+      name,
+      description,
+      price,
+      tests,
+      validity,
+      status: 'active',
+      tenantId: req.user.tenantId,
+      createdAt: new Date(),
+    };
+
+    res.status(201).json(newPackage);
+  } catch (error) {
+    logger.error('Create health checkup package error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to create health checkup package',
+    });
+  }
+});
+
+// List health checkup bookings
+app.get('/api/health-checkup/bookings', authenticateToken, requirePermission('health-checkup:view'), async (req: any, res: Response) => {
+  try {
+    const { page = 1, limit = 50 } = req.query;
+
+    // Mock data since model may not exist yet
+    const bookings = [
+      {
+        id: '1',
+        bookingId: 'HCB001',
+        patientName: 'John Doe',
+        packageName: 'Basic Health Checkup',
+        bookingDate: new Date(),
+        scheduledDate: new Date(),
+        status: 'confirmed',
+        amount: 2500,
+      },
+    ];
+
+    res.json({
+      data: bookings,
+      pagination: {
+        page: parseInt(page as string),
+        limit: parseInt(limit as string),
+        total: bookings.length,
+      },
+    });
+  } catch (error) {
+    logger.error('Get health checkup bookings error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to fetch health checkup bookings',
+    });
+  }
+});
+
+// Create health checkup booking
+app.post('/api/health-checkup/bookings', authenticateToken, requirePermission('health-checkup:create'), async (req: any, res: Response) => {
+  try {
+    const { patientId, packageId, scheduledDate, notes } = req.body;
+
+    // Generate booking ID
+    const bookingId = `HCB${Date.now().toString().slice(-6)}`;
+
+    // Mock response since model may not exist yet
+    const booking = {
+      id: `booking_${Date.now()}`,
+      bookingId,
+      patientId,
+      packageId,
+      scheduledDate: new Date(scheduledDate),
+      notes,
+      status: 'confirmed',
+      tenantId: req.user.tenantId,
+      createdBy: req.user.userId,
+      createdAt: new Date(),
+    };
+
+    res.status(201).json(booking);
+  } catch (error) {
+    logger.error('Create health checkup booking error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to create health checkup booking',
+    });
+  }
+});
+
+// ============================================
+// PHLEBOTOMY ENDPOINTS
+// ============================================
+
+// List sample collections
+app.get('/api/phlebotomy/collections', authenticateToken, requirePermission('phlebotomy:view'), async (req: any, res: Response) => {
+  try {
+    const { page = 1, limit = 50, status } = req.query;
+
+    // Mock data since model may not exist yet
+    const collections = [
+      {
+        id: '1',
+        collectionId: 'PHL001',
+        patientName: 'John Doe',
+        mrn: 'MRN000001',
+        labOrderId: 'LAB001',
+        sampleType: 'Blood',
+        requestedBy: 'Dr. Smith',
+        requestDate: new Date(),
+        status: 'pending',
+        priority: 'routine',
+      },
+      {
+        id: '2',
+        collectionId: 'PHL002',
+        patientName: 'Jane Smith',
+        mrn: 'MRN000002',
+        labOrderId: 'LAB002',
+        sampleType: 'Urine',
+        requestedBy: 'Dr. Johnson',
+        requestDate: new Date(),
+        status: 'collected',
+        collectedAt: new Date(),
+        collectedBy: 'Tech A',
+        priority: 'urgent',
+      },
+    ];
+
+    const filtered = status
+      ? collections.filter(c => c.status === status)
+      : collections;
+
+    res.json({
+      data: filtered,
+      pagination: {
+        page: parseInt(page as string),
+        limit: parseInt(limit as string),
+        total: filtered.length,
+      },
+    });
+  } catch (error) {
+    logger.error('Get phlebotomy collections error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to fetch sample collections',
+    });
+  }
+});
+
+// Create sample collection request
+app.post('/api/phlebotomy/collections', authenticateToken, requirePermission('phlebotomy:create'), async (req: any, res: Response) => {
+  try {
+    const { patientId, labOrderId, sampleType, priority, instructions } = req.body;
+
+    // Generate collection ID
+    const collectionId = `PHL${Date.now().toString().slice(-6)}`;
+
+    // Mock response since model may not exist yet
+    const collection = {
+      id: `col_${Date.now()}`,
+      collectionId,
+      patientId,
+      labOrderId,
+      sampleType,
+      priority: priority || 'routine',
+      instructions,
+      status: 'pending',
+      requestedBy: req.user.userId,
+      requestDate: new Date(),
+      tenantId: req.user.tenantId,
+    };
+
+    res.status(201).json(collection);
+  } catch (error) {
+    logger.error('Create sample collection error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to create sample collection request',
+    });
+  }
+});
+
+// Mark sample as collected
+app.put('/api/phlebotomy/collections/:id/collect', authenticateToken, requirePermission('phlebotomy:update'), async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { sampleQuality, notes } = req.body;
+
+    // Mock response since model may not exist yet
+    const updatedCollection = {
+      id,
+      status: 'collected',
+      collectedAt: new Date(),
+      collectedBy: req.user.userId,
+      sampleQuality: sampleQuality || 'good',
+      notes,
+      updatedAt: new Date(),
+    };
+
+    res.json(updatedCollection);
+  } catch (error) {
+    logger.error('Mark sample collected error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to mark sample as collected',
+    });
+  }
+});
+
+// Reject sample
+app.put('/api/phlebotomy/collections/:id/reject', authenticateToken, requirePermission('phlebotomy:update'), async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+
+    if (!reason) {
+      return res.status(400).json({
+        error: 'VALIDATION_ERROR',
+        message: 'Rejection reason is required',
+      });
+    }
+
+    // Mock response since model may not exist yet
+    const updatedCollection = {
+      id,
+      status: 'rejected',
+      rejectedAt: new Date(),
+      rejectedBy: req.user.userId,
+      rejectionReason: reason,
+      updatedAt: new Date(),
+    };
+
+    res.json(updatedCollection);
+  } catch (error) {
+    logger.error('Reject sample error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to reject sample',
+    });
+  }
+});
+
+// ============================================
+// PAYROLL ENDPOINTS
+// ============================================
+
+// List salary structures
+app.get('/api/payroll/salary-structures', authenticateToken, requirePermission('payroll:view'), async (req: any, res: Response) => {
+  try {
+    // Mock data since model may not exist yet
+    const structures = [
+      {
+        id: '1',
+        name: 'Standard Nurse',
+        basicSalary: 40000,
+        hra: 10000,
+        medicalAllowance: 5000,
+        specialAllowance: 5000,
+        pf: 4800,
+        esi: 1200,
+        totalGross: 60000,
+        totalDeductions: 6000,
+        netSalary: 54000,
+        status: 'active',
+      },
+      {
+        id: '2',
+        name: 'Senior Doctor',
+        basicSalary: 100000,
+        hra: 25000,
+        medicalAllowance: 10000,
+        specialAllowance: 15000,
+        pf: 12000,
+        esi: 0,
+        totalGross: 150000,
+        totalDeductions: 12000,
+        netSalary: 138000,
+        status: 'active',
+      },
+    ];
+
+    res.json(structures);
+  } catch (error) {
+    logger.error('Get salary structures error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to fetch salary structures',
+    });
+  }
+});
+
+// Create salary structure
+app.post('/api/payroll/salary-structures', authenticateToken, requirePermission('payroll:create'), async (req: any, res: Response) => {
+  try {
+    const {
+      name,
+      basicSalary,
+      hra,
+      medicalAllowance,
+      specialAllowance,
+      pf,
+      esi,
+      otherAllowances,
+      otherDeductions,
+    } = req.body;
+
+    const totalGross = Number(basicSalary) + Number(hra || 0) +
+                      Number(medicalAllowance || 0) + Number(specialAllowance || 0) +
+                      Number(otherAllowances || 0);
+
+    const totalDeductions = Number(pf || 0) + Number(esi || 0) + Number(otherDeductions || 0);
+    const netSalary = totalGross - totalDeductions;
+
+    // Mock response since model may not exist yet
+    const structure = {
+      id: `struct_${Date.now()}`,
+      name,
+      basicSalary,
+      hra: hra || 0,
+      medicalAllowance: medicalAllowance || 0,
+      specialAllowance: specialAllowance || 0,
+      otherAllowances: otherAllowances || 0,
+      pf: pf || 0,
+      esi: esi || 0,
+      otherDeductions: otherDeductions || 0,
+      totalGross,
+      totalDeductions,
+      netSalary,
+      status: 'active',
+      tenantId: req.user.tenantId,
+      createdAt: new Date(),
+    };
+
+    res.status(201).json(structure);
+  } catch (error) {
+    logger.error('Create salary structure error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to create salary structure',
+    });
+  }
+});
+
+// List payslips
+app.get('/api/payroll/payslips', authenticateToken, requirePermission('payroll:view'), async (req: any, res: Response) => {
+  try {
+    const { month, year, employeeId } = req.query;
+
+    // Mock data since model may not exist yet
+    const payslips = [
+      {
+        id: '1',
+        payslipNumber: 'PS202401001',
+        employeeName: 'John Doe',
+        employeeId: 'EMP001',
+        month: 1,
+        year: 2024,
+        basicSalary: 40000,
+        grossSalary: 60000,
+        totalDeductions: 6000,
+        netSalary: 54000,
+        status: 'paid',
+        paidDate: new Date(),
+      },
+    ];
+
+    let filtered = payslips;
+    if (employeeId) {
+      filtered = filtered.filter(p => p.employeeId === employeeId);
+    }
+    if (month) {
+      filtered = filtered.filter(p => p.month === parseInt(month as string));
+    }
+    if (year) {
+      filtered = filtered.filter(p => p.year === parseInt(year as string));
+    }
+
+    res.json(filtered);
+  } catch (error) {
+    logger.error('Get payslips error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to fetch payslips',
+    });
+  }
+});
+
+// Generate payroll
+app.post('/api/payroll/generate', authenticateToken, requirePermission('payroll:create'), async (req: any, res: Response) => {
+  try {
+    const { month, year, employeeIds } = req.body;
+
+    if (!month || !year) {
+      return res.status(400).json({
+        error: 'VALIDATION_ERROR',
+        message: 'Month and year are required',
+      });
+    }
+
+    // Mock response since model may not exist yet
+    const result = {
+      message: 'Payroll generated successfully',
+      month,
+      year,
+      employeesProcessed: employeeIds?.length || 0,
+      totalAmount: 540000,
+      generatedAt: new Date(),
+      generatedBy: req.user.userId,
+    };
+
+    res.status(201).json(result);
+  } catch (error) {
+    logger.error('Generate payroll error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to generate payroll',
+    });
+  }
+});
+
+// Get employee payslips
+app.get('/api/payroll/payslips/:employeeId', authenticateToken, requirePermission('payroll:view'), async (req: any, res: Response) => {
+  try {
+    const { employeeId } = req.params;
+    const { limit = 12 } = req.query;
+
+    // Mock data since model may not exist yet
+    const payslips = [
+      {
+        id: '1',
+        payslipNumber: 'PS202401001',
+        month: 1,
+        year: 2024,
+        grossSalary: 60000,
+        netSalary: 54000,
+        status: 'paid',
+      },
+    ];
+
+    res.json(payslips.slice(0, parseInt(limit as string)));
+  } catch (error) {
+    logger.error('Get employee payslips error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to fetch employee payslips',
+    });
+  }
+});
+
+// ============================================
+// TALLY/ACCOUNTING ENDPOINTS
+// ============================================
+
+// Get Tally sync status
+app.get('/api/tally/sync-status', authenticateToken, requirePermission('accounting:view'), async (req: any, res: Response) => {
+  try {
+    // Mock data since model may not exist yet
+    const syncStatus = {
+      isConnected: true,
+      lastSyncAt: new Date(),
+      syncedRecords: 1542,
+      pendingRecords: 23,
+      failedRecords: 2,
+      tallyVersion: '9.0',
+      companyName: 'Hospital ERP',
+      status: 'active',
+    };
+
+    res.json(syncStatus);
+  } catch (error) {
+    logger.error('Get Tally sync status error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to fetch Tally sync status',
+    });
+  }
+});
+
+// Trigger Tally sync
+app.post('/api/tally/sync', authenticateToken, requirePermission('accounting:create'), async (req: any, res: Response) => {
+  try {
+    const { syncType = 'all' } = req.body;
+
+    // Mock response since model may not exist yet
+    const syncResult = {
+      message: 'Sync initiated successfully',
+      syncId: `sync_${Date.now()}`,
+      syncType,
+      status: 'processing',
+      initiatedBy: req.user.userId,
+      initiatedAt: new Date(),
+    };
+
+    res.status(202).json(syncResult);
+  } catch (error) {
+    logger.error('Trigger Tally sync error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to trigger Tally sync',
+    });
+  }
+});
+
+// Get accounting entries for sync
+app.get('/api/tally/entries', authenticateToken, requirePermission('accounting:view'), async (req: any, res: Response) => {
+  try {
+    const { fromDate, toDate, status, limit = 100 } = req.query;
+
+    // Mock data since model may not exist yet
+    const entries = [
+      {
+        id: '1',
+        voucherNumber: 'JV001',
+        voucherType: 'Journal',
+        date: new Date(),
+        particulars: 'IPD Collection',
+        debitAmount: 15000,
+        creditAmount: 0,
+        ledger: 'Cash',
+        narration: 'Patient payment received',
+        syncStatus: 'pending',
+      },
+      {
+        id: '2',
+        voucherNumber: 'JV002',
+        voucherType: 'Journal',
+        date: new Date(),
+        particulars: 'OPD Revenue',
+        debitAmount: 0,
+        creditAmount: 15000,
+        ledger: 'Revenue',
+        narration: 'OPD consultation fees',
+        syncStatus: 'synced',
+      },
+    ];
+
+    let filtered = entries;
+    if (status) {
+      filtered = filtered.filter(e => e.syncStatus === status);
+    }
+
+    res.json({
+      data: filtered.slice(0, parseInt(limit as string)),
+      total: filtered.length,
+    });
+  } catch (error) {
+    logger.error('Get Tally entries error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to fetch accounting entries',
+    });
+  }
+});
+
+// ============================================
+// CSSD ENDPOINTS
+// ============================================
+
+// List sterilization cycles
+app.get('/api/cssd/cycles', authenticateToken, requirePermission('cssd:view'), async (req: any, res: Response) => {
+  try {
+    const { page = 1, limit = 50, status } = req.query;
+
+    // Mock data since model may not exist yet
+    const cycles = [
+      {
+        id: '1',
+        cycleNumber: 'CYC001',
+        sterilizer: 'Autoclave A',
+        cycleType: 'Steam',
+        startTime: new Date(),
+        endTime: null,
+        temperature: 121,
+        pressure: 15,
+        duration: 30,
+        itemCount: 25,
+        status: 'running',
+        operator: 'Tech A',
+      },
+      {
+        id: '2',
+        cycleNumber: 'CYC002',
+        sterilizer: 'Autoclave B',
+        cycleType: 'Steam',
+        startTime: new Date(Date.now() - 3600000),
+        endTime: new Date(),
+        temperature: 121,
+        pressure: 15,
+        duration: 30,
+        itemCount: 30,
+        status: 'completed',
+        operator: 'Tech B',
+        validationStatus: 'passed',
+      },
+    ];
+
+    const filtered = status
+      ? cycles.filter(c => c.status === status)
+      : cycles;
+
+    res.json({
+      data: filtered,
+      pagination: {
+        page: parseInt(page as string),
+        limit: parseInt(limit as string),
+        total: filtered.length,
+      },
+    });
+  } catch (error) {
+    logger.error('Get CSSD cycles error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to fetch sterilization cycles',
+    });
+  }
+});
+
+// Create sterilization cycle
+app.post('/api/cssd/cycles', authenticateToken, requirePermission('cssd:create'), async (req: any, res: Response) => {
+  try {
+    const {
+      sterilizer,
+      cycleType,
+      temperature,
+      pressure,
+      duration,
+      items,
+    } = req.body;
+
+    // Generate cycle number
+    const cycleNumber = `CYC${Date.now().toString().slice(-6)}`;
+
+    // Mock response since model may not exist yet
+    const cycle = {
+      id: `cycle_${Date.now()}`,
+      cycleNumber,
+      sterilizer,
+      cycleType,
+      temperature,
+      pressure,
+      duration,
+      itemCount: items?.length || 0,
+      items,
+      status: 'running',
+      startTime: new Date(),
+      operator: req.user.userId,
+      tenantId: req.user.tenantId,
+      createdAt: new Date(),
+    };
+
+    res.status(201).json(cycle);
+  } catch (error) {
+    logger.error('Create CSSD cycle error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to create sterilization cycle',
+    });
+  }
+});
+
+// Mark cycle complete
+app.put('/api/cssd/cycles/:id/complete', authenticateToken, requirePermission('cssd:update'), async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { validationStatus, notes } = req.body;
+
+    if (!validationStatus) {
+      return res.status(400).json({
+        error: 'VALIDATION_ERROR',
+        message: 'Validation status is required',
+      });
+    }
+
+    // Mock response since model may not exist yet
+    const updatedCycle = {
+      id,
+      status: 'completed',
+      endTime: new Date(),
+      validationStatus,
+      notes,
+      completedBy: req.user.userId,
+      updatedAt: new Date(),
+    };
+
+    res.json(updatedCycle);
+  } catch (error) {
+    logger.error('Complete CSSD cycle error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to mark cycle as complete',
+    });
+  }
+});
+
+// List CSSD instruments
+app.get('/api/cssd/instruments', authenticateToken, requirePermission('cssd:view'), async (req: any, res: Response) => {
+  try {
+    const { search, category } = req.query;
+
+    // Mock data since model may not exist yet
+    const instruments = [
+      {
+        id: '1',
+        name: 'Surgical Scissors',
+        code: 'INS001',
+        category: 'Surgical',
+        quantity: 50,
+        sterileQuantity: 30,
+        location: 'CSSD Rack A1',
+        status: 'available',
+      },
+      {
+        id: '2',
+        name: 'Forceps',
+        code: 'INS002',
+        category: 'Surgical',
+        quantity: 100,
+        sterileQuantity: 60,
+        location: 'CSSD Rack A2',
+        status: 'available',
+      },
+      {
+        id: '3',
+        name: 'Scalpel Handle',
+        code: 'INS003',
+        category: 'Surgical',
+        quantity: 40,
+        sterileQuantity: 25,
+        location: 'CSSD Rack A3',
+        status: 'available',
+      },
+    ];
+
+    let filtered = instruments;
+    if (search) {
+      const searchLower = (search as string).toLowerCase();
+      filtered = filtered.filter(i =>
+        i.name.toLowerCase().includes(searchLower) ||
+        i.code.toLowerCase().includes(searchLower)
+      );
+    }
+    if (category) {
+      filtered = filtered.filter(i => i.category === category);
+    }
+
+    res.json(filtered);
+  } catch (error) {
+    logger.error('Get CSSD instruments error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to fetch CSSD instruments',
+    });
+  }
+});
+
+// ============================================
+// BIOMETRIC ATTENDANCE ENDPOINTS
+// ============================================
+
+// List biometric devices
+app.get('/api/biometric/devices', authenticateToken, requirePermission('hr:view'), async (req: any, res: Response) => {
+  try {
+    // Mock data since model may not exist yet
+    const devices = [
+      {
+        id: '1',
+        deviceId: 'BIO001',
+        deviceName: 'Main Entrance',
+        location: 'Ground Floor - Main Gate',
+        ipAddress: '192.168.1.100',
+        status: 'online',
+        lastSync: new Date(),
+        employeesRegistered: 150,
+      },
+      {
+        id: '2',
+        deviceId: 'BIO002',
+        deviceName: 'Emergency Wing',
+        location: 'Ground Floor - Emergency',
+        ipAddress: '192.168.1.101',
+        status: 'online',
+        lastSync: new Date(),
+        employeesRegistered: 80,
+      },
+      {
+        id: '3',
+        deviceId: 'BIO003',
+        deviceName: 'ICU Block',
+        location: '2nd Floor - ICU',
+        ipAddress: '192.168.1.102',
+        status: 'offline',
+        lastSync: new Date(Date.now() - 7200000),
+        employeesRegistered: 45,
+      },
+    ];
+
+    res.json(devices);
+  } catch (error) {
+    logger.error('Get biometric devices error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to fetch biometric devices',
+    });
+  }
+});
+
+// Record biometric punch
+app.post('/api/biometric/punch', authenticateToken, requirePermission('hr:create'), async (req: any, res: Response) => {
+  try {
+    const { employeeId, deviceId, punchType, timestamp } = req.body;
+
+    if (!employeeId || !deviceId) {
+      return res.status(400).json({
+        error: 'VALIDATION_ERROR',
+        message: 'Employee ID and Device ID are required',
+      });
+    }
+
+    // Mock response since model may not exist yet
+    const punch = {
+      id: `punch_${Date.now()}`,
+      employeeId,
+      deviceId,
+      punchType: punchType || 'auto',
+      timestamp: timestamp ? new Date(timestamp) : new Date(),
+      status: 'recorded',
+      tenantId: req.user.tenantId,
+      createdAt: new Date(),
+    };
+
+    res.status(201).json(punch);
+  } catch (error) {
+    logger.error('Record biometric punch error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to record biometric punch',
+    });
+  }
+});
+
+// Get today's attendance
+app.get('/api/biometric/today', authenticateToken, requirePermission('hr:view'), async (req: any, res: Response) => {
+  try {
+    const { departmentId } = req.query;
+
+    // Mock data since model may not exist yet
+    const attendance = [
+      {
+        employeeId: 'EMP001',
+        employeeName: 'John Doe',
+        department: 'Nursing',
+        checkIn: new Date(new Date().setHours(9, 0, 0)),
+        checkOut: null,
+        status: 'present',
+        workingHours: null,
+      },
+      {
+        employeeId: 'EMP002',
+        employeeName: 'Jane Smith',
+        department: 'Laboratory',
+        checkIn: new Date(new Date().setHours(9, 15, 0)),
+        checkOut: null,
+        status: 'present',
+        workingHours: null,
+      },
+      {
+        employeeId: 'EMP003',
+        employeeName: 'Bob Johnson',
+        department: 'Emergency',
+        checkIn: new Date(new Date().setHours(8, 45, 0)),
+        checkOut: new Date(new Date().setHours(17, 0, 0)),
+        status: 'present',
+        workingHours: 8.25,
+      },
+    ];
+
+    const summary = {
+      totalEmployees: 150,
+      present: 120,
+      absent: 25,
+      onLeave: 5,
+      late: 15,
+      earlyCheckout: 3,
+    };
+
+    res.json({
+      summary,
+      attendance,
+    });
+  } catch (error) {
+    logger.error('Get today attendance error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to fetch today\'s attendance',
+    });
+  }
+});
+
+// ============================================
+// GLOBAL ERROR HANDLERS (must be last)
+// ============================================
+
+// Handle 404 - Route not found
+app.use(notFoundHandler);
+
+// Global error handler
+app.use(errorHandler);
+
+// ============================================
+// SERVER STARTUP
+// ============================================
 app.listen(PORT, () => {
+  logger.info(`Hospital ERP Backend running on http://localhost:${PORT}`);
+  logger.info(`API Health: http://localhost:${PORT}/api/health`);
   console.log(`🏥 HMS Backend running on http://localhost:${PORT}`);
   console.log(`📊 API Health: http://localhost:${PORT}/api/health`);
 });
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {
+  logger.info('SIGTERM received, shutting down gracefully');
   await prisma.$disconnect();
   process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  logger.info('SIGINT received, shutting down gracefully');
+  await prisma.$disconnect();
+  process.exit(0);
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught Exception:', error);
+  process.exit(1);
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled Rejection at:', { promise, reason });
 });

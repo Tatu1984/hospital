@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Scissors, Clock, CheckCircle, AlertCircle, Users, Calendar, FileText, Plus, Activity } from 'lucide-react';
+import { Clock, CheckCircle, AlertCircle, Calendar, FileText, Plus, Activity } from 'lucide-react';
 import api from '../services/api';
 
 interface Surgery {
@@ -62,7 +62,6 @@ export default function OperationTheatre() {
   const [selectedSurgery, setSelectedSurgery] = useState<Surgery | null>(null);
   const [isScheduleDialogOpen, setIsScheduleDialogOpen] = useState(false);
   const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false);
-  const [isPreOpDialogOpen, setIsPreOpDialogOpen] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const [surgeryFormData, setSurgeryFormData] = useState<SurgeryFormData>({

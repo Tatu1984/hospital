@@ -160,6 +160,55 @@ async function main() {
       roleIds: ['LAB_TECH'],
       departmentIds: ['dept-5'],
     },
+    // Additional department users
+    {
+      id: 'user-radiology',
+      username: 'radiology',
+      email: 'radiology@hospital.com',
+      name: 'Radiology Technician',
+      roleIds: ['RADIOLOGY_TECH'],
+      departmentIds: ['dept-6'],
+    },
+    {
+      id: 'user-pharmacy',
+      username: 'pharmacy',
+      email: 'pharmacy@hospital.com',
+      name: 'Pharmacist',
+      roleIds: ['PHARMACIST'],
+      departmentIds: ['dept-7'],
+    },
+    {
+      id: 'user-emergency',
+      username: 'emergency',
+      email: 'emergency@hospital.com',
+      name: 'Emergency Physician',
+      roleIds: ['DOCTOR', 'EMERGENCY'],
+      departmentIds: ['dept-1'],
+    },
+    {
+      id: 'user-icu',
+      username: 'icu',
+      email: 'icu@hospital.com',
+      name: 'ICU Nurse',
+      roleIds: ['NURSE', 'ICU'],
+      departmentIds: ['dept-1'],
+    },
+    {
+      id: 'user-ot',
+      username: 'ot',
+      email: 'ot@hospital.com',
+      name: 'OT Coordinator',
+      roleIds: ['OT_STAFF'],
+      departmentIds: ['dept-1'],
+    },
+    {
+      id: 'user-ipd',
+      username: 'ipd',
+      email: 'ipd@hospital.com',
+      name: 'IPD Coordinator',
+      roleIds: ['IPD_STAFF'],
+      departmentIds: ['dept-1'],
+    },
   ];
 
   for (const userData of users) {
@@ -251,6 +300,55 @@ async function main() {
     });
   }
   console.log('✅ Sample patients created:', patients.length);
+
+  // Create sample encounters and admissions for IPD
+  console.log('\n🏥 Creating sample encounters and admissions...');
+
+  // Get first patient and doctor for sample admission
+  const samplePatient = await prisma.patient.findFirst({
+    where: { tenantId: tenant.id },
+  });
+
+  const sampleDoctor = users.find(u => u.username === 'doctor1');
+  const sampleBed = await prisma.bed.findFirst({
+    where: { branchId: branch.id, status: 'vacant' },
+  });
+
+  if (samplePatient && sampleDoctor && sampleBed) {
+    // Create IPD encounter
+    const encounter = await prisma.encounter.create({
+      data: {
+        patientId: samplePatient.id,
+        branchId: branch.id,
+        type: 'ipd',
+        visitDate: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000), // 3 days ago
+        doctorId: sampleDoctor.id,
+        status: 'active',
+        chiefComplaint: 'Fever and body pain',
+      },
+    });
+
+    // Create admission
+    await prisma.admission.create({
+      data: {
+        encounterId: encounter.id,
+        patientId: samplePatient.id,
+        admissionDate: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
+        bedId: sampleBed.id,
+        admittingDoctorId: sampleDoctor.id,
+        status: 'active',
+        diagnosis: 'Viral fever with dehydration',
+      },
+    });
+
+    // Update bed status
+    await prisma.bed.update({
+      where: { id: sampleBed.id },
+      data: { status: 'occupied' },
+    });
+
+    console.log('✅ Sample IPD admission created');
+  }
 
   // Seed Master Data
   console.log('\n📦 Seeding Master Data...');
@@ -513,14 +611,212 @@ async function main() {
     console.log('✅ Doctor contract created for:', doctor1.name);
   }
 
+  // ===========================
+  // BLOOD BANK SEED DATA
+  // ===========================
+  console.log('\n🩸 Seeding Blood Bank...');
+
+  const bloodDonors = [
+    { donorId: 'D0001', name: 'Anil Kumar', age: 35, gender: 'Male', bloodType: 'A+', phone: '9876543001', email: 'anil@email.com' },
+    { donorId: 'D0002', name: 'Sunita Devi', age: 28, gender: 'Female', bloodType: 'O+', phone: '9876543002', email: 'sunita@email.com' },
+    { donorId: 'D0003', name: 'Ramesh Singh', age: 42, gender: 'Male', bloodType: 'B+', phone: '9876543003', email: 'ramesh@email.com' },
+    { donorId: 'D0004', name: 'Meena Sharma', age: 30, gender: 'Female', bloodType: 'AB+', phone: '9876543004', email: 'meena@email.com' },
+    { donorId: 'D0005', name: 'Vijay Patel', age: 45, gender: 'Male', bloodType: 'O-', phone: '9876543005', email: 'vijay@email.com' },
+  ];
+
+  for (const donor of bloodDonors) {
+    await prisma.bloodDonor.create({ data: { ...donor, totalDonations: Math.floor(Math.random() * 10) } });
+  }
+  console.log('✅ Blood donors:', bloodDonors.length);
+
+  // Add some blood inventory
+  const bloodTypes = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
+  const components = ['whole_blood', 'packed_rbc', 'platelets', 'plasma', 'cryo'];
+  let inventoryCount = 0;
+  for (const bloodType of bloodTypes) {
+    for (const component of components.slice(0, 2)) {
+      const qty = Math.floor(Math.random() * 5) + 1;
+      for (let i = 0; i < qty; i++) {
+        await prisma.bloodInventory.create({
+          data: {
+            bloodType,
+            component,
+            bagNumber: `BAG-${bloodType}-${component.substring(0,3).toUpperCase()}-${Date.now()}-${i}`,
+            volume: component === 'whole_blood' ? 450 : 250,
+            collectionDate: new Date(Date.now() - Math.random() * 7 * 24 * 60 * 60 * 1000),
+            expiryDate: new Date(Date.now() + (21 + Math.random() * 14) * 24 * 60 * 60 * 1000),
+            status: 'available',
+          },
+        });
+        inventoryCount++;
+      }
+    }
+  }
+  console.log('✅ Blood inventory units:', inventoryCount);
+
+  // ===========================
+  // EMPLOYEE SEED DATA
+  // ===========================
+  console.log('\n👥 Seeding Employees...');
+
+  const employees = [
+    { employeeId: 'EMP0001', name: 'Dr. Suresh Gupta', email: 'suresh@hospital.com', phone: '9800000001', department: 'General Medicine', designation: 'Senior Consultant', shift: 'Day' },
+    { employeeId: 'EMP0002', name: 'Nurse Kavita Singh', email: 'kavita@hospital.com', phone: '9800000002', department: 'ICU', designation: 'Head Nurse', shift: 'Rotating' },
+    { employeeId: 'EMP0003', name: 'Rakesh Kumar', email: 'rakesh@hospital.com', phone: '9800000003', department: 'Laboratory', designation: 'Lab Technician', shift: 'Day' },
+    { employeeId: 'EMP0004', name: 'Priya Verma', email: 'priya@hospital.com', phone: '9800000004', department: 'Radiology', designation: 'Radiologist', shift: 'Day' },
+    { employeeId: 'EMP0005', name: 'Amit Sharma', email: 'amit@hospital.com', phone: '9800000005', department: 'Pharmacy', designation: 'Pharmacist', shift: 'Day' },
+    { employeeId: 'EMP0006', name: 'Neha Patel', email: 'neha@hospital.com', phone: '9800000006', department: 'Front Desk', designation: 'Receptionist', shift: 'Day' },
+    { employeeId: 'EMP0007', name: 'Santosh Kumar', email: 'santosh@hospital.com', phone: '9800000007', department: 'Housekeeping', designation: 'Supervisor', shift: 'Day' },
+    { employeeId: 'EMP0008', name: 'Anita Kumari', email: 'anita@hospital.com', phone: '9800000008', department: 'Nursing', designation: 'Staff Nurse', shift: 'Night' },
+  ];
+
+  for (const emp of employees) {
+    await prisma.employee.create({
+      data: {
+        ...emp,
+        joiningDate: new Date(Date.now() - Math.random() * 365 * 3 * 24 * 60 * 60 * 1000),
+        salary: 25000 + Math.floor(Math.random() * 75000),
+      },
+    });
+  }
+  console.log('✅ Employees:', employees.length);
+
+  // ===========================
+  // AMBULANCE SEED DATA
+  // ===========================
+  console.log('\n🚑 Seeding Ambulance Vehicles...');
+
+  const ambulances = [
+    { vehicleNumber: 'AMB-001', type: 'ALS', driverName: 'Raju Singh', driverPhone: '9700000001', status: 'available' },
+    { vehicleNumber: 'AMB-002', type: 'BLS', driverName: 'Mohan Kumar', driverPhone: '9700000002', status: 'available' },
+    { vehicleNumber: 'AMB-003', type: 'patient_transport', driverName: 'Sunil Sharma', driverPhone: '9700000003', status: 'available' },
+  ];
+
+  for (const amb of ambulances) {
+    await prisma.ambulanceVehicle.create({ data: amb });
+  }
+  console.log('✅ Ambulance vehicles:', ambulances.length);
+
+  // ===========================
+  // ICU BEDS SEED DATA
+  // ===========================
+  console.log('\n🏥 Seeding ICU Beds...');
+
+  const icuBeds = [
+    { bedNumber: 'MICU-01', icuUnit: 'MICU', status: 'vacant' },
+    { bedNumber: 'MICU-02', icuUnit: 'MICU', status: 'vacant' },
+    { bedNumber: 'MICU-03', icuUnit: 'MICU', status: 'vacant' },
+    { bedNumber: 'SICU-01', icuUnit: 'SICU', status: 'vacant' },
+    { bedNumber: 'SICU-02', icuUnit: 'SICU', status: 'vacant' },
+    { bedNumber: 'CCU-01', icuUnit: 'CCU', status: 'vacant' },
+    { bedNumber: 'CCU-02', icuUnit: 'CCU', status: 'vacant' },
+    { bedNumber: 'NICU-01', icuUnit: 'NICU', status: 'vacant' },
+    { bedNumber: 'PICU-01', icuUnit: 'PICU', status: 'vacant' },
+  ];
+
+  for (const bed of icuBeds) {
+    await prisma.iCUBed.create({ data: bed });
+  }
+  console.log('✅ ICU beds:', icuBeds.length);
+
+  // ===========================
+  // OT ROOMS SEED DATA
+  // ===========================
+  console.log('\n🔪 Seeding OT Rooms...');
+
+  const otRooms = [
+    { name: 'OT-1', type: 'general', floor: 'Ground', status: 'available' },
+    { name: 'OT-2', type: 'general', floor: 'Ground', status: 'available' },
+    { name: 'OT-3', type: 'cardiac', floor: 'First', status: 'available' },
+    { name: 'OT-4', type: 'orthopedic', floor: 'First', status: 'available' },
+    { name: 'OT-5', type: 'neuro', floor: 'Second', status: 'maintenance' },
+  ];
+
+  for (const room of otRooms) {
+    await prisma.oTRoom.create({ data: room });
+  }
+  console.log('✅ OT rooms:', otRooms.length);
+
+  // ===========================
+  // INVENTORY ITEMS SEED DATA
+  // ===========================
+  console.log('\n📦 Seeding Inventory Items...');
+
+  const inventoryItems = [
+    { code: 'INV001', name: 'Surgical Gloves (Sterile)', category: 'Consumables', unit: 'Pair', reorderLevel: 500, price: 25 },
+    { code: 'INV002', name: 'Syringes 5ml', category: 'Consumables', unit: 'Piece', reorderLevel: 1000, price: 8 },
+    { code: 'INV003', name: 'IV Cannula 20G', category: 'Consumables', unit: 'Piece', reorderLevel: 500, price: 35 },
+    { code: 'INV004', name: 'Gauze Roll', category: 'Consumables', unit: 'Roll', reorderLevel: 200, price: 45 },
+    { code: 'INV005', name: 'Cotton Wool', category: 'Consumables', unit: 'Packet', reorderLevel: 100, price: 60 },
+    { code: 'INV006', name: 'Surgical Masks (N95)', category: 'PPE', unit: 'Piece', reorderLevel: 500, price: 50 },
+    { code: 'INV007', name: 'Hand Sanitizer 500ml', category: 'Hygiene', unit: 'Bottle', reorderLevel: 50, price: 150 },
+    { code: 'INV008', name: 'Disposable Gown', category: 'PPE', unit: 'Piece', reorderLevel: 200, price: 120 },
+    { code: 'INV009', name: 'Oxygen Mask', category: 'Medical Equipment', unit: 'Piece', reorderLevel: 50, price: 180 },
+    { code: 'INV010', name: 'Urinary Catheter', category: 'Consumables', unit: 'Piece', reorderLevel: 100, price: 85 },
+  ];
+
+  for (const item of inventoryItems) {
+    const invItem = await prisma.inventoryItem.create({ data: item });
+    // Add some stock
+    await prisma.stock.create({
+      data: {
+        itemId: invItem.id,
+        storeId: 'main-store',
+        batchNumber: `BATCH-${item.code}-001`,
+        quantity: Math.floor(Math.random() * 500) + 100,
+        expiryDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+      },
+    });
+  }
+  console.log('✅ Inventory items:', inventoryItems.length);
+
   console.log('\n🎉 Database seeded successfully!');
-  console.log('\n📝 Login credentials:');
-  console.log('   Admin:      admin / password123');
-  console.log('   Doctor:     doctor1 / password123');
-  console.log('   Nurse:      nurse1 / password123');
-  console.log('   Front Desk: frontdesk / password123');
-  console.log('   Billing:    billing / password123');
-  console.log('   Lab:        lab / password123');
+  console.log('\n📝 Login credentials (password for all: password123):');
+  console.log('   ┌──────────────┬───────────────────────────┐');
+  console.log('   │ Username     │ Role / Department         │');
+  console.log('   ├──────────────┼───────────────────────────┤');
+  console.log('   │ admin        │ System Administrator      │');
+  console.log('   │ doctor1      │ Doctor - General Medicine │');
+  console.log('   │ nurse1       │ Nurse - General Medicine  │');
+  console.log('   │ frontdesk    │ Front Office / Reception  │');
+  console.log('   │ billing      │ Billing Staff             │');
+  console.log('   │ lab          │ Laboratory Technician     │');
+  console.log('   │ radiology    │ Radiology Technician      │');
+  console.log('   │ pharmacy     │ Pharmacist                │');
+  console.log('   │ emergency    │ Emergency Physician       │');
+  console.log('   │ icu          │ ICU Nurse                 │');
+  console.log('   │ ot           │ OT Coordinator            │');
+  console.log('   │ ipd          │ IPD Coordinator           │');
+  console.log('   └──────────────┴───────────────────────────┘');
+
+  // Create Sample Audit Logs
+  const auditLogs = [
+    { userId: 'user-admin', action: 'User Login', resource: 'Authentication', resourceId: 'user-admin', ipAddress: '192.168.1.100' },
+    { userId: 'user-doctor1', action: 'Patient Created', resource: 'OPD', resourceId: 'patient-1', ipAddress: '192.168.1.101' },
+    { userId: 'user-admin', action: 'Settings Updated', resource: 'System Control', resourceId: 'settings', ipAddress: '192.168.1.100' },
+    { userId: 'user-nurse1', action: 'Vitals Recorded', resource: 'IPD', resourceId: 'vitals-1', ipAddress: '192.168.1.102' },
+    { userId: 'user-lab', action: 'Lab Result Uploaded', resource: 'Laboratory', resourceId: 'lab-result-1', ipAddress: '192.168.1.103' },
+    { userId: 'user-pharmacy', action: 'Medication Dispensed', resource: 'Pharmacy', resourceId: 'dispense-1', ipAddress: '192.168.1.104' },
+    { userId: 'user-billing', action: 'Invoice Generated', resource: 'Billing', resourceId: 'invoice-1', ipAddress: '192.168.1.105' },
+    { userId: 'user-frontdesk', action: 'Appointment Scheduled', resource: 'OPD', resourceId: 'appointment-1', ipAddress: '192.168.1.106' },
+  ];
+
+  for (const log of auditLogs) {
+    await prisma.auditLog.upsert({
+      where: { id: `audit-${log.action.toLowerCase().replace(/\s/g, '-')}` },
+      update: {},
+      create: {
+        id: `audit-${log.action.toLowerCase().replace(/\s/g, '-')}`,
+        userId: log.userId,
+        action: log.action,
+        resource: log.resource,
+        resourceId: log.resourceId,
+        ipAddress: log.ipAddress,
+        timestamp: new Date(Date.now() - Math.floor(Math.random() * 7 * 24 * 60 * 60 * 1000)), // Random time within last 7 days
+      },
+    });
+  }
+  console.log('✅ Sample audit logs created');
 }
 
 main()

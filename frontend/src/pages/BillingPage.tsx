@@ -9,8 +9,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Receipt, CreditCard, Trash2, Calculator, Printer, DollarSign } from 'lucide-react';
+import { Plus, Receipt, Trash2, Printer, DollarSign } from 'lucide-react';
 import api from '../services/api';
+import { generateBillPDF } from '../utils/pdfGenerator';
 
 interface BillItem {
   id: string;
@@ -584,7 +585,29 @@ export default function BillingPage() {
                     <TableCell>{new Date(bill.date).toLocaleDateString()}</TableCell>
                     <TableCell>
                       <div className="flex gap-2">
-                        <Button size="sm" variant="outline">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => generateBillPDF({
+                            billNumber: bill.billNo,
+                            date: new Date(bill.date).toLocaleDateString(),
+                            patientName: bill.patientName,
+                            patientMRN: bill.patientMRN,
+                            items: bill.items.map(item => ({
+                              description: item.description,
+                              quantity: item.quantity,
+                              unitPrice: item.unitPrice,
+                              total: item.total
+                            })),
+                            subtotal: bill.subtotal,
+                            discount: bill.discount,
+                            tax: bill.tax,
+                            total: bill.total,
+                            paymentMode: bill.paymentMode,
+                            paidAmount: bill.paid,
+                            balance: bill.balance
+                          })}
+                        >
                           <Printer className="w-4 h-4" />
                         </Button>
                         {bill.balance > 0 && (

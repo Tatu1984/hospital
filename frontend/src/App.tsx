@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { ToastProvider } from './components/Toast';
 import Login from './pages/Login';
 import NewDashboard from './pages/NewDashboard';
 import MainLayout from './components/MainLayout';
@@ -73,6 +74,31 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   return <>{children}</>;
 };
 
+// Role-based route protection component
+const RoleProtectedRoute = ({ children, path }: { children: React.ReactNode; path: string }) => {
+  const { hasAccess } = useAuth();
+
+  if (!hasAccess(path)) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full p-8">
+        <div className="text-6xl mb-4">🔒</div>
+        <h2 className="text-2xl font-bold text-slate-800 mb-2">Access Denied</h2>
+        <p className="text-slate-600 text-center max-w-md">
+          You don't have permission to access this page. Please contact your administrator if you believe this is an error.
+        </p>
+        <button
+          onClick={() => window.history.back()}
+          className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+        >
+          Go Back
+        </button>
+      </div>
+    );
+  }
+
+  return <>{children}</>;
+};
+
 const AppRoutes = () => {
   return (
     <Routes>
@@ -88,71 +114,71 @@ const AppRoutes = () => {
         <Route index element={<NewDashboard />} />
 
         {/* Core Clinical Modules */}
-        <Route path="patients" element={<PatientRegistration />} />
-        <Route path="appointment" element={<Appointment />} />
-        <Route path="opd" element={<OPD />} />
-        <Route path="health-checkup" element={<HealthCheckup />} />
+        <Route path="patients" element={<RoleProtectedRoute path="patients"><PatientRegistration /></RoleProtectedRoute>} />
+        <Route path="appointment" element={<RoleProtectedRoute path="appointment"><Appointment /></RoleProtectedRoute>} />
+        <Route path="opd" element={<RoleProtectedRoute path="opd"><OPD /></RoleProtectedRoute>} />
+        <Route path="health-checkup" element={<RoleProtectedRoute path="health-checkup"><HealthCheckup /></RoleProtectedRoute>} />
 
         {/* Diagnostics */}
-        <Route path="laboratory" element={<Laboratory />} />
-        <Route path="radiology" element={<Radiology />} />
-        <Route path="pathology" element={<Pathology />} />
-        <Route path="phlebotomy" element={<Phlebotomy />} />
+        <Route path="laboratory" element={<RoleProtectedRoute path="laboratory"><Laboratory /></RoleProtectedRoute>} />
+        <Route path="radiology" element={<RoleProtectedRoute path="radiology"><Radiology /></RoleProtectedRoute>} />
+        <Route path="pathology" element={<RoleProtectedRoute path="pathology"><Pathology /></RoleProtectedRoute>} />
+        <Route path="phlebotomy" element={<RoleProtectedRoute path="phlebotomy"><Phlebotomy /></RoleProtectedRoute>} />
 
         {/* Inpatient Care */}
-        <Route path="inpatient" element={<Inpatient />} />
-        <Route path="inpatient-billing" element={<InpatientBilling />} />
-        <Route path="nurse-station" element={<NurseStation />} />
-        <Route path="emergency" element={<Emergency />} />
-        <Route path="icu" element={<ICU />} />
-        <Route path="operation-theatre" element={<OperationTheatre />} />
+        <Route path="inpatient" element={<RoleProtectedRoute path="inpatient"><Inpatient /></RoleProtectedRoute>} />
+        <Route path="inpatient-billing" element={<RoleProtectedRoute path="inpatient-billing"><InpatientBilling /></RoleProtectedRoute>} />
+        <Route path="nurse-station" element={<RoleProtectedRoute path="nurse-station"><NurseStation /></RoleProtectedRoute>} />
+        <Route path="emergency" element={<RoleProtectedRoute path="emergency"><Emergency /></RoleProtectedRoute>} />
+        <Route path="icu" element={<RoleProtectedRoute path="icu"><ICU /></RoleProtectedRoute>} />
+        <Route path="operation-theatre" element={<RoleProtectedRoute path="operation-theatre"><OperationTheatre /></RoleProtectedRoute>} />
 
         {/* Support Services */}
-        <Route path="blood-bank" element={<BloodBank />} />
-        <Route path="pharmacy" element={<Pharmacy />} />
-        <Route path="ambulance" element={<Ambulance />} />
-        <Route path="housekeeping" element={<Housekeeping />} />
-        <Route path="diet" element={<Diet />} />
-        <Route path="quality" element={<Quality />} />
-        <Route path="cssd" element={<CSSD />} />
-        <Route path="physiotherapy" element={<Physiotherapy />} />
-        <Route path="mortuary" element={<Mortuary />} />
+        <Route path="blood-bank" element={<RoleProtectedRoute path="blood-bank"><BloodBank /></RoleProtectedRoute>} />
+        <Route path="pharmacy" element={<RoleProtectedRoute path="pharmacy"><Pharmacy /></RoleProtectedRoute>} />
+        <Route path="ambulance" element={<RoleProtectedRoute path="ambulance"><Ambulance /></RoleProtectedRoute>} />
+        <Route path="housekeeping" element={<RoleProtectedRoute path="housekeeping"><Housekeeping /></RoleProtectedRoute>} />
+        <Route path="diet" element={<RoleProtectedRoute path="diet"><Diet /></RoleProtectedRoute>} />
+        <Route path="quality" element={<RoleProtectedRoute path="quality"><Quality /></RoleProtectedRoute>} />
+        <Route path="cssd" element={<RoleProtectedRoute path="cssd"><CSSD /></RoleProtectedRoute>} />
+        <Route path="physiotherapy" element={<RoleProtectedRoute path="physiotherapy"><Physiotherapy /></RoleProtectedRoute>} />
+        <Route path="mortuary" element={<RoleProtectedRoute path="mortuary"><Mortuary /></RoleProtectedRoute>} />
 
         {/* Finance & Billing */}
-        <Route path="billing" element={<BillingPage />} />
-        <Route path="ipd-billing" element={<IPDBilling />} />
-        <Route path="referral-commission" element={<ReferralCommission />} />
-        <Route path="tpa" element={<TPA />} />
-        <Route path="doctor-accounting" element={<DoctorAccounting />} />
-        <Route path="tally" element={<Tally />} />
+        <Route path="billing" element={<RoleProtectedRoute path="billing"><BillingPage /></RoleProtectedRoute>} />
+        <Route path="ipd-billing" element={<RoleProtectedRoute path="ipd-billing"><IPDBilling /></RoleProtectedRoute>} />
+        <Route path="referral-commission" element={<RoleProtectedRoute path="referral-commission"><ReferralCommission /></RoleProtectedRoute>} />
+        <Route path="tpa" element={<RoleProtectedRoute path="tpa"><TPA /></RoleProtectedRoute>} />
+        <Route path="doctor-accounting" element={<RoleProtectedRoute path="doctor-accounting"><DoctorAccounting /></RoleProtectedRoute>} />
+        <Route path="tally" element={<RoleProtectedRoute path="tally"><Tally /></RoleProtectedRoute>} />
 
         {/* Operations & Management */}
-        <Route path="inventory" element={<Inventory />} />
-        <Route path="store-management" element={<StoreManagement />} />
-        <Route path="asset-management" element={<AssetManagement />} />
-        <Route path="equipment-maintenance" element={<EquipmentMaintenance />} />
-        <Route path="medical-device" element={<MedicalDevice />} />
+        <Route path="inventory" element={<RoleProtectedRoute path="inventory"><Inventory /></RoleProtectedRoute>} />
+        <Route path="store-management" element={<RoleProtectedRoute path="store-management"><StoreManagement /></RoleProtectedRoute>} />
+        <Route path="asset-management" element={<RoleProtectedRoute path="asset-management"><AssetManagement /></RoleProtectedRoute>} />
+        <Route path="equipment-maintenance" element={<RoleProtectedRoute path="equipment-maintenance"><EquipmentMaintenance /></RoleProtectedRoute>} />
+        <Route path="medical-device" element={<RoleProtectedRoute path="medical-device"><MedicalDevice /></RoleProtectedRoute>} />
 
         {/* Clinical Support */}
-        <Route path="opd-clinical" element={<OPDClinical />} />
-        <Route path="doctor-assistant" element={<DoctorAssistant />} />
-        <Route path="mrd-management" element={<MRDManagement />} />
+        <Route path="opd-clinical" element={<RoleProtectedRoute path="opd-clinical"><OPDClinical /></RoleProtectedRoute>} />
+        <Route path="doctor-assistant" element={<RoleProtectedRoute path="doctor-assistant"><DoctorAssistant /></RoleProtectedRoute>} />
+        <Route path="mrd-management" element={<RoleProtectedRoute path="mrd-management"><MRDManagement /></RoleProtectedRoute>} />
 
         {/* Technology Integration */}
-        <Route path="video-conversation" element={<VideoConversation />} />
-        <Route path="dicom-pacs" element={<DICOMPACS />} />
+        <Route path="video-conversation" element={<RoleProtectedRoute path="video-conversation"><VideoConversation /></RoleProtectedRoute>} />
+        <Route path="dicom-pacs" element={<RoleProtectedRoute path="dicom-pacs"><DICOMPACS /></RoleProtectedRoute>} />
 
         {/* HR & Administration */}
-        <Route path="hr" element={<HR />} />
-        <Route path="payroll" element={<PayrollManagement />} />
-        <Route path="biometric-attendance" element={<BiometricAttendance />} />
-        <Route path="doctor-registration" element={<DoctorRegistration />} />
+        <Route path="hr" element={<RoleProtectedRoute path="hr"><HR /></RoleProtectedRoute>} />
+        <Route path="payroll" element={<RoleProtectedRoute path="payroll"><PayrollManagement /></RoleProtectedRoute>} />
+        <Route path="biometric-attendance" element={<RoleProtectedRoute path="biometric-attendance"><BiometricAttendance /></RoleProtectedRoute>} />
+        <Route path="doctor-registration" element={<RoleProtectedRoute path="doctor-registration"><DoctorRegistration /></RoleProtectedRoute>} />
 
         {/* System & Reports */}
-        <Route path="mis-report" element={<MISReport />} />
-        <Route path="master-data" element={<MasterData />} />
-        <Route path="software-management" element={<SoftwareManagement />} />
-        <Route path="system-control" element={<SystemControl />} />
+        <Route path="mis-report" element={<RoleProtectedRoute path="mis-report"><MISReport /></RoleProtectedRoute>} />
+        <Route path="master-data" element={<RoleProtectedRoute path="master-data"><MasterData /></RoleProtectedRoute>} />
+        <Route path="software-management" element={<RoleProtectedRoute path="software-management"><SoftwareManagement /></RoleProtectedRoute>} />
+        <Route path="system-control" element={<RoleProtectedRoute path="system-control"><SystemControl /></RoleProtectedRoute>} />
       </Route>
     </Routes>
   );
@@ -161,7 +187,9 @@ const AppRoutes = () => {
 function App() {
   return (
     <AuthProvider>
-      <AppRoutes />
+      <ToastProvider>
+        <AppRoutes />
+      </ToastProvider>
     </AuthProvider>
   );
 }

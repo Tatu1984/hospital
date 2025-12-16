@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { AlertCircle, UserPlus, Clock, Activity, AlertTriangle, CheckCircle2, Users, Bed, FileText, Shield } from 'lucide-react';
+import { AlertCircle, UserPlus, Clock, Activity, AlertTriangle, CheckCircle2, Bed, FileText, Shield } from 'lucide-react';
 import api from '../services/api';
 
 interface EmergencyCase {
@@ -59,7 +59,6 @@ export default function Emergency() {
   const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false);
   const [selectedCase, setSelectedCase] = useState<EmergencyCase | null>(null);
   const [loading, setLoading] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
 
   const [triageFormData, setTriageFormData] = useState<TriageFormData>({
     patientId: '',

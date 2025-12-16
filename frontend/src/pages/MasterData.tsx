@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Edit, Trash2, Database, Pill, TestTube, Building2, Bed } from 'lucide-react';
+import { Plus, Edit, Trash2 } from 'lucide-react';
 import api from '../services/api';
 
 interface MasterItem {

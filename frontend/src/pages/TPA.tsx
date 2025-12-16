@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Shield, FileText, Upload, CheckCircle, XCircle, Clock } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import api from '../services/api';
 
 interface InsuranceCompany {

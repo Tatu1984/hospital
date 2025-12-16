@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Heart, Activity, Wind, Droplet, Thermometer, Users, Bed, AlertTriangle, TrendingUp, FileText, Plus } from 'lucide-react';
+import { Heart, Activity, Wind, Droplet, Thermometer, Users, Bed, TrendingUp, FileText } from 'lucide-react';
 import api from '../services/api';
 
 interface ICUBed {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -29,8 +29,8 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { Settings, Users, FileText, Activity, Plus, Edit, Trash2, Key, Building2, Mail, Phone, Upload } from 'lucide-react';
-import api from '@/lib/api';
+import { Settings, Users, FileText, Activity, Plus, Edit, Trash2, Key, Building2, Mail, Phone } from 'lucide-react';
+import api from '../services/api';
 
 interface User {
   id: string;
@@ -87,7 +87,6 @@ const SystemControl: React.FC = () => {
   const [passwordData, setPasswordData] = useState({ newPassword: '', confirmPassword: '' });
 
   // System Settings State
-  const [settings, setSettings] = useState<SystemSetting[]>([]);
   const [hospitalInfo, setHospitalInfo] = useState({
     name: '',
     address: '',

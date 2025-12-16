@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Ambulance as AmbulanceIcon, Plus, MapPin, Clock, CheckCircle, AlertCircle } from 'lucide-react';
+import { Ambulance as AmbulanceIcon, Plus, MapPin, Clock, CheckCircle } from 'lucide-react';
 import api from '../services/api';
 
 interface AmbulanceVehicle {

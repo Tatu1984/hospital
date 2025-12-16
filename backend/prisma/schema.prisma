@@ -96,6 +96,7 @@ model User {
   lastLoginAt       DateTime?
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
+  admissions        Admission[]     @relation("AdmittingDoctor")
   attendanceLogs    AttendanceLog[]
   performedAuditLog AuditLog[]      @relation("PerformedBy")
   createdAuditLogs  AuditLog[]      @relation("CreatedBy")
@@ -142,6 +143,7 @@ model Patient {
   preAuths          PreAuthorization[]
   referralSource    ReferralSource?    @relation(fields: [referralSourceId], references: [id])
   commissions       Commission[]
+  insurances        PatientInsurance[]
 
   @@unique([tenantId, mrn])
   @@map("patients")
@@ -206,6 +208,7 @@ model Admission {
   diagnosis         String?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
+  admittingDoctor   User?     @relation("AdmittingDoctor", fields: [admittingDoctorId], references: [id])
   bed               Bed?      @relation(fields: [bedId], references: [id])
   encounter         Encounter @relation(fields: [encounterId], references: [id])
   patient           Patient   @relation(fields: [patientId], references: [id])
@@ -489,8 +492,9 @@ model TPAMaster {
   address         String?
   creditLimit     Decimal?           @db.Decimal(12, 2)
   discountPercent Decimal?           @db.Decimal(5, 2)
-  isActive        Boolean            @default(true)
-  preAuths        PreAuthorization[]
+  isActive          Boolean            @default(true)
+  preAuths          PreAuthorization[]
+  patientInsurances PatientInsurance[]
 
   @@map("tpa_master")
 }
@@ -515,6 +519,24 @@ model PreAuthorization {
   tpa              TPAMaster @relation(fields: [tpaId], references: [id])
 
   @@map("pre_authorizations")
+}
+
+model PatientInsurance {
+  id               String    @id @default(uuid())
+  patientId        String
+  tpaId            String
+  policyNumber     String
+  policyHolderName String?
+  validFrom        DateTime
+  validTill        DateTime
+  sumInsured       Decimal   @db.Decimal(12, 2)
+  isActive         Boolean   @default(true)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  patient          Patient   @relation(fields: [patientId], references: [id])
+  tpa              TPAMaster @relation(fields: [tpaId], references: [id])
+
+  @@map("patient_insurances")
 }
 
 model InventoryItem {
@@ -956,4 +978,300 @@ model DoctorPayout {
   revenues        DoctorRevenue[]
 
   @@map("doctor_payouts")
+}
+
+// ===========================
+// BLOOD BANK SYSTEM
+// ===========================
+
+model BloodDonor {
+  id              String           @id @default(uuid())
+  donorId         String           @unique
+  name            String
+  age             Int
+  gender          String
+  bloodType       String
+  phone           String
+  email           String?
+  address         String?
+  lastDonationAt  DateTime?
+  totalDonations  Int              @default(0)
+  isEligible      Boolean          @default(true)
+  screeningStatus String           @default("pending") // pending, cleared, rejected
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  donations       BloodDonation[]
+
+  @@map("blood_donors")
+}
+
+model BloodDonation {
+  id              String         @id @default(uuid())
+  donorId         String
+  donationDate    DateTime       @default(now())
+  bloodType       String
+  component       String         @default("whole_blood")
+  volume          Int            @default(450) // ml
+  bagNumber       String         @unique
+  collectedBy     String?
+  status          String         @default("collected") // collected, processed, available, expired, discarded
+  expiryDate      DateTime
+  createdAt       DateTime       @default(now())
+  donor           BloodDonor     @relation(fields: [donorId], references: [id])
+  inventory       BloodInventory?
+
+  @@map("blood_donations")
+}
+
+model BloodInventory {
+  id              String          @id @default(uuid())
+  donationId      String?         @unique
+  bloodType       String
+  component       String
+  bagNumber       String          @unique
+  volume          Int
+  collectionDate  DateTime
+  expiryDate      DateTime
+  status          String          @default("available") // available, reserved, issued, expired, discarded
+  location        String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  donation        BloodDonation?  @relation(fields: [donationId], references: [id])
+  issuances       BloodIssuance[]
+
+  @@index([bloodType, component, status])
+  @@map("blood_inventory")
+}
+
+model BloodRequest {
+  id                String          @id @default(uuid())
+  patientId         String?
+  patientName       String
+  patientMRN        String?
+  bloodType         String
+  component         String
+  unitsRequested    Int
+  urgency           String          @default("routine") // routine, urgent, emergency
+  indication        String?
+  requestedBy       String?
+  requestedAt       DateTime        @default(now())
+  crossMatchedAt    DateTime?
+  crossMatchedBy    String?
+  crossMatchResult  String?         // compatible, incompatible
+  status            String          @default("pending") // pending, crossmatched, approved, issued, cancelled
+  remarks           String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  issuances         BloodIssuance[]
+
+  @@map("blood_requests")
+}
+
+model BloodIssuance {
+  id              String          @id @default(uuid())
+  requestId       String
+  inventoryId     String
+  issuedAt        DateTime        @default(now())
+  issuedBy        String?
+  receivedBy      String?
+  status          String          @default("issued") // issued, returned, transfused
+  remarks         String?
+  createdAt       DateTime        @default(now())
+  request         BloodRequest    @relation(fields: [requestId], references: [id])
+  inventory       BloodInventory  @relation(fields: [inventoryId], references: [id])
+
+  @@map("blood_issuances")
+}
+
+// ===========================
+// HR & EMPLOYEE MANAGEMENT
+// ===========================
+
+model Employee {
+  id              String    @id @default(uuid())
+  employeeId      String    @unique
+  name            String
+  email           String?
+  phone           String?
+  department      String?
+  designation     String?
+  joiningDate     DateTime?
+  salary          Decimal?  @db.Decimal(12, 2)
+  status          String    @default("active") // active, on_leave, terminated
+  shift           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  leaves          LeaveRequest[]
+  attendances     EmployeeAttendance[]
+
+  @@map("employees")
+}
+
+model EmployeeAttendance {
+  id          String    @id @default(uuid())
+  employeeId  String
+  date        DateTime  @db.Date
+  checkIn     DateTime?
+  checkOut    DateTime?
+  status      String    @default("present") // present, absent, half_day, on_leave
+  remarks     String?
+  createdAt   DateTime  @default(now())
+  employee    Employee  @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, date])
+  @@map("employee_attendances")
+}
+
+model LeaveRequest {
+  id          String    @id @default(uuid())
+  employeeId  String
+  leaveType   String    // sick, casual, earned, maternity, etc.
+  fromDate    DateTime
+  toDate      DateTime
+  reason      String?
+  status      String    @default("pending") // pending, approved, rejected
+  approvedBy  String?
+  approvedAt  DateTime?
+  remarks     String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  employee    Employee  @relation(fields: [employeeId], references: [id])
+
+  @@map("leave_requests")
+}
+
+// ===========================
+// AMBULANCE MANAGEMENT
+// ===========================
+
+model AmbulanceVehicle {
+  id              String    @id @default(uuid())
+  vehicleNumber   String    @unique
+  type            String    // ALS, BLS, patient_transport
+  driverName      String?
+  driverPhone     String?
+  status          String    @default("available") // available, on_trip, maintenance, out_of_service
+  lastMaintenance DateTime?
+  currentLocation String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@map("ambulance_vehicles")
+}
+
+// ===========================
+// EMERGENCY CASE TRACKING
+// ===========================
+
+model EmergencyCase {
+  id              String    @id @default(uuid())
+  patientId       String?
+  patientName     String
+  patientAge      Int?
+  patientGender   String?
+  patientContact  String?
+  arrivalTime     DateTime  @default(now())
+  triageCategory  String    // RED, YELLOW, GREEN
+  chiefComplaint  String?
+  vitalSigns      Json?
+  isMLC           Boolean   @default(false)
+  mlcNumber       String?
+  assignedDoctor  String?
+  status          String    @default("active") // active, admitted, discharged, transferred
+  disposition     String?   // admitted_ipd, admitted_icu, discharged, transferred, dama, expired
+  dischargeTime   DateTime?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@map("emergency_cases")
+}
+
+// ===========================
+// ICU MANAGEMENT
+// ===========================
+
+model ICUBed {
+  id              String        @id @default(uuid())
+  bedNumber       String        @unique
+  icuUnit         String        // MICU, SICU, NICU, PICU, CCU
+  status          String        @default("vacant") // vacant, occupied, maintenance
+  currentPatient  String?
+  admissionId     String?
+  ventilatorId    String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  vitalsRecords   ICUVitals[]
+
+  @@map("icu_beds")
+}
+
+model ICUVitals {
+  id              String    @id @default(uuid())
+  icuBedId        String
+  patientId       String?
+  heartRate       Int?
+  systolicBP      Int?
+  diastolicBP     Int?
+  temperature     Decimal?  @db.Decimal(4, 1)
+  spo2            Int?
+  respiratoryRate Int?
+  gcs             Int?
+  ventilatorMode  String?
+  fio2            Int?
+  peep            Int?
+  recordedAt      DateTime  @default(now())
+  recordedBy      String?
+  icuBed          ICUBed    @relation(fields: [icuBedId], references: [id])
+
+  @@map("icu_vitals")
+}
+
+// ===========================
+// SURGERY/OT MANAGEMENT
+// ===========================
+
+model Surgery {
+  id              String    @id @default(uuid())
+  patientId       String?
+  patientName     String
+  patientMRN      String?
+  procedureName   String
+  surgeonId       String?
+  surgeonName     String
+  anesthetistId   String?
+  anesthetistName String?
+  otRoomId        String?
+  otRoom          String?
+  scheduledDate   DateTime
+  scheduledTime   String?
+  estimatedDuration Int?    // minutes
+  actualStartTime DateTime?
+  actualEndTime   DateTime?
+  anesthesiaType  String?
+  priority        String    @default("elective") // emergency, urgent, elective
+  status          String    @default("scheduled") // scheduled, in_progress, completed, cancelled, postponed
+  preOpChecklist  Boolean   @default(false)
+  postOpNotes     String?
+  complications   String?
+  implants        Json?
+  consumables     Json?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@map("surgeries")
+}
+
+model OTRoom {
+  id              String    @id @default(uuid())
+  name            String    @unique
+  type            String    // general, cardiac, neuro, orthopedic, etc.
+  floor           String?
+  status          String    @default("available") // available, in_use, cleaning, maintenance
+  currentSurgery  String?
+  equipment       Json?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@map("ot_rooms")
 }

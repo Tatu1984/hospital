@@ -1,0 +1,20 @@
+{"level":"info","message":"Hospital ERP Backend running on http://localhost:4000","service":"hospital-erp","timestamp":"2025-12-15T18:22:07.089Z"}
+{"level":"info","message":"API Health: http://localhost:4000/api/health","service":"hospital-erp","timestamp":"2025-12-15T18:22:07.090Z"}
+{"level":"info","message":"SIGTERM received, shutting down gracefully","service":"hospital-erp","timestamp":"2025-12-16T03:28:27.189Z"}
+{"level":"info","message":"Hospital ERP Backend running on http://localhost:4000","service":"hospital-erp","timestamp":"2025-12-16T03:28:28.879Z"}
+{"level":"info","message":"API Health: http://localhost:4000/api/health","service":"hospital-erp","timestamp":"2025-12-16T03:28:28.879Z"}
+{"level":"info","message":"SIGTERM received, shutting down gracefully","service":"hospital-erp","timestamp":"2025-12-16T03:28:36.791Z"}
+{"level":"info","message":"Hospital ERP Backend running on http://localhost:4000","service":"hospital-erp","timestamp":"2025-12-16T03:28:37.408Z"}
+{"level":"info","message":"API Health: http://localhost:4000/api/health","service":"hospital-erp","timestamp":"2025-12-16T03:28:37.408Z"}
+{"level":"info","message":"SIGTERM received, shutting down gracefully","service":"hospital-erp","timestamp":"2025-12-16T03:37:52.910Z"}
+{"level":"info","message":"Hospital ERP Backend running on http://localhost:4000","service":"hospital-erp","timestamp":"2025-12-16T03:37:55.658Z"}
+{"level":"info","message":"API Health: http://localhost:4000/api/health","service":"hospital-erp","timestamp":"2025-12-16T03:37:55.659Z"}
+{"level":"info","message":"SIGTERM received, shutting down gracefully","service":"hospital-erp","timestamp":"2025-12-16T03:42:20.961Z"}
+{"level":"info","message":"Hospital ERP Backend running on http://localhost:4000","service":"hospital-erp","timestamp":"2025-12-16T03:42:21.930Z"}
+{"level":"info","message":"API Health: http://localhost:4000/api/health","service":"hospital-erp","timestamp":"2025-12-16T03:42:21.930Z"}
+{"level":"info","message":"SIGTERM received, shutting down gracefully","service":"hospital-erp","timestamp":"2025-12-16T03:42:57.959Z"}
+{"level":"info","message":"Hospital ERP Backend running on http://localhost:4000","service":"hospital-erp","timestamp":"2025-12-16T03:42:59.258Z"}
+{"level":"info","message":"API Health: http://localhost:4000/api/health","service":"hospital-erp","timestamp":"2025-12-16T03:42:59.258Z"}
+{"level":"info","message":"SIGTERM received, shutting down gracefully","service":"hospital-erp","timestamp":"2025-12-16T03:54:37.221Z"}
+{"level":"info","message":"Hospital ERP Backend running on http://localhost:4000","service":"hospital-erp","timestamp":"2025-12-16T03:54:39.770Z"}
+{"level":"info","message":"API Health: http://localhost:4000/api/health","service":"hospital-erp","timestamp":"2025-12-16T03:54:39.770Z"}

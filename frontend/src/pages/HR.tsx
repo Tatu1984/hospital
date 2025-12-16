@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { UserCog, UserPlus, Clock, Calendar, CheckCircle, XCircle, Users, Briefcase } from 'lucide-react';
+import { UserPlus, Clock, CheckCircle, XCircle, Users } from 'lucide-react';
 import api from '../services/api';
 
 interface Employee {
@@ -63,7 +63,6 @@ export default function HR() {
   const [attendance, setAttendance] = useState<Attendance[]>([]);
   const [leaves, setLeaves] = useState<Leave[]>([]);
   const [isEmployeeDialogOpen, setIsEmployeeDialogOpen] = useState(false);
-  const [isAttendanceDialogOpen, setIsAttendanceDialogOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
 

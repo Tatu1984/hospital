@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Activity, Plus, Clock, CheckCircle, AlertCircle, Calendar, Heart, Pill, FileText, Users } from 'lucide-react';
+import { AlertCircle, Pill, Heart, Plus } from 'lucide-react';
 import api from '../services/api';
 
 interface Patient {
@@ -76,7 +76,6 @@ export default function NurseStation() {
   const [roster, setRoster] = useState<DutyRoster[]>([]);
   const [handoverNotes, setHandoverNotes] = useState<HandoverNote[]>([]);
 
-  const [isMedicationDialogOpen, setIsMedicationDialogOpen] = useState(false);
   const [isVitalsDialogOpen, setIsVitalsDialogOpen] = useState(false);
   const [isRosterDialogOpen, setIsRosterDialogOpen] = useState(false);
   const [isHandoverDialogOpen, setIsHandoverDialogOpen] = useState(false);

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Bed, ArrowRightLeft, LogOut, FileText, Activity, Search } from 'lucide-react';
+import { Plus, Bed, LogOut, Search } from 'lucide-react';
 import api from '../services/api';
 
 interface Admission {
@@ -52,7 +52,6 @@ export default function Inpatient() {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [isAdmitDialogOpen, setIsAdmitDialogOpen] = useState(false);
   const [isDischargeDialogOpen, setIsDischargeDialogOpen] = useState(false);
-  const [isTransferDialogOpen, setIsTransferDialogOpen] = useState(false);
   const [selectedAdmission, setSelectedAdmission] = useState<Admission | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(false);
@@ -68,11 +67,6 @@ export default function Inpatient() {
     dischargeSummary: '',
     followUpDate: '',
     instructions: ''
-  });
-
-  const [transferFormData, setTransferFormData] = useState({
-    newBedId: '',
-    reason: ''
   });
 
   useEffect(() => {
@@ -172,11 +166,6 @@ export default function Inpatient() {
   const openDischargeDialog = (admission: Admission) => {
     setSelectedAdmission(admission);
     setIsDischargeDialogOpen(true);
-  };
-
-  const openTransferDialog = (admission: Admission) => {
-    setSelectedAdmission(admission);
-    setIsTransferDialogOpen(true);
   };
 
   const filteredAdmissions = admissions.filter(adm =>
@@ -378,14 +367,6 @@ export default function Inpatient() {
                         </TableCell>
                         <TableCell>
                           <div className="flex gap-2">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => openTransferDialog(admission)}
-                            >
-                              <ArrowRightLeft className="w-4 h-4 mr-1" />
-                              Transfer
-                            </Button>
                             <Button
                               size="sm"
                               onClick={() => openDischargeDialog(admission)}

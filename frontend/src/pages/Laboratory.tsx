@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Plus, TestTube, Barcode, CheckCircle, FileText } from 'lucide-react';
 import api from '../services/api';
+import { generateLabReportPDF } from '../utils/pdfGenerator';
 
 interface LabOrder {
   id: string;
@@ -472,7 +473,23 @@ export default function Laboratory() {
                               </>
                             )}
                             {order.status === 'completed' && order.results && order.results.length > 0 && (
-                              <Button variant="outline" size="sm">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => generateLabReportPDF({
+                                  reportNumber: order.orderId,
+                                  date: order.orderedAt,
+                                  patientName: order.patientName,
+                                  patientMRN: order.patientMRN,
+                                  tests: order.results?.map((result: any) => ({
+                                    testName: result.testName || result.name,
+                                    result: result.value?.toString() || result.result || '-',
+                                    unit: result.unit || '',
+                                    normalRange: result.normalRange || '',
+                                    flag: result.flag
+                                  })) || []
+                                })}
+                              >
                                 <FileText className="w-4 h-4 mr-1" />
                                 View Report
                               </Button>
@@ -584,7 +601,23 @@ export default function Laboratory() {
                       <TableCell>{order.details?.tests?.length || 0} test(s)</TableCell>
                       <TableCell>{order.orderedAt}</TableCell>
                       <TableCell>
-                        <Button variant="outline" size="sm">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => generateLabReportPDF({
+                            reportNumber: order.orderId,
+                            date: order.orderedAt,
+                            patientName: order.patientName,
+                            patientMRN: order.patientMRN,
+                            tests: order.results?.map((result: any) => ({
+                              testName: result.testName || result.name,
+                              result: result.value?.toString() || result.result || '-',
+                              unit: result.unit || '',
+                              normalRange: result.normalRange || '',
+                              flag: result.flag
+                            })) || []
+                          })}
+                        >
                           <FileText className="w-4 h-4 mr-1" />
                           View Report
                         </Button>
