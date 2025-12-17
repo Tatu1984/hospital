@@ -17,7 +17,6 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@prisma/client": "^5.7.1",
     "@sentry/node": "^10.30.0",
     "@types/swagger-jsdoc": "^6.0.4",
     "@types/swagger-ui-express": "^4.1.8",
@@ -38,6 +37,7 @@
     "zod": "^3.22.4"
   },
   "devDependencies": {
+    "@prisma/client": "^5.7.1",
     "@types/bcryptjs": "^2.4.6",
     "@types/compression": "^1.8.1",
     "@types/cors": "^2.8.17",

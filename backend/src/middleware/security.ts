@@ -1,5 +1,6 @@
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import { ipKeyGenerator } from 'express-rate-limit';
 import compression from 'compression';
 import { Request, Response, NextFunction } from 'express';
 import { config } from '../config';
@@ -32,7 +33,7 @@ export const generalRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => {
-    return req.ip || req.headers['x-forwarded-for']?.toString() || 'unknown';
+    return ipKeyGenerator(req);
   },
   handler: (req, res) => {
     auditLogger.securityEvent('RATE_LIMIT_EXCEEDED', {
@@ -58,7 +59,7 @@ export const authRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => {
-    return req.ip || req.headers['x-forwarded-for']?.toString() || 'unknown';
+    return ipKeyGenerator(req);
   },
   handler: (req, res) => {
     auditLogger.securityEvent('AUTH_RATE_LIMIT_EXCEEDED', {

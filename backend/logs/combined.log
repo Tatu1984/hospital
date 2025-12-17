@@ -18,3 +18,27 @@
 {"level":"info","message":"SIGTERM received, shutting down gracefully","service":"hospital-erp","timestamp":"2025-12-16T03:54:37.221Z"}
 {"level":"info","message":"Hospital ERP Backend running on http://localhost:4000","service":"hospital-erp","timestamp":"2025-12-16T03:54:39.769Z"}
 {"level":"info","message":"API Health: http://localhost:4000/api/health","service":"hospital-erp","timestamp":"2025-12-16T03:54:39.770Z"}
+{"level":"info","message":"Hospital ERP Backend running on http://localhost:4000","service":"hospital-erp","timestamp":"2025-12-17T10:57:09.855Z"}
+{"level":"info","message":"API Health: http://localhost:4000/api/health","service":"hospital-erp","timestamp":"2025-12-17T10:57:09.856Z"}
+{"level":"info","message":"Hospital ERP Backend running on http://localhost:4000","service":"hospital-erp","timestamp":"2025-12-17T11:05:10.765Z"}
+{"level":"info","message":"API Health: http://localhost:4000/api/health","service":"hospital-erp","timestamp":"2025-12-17T11:05:10.768Z"}
+{"level":"info","message":"Hospital ERP Backend running on http://localhost:4000","service":"hospital-erp","timestamp":"2025-12-17T11:06:56.286Z"}
+{"level":"info","message":"API Health: http://localhost:4000/api/health","service":"hospital-erp","timestamp":"2025-12-17T11:06:56.288Z"}
+{"level":"info","message":"Hospital ERP Backend running on http://localhost:4000","service":"hospital-erp","timestamp":"2025-12-17T11:11:13.433Z"}
+{"level":"info","message":"API Health: http://localhost:4000/api/health","service":"hospital-erp","timestamp":"2025-12-17T11:11:13.434Z"}
+{"level":"info","message":"Hospital ERP Backend running on http://localhost:4000","service":"hospital-erp","timestamp":"2025-12-17T11:11:20.914Z"}
+{"level":"info","message":"API Health: http://localhost:4000/api/health","service":"hospital-erp","timestamp":"2025-12-17T11:11:20.916Z"}
+{"level":"info","message":"Hospital ERP Backend running on http://localhost:4000","service":"hospital-erp","timestamp":"2025-12-17T11:14:59.795Z"}
+{"level":"info","message":"API Health: http://localhost:4000/api/health","service":"hospital-erp","timestamp":"2025-12-17T11:14:59.798Z"}
+{"level":"info","message":"Hospital ERP Backend running on http://localhost:4000","service":"hospital-erp","timestamp":"2025-12-17T12:50:18.374Z"}
+{"level":"info","message":"API Health: http://localhost:4000/api/health","service":"hospital-erp","timestamp":"2025-12-17T12:50:18.375Z"}
+{"event":"LOGIN_FAILED","ip":"::1","level":"warn","message":"SECURITY_EVENT","reason":"invalid_user","service":"hospital-erp","timestamp":"2025-12-17T12:50:31.120Z","username":"admin"}
+{"level":"info","message":"Hospital ERP Backend running on http://localhost:4000","service":"hospital-erp","timestamp":"2025-12-17T13:10:23.297Z"}
+{"level":"info","message":"API Health: http://localhost:4000/api/health","service":"hospital-erp","timestamp":"2025-12-17T13:10:23.299Z"}
+{"event":"LOGIN_FAILED","ip":"::1","level":"warn","message":"SECURITY_EVENT","reason":"invalid_user","service":"hospital-erp","timestamp":"2025-12-17T13:55:27.008Z","username":"admin"}
+{"level":"info","message":"Hospital ERP Backend running on http://localhost:4000","service":"hospital-erp","timestamp":"2025-12-17T14:01:01.341Z"}
+{"level":"info","message":"API Health: http://localhost:4000/api/health","service":"hospital-erp","timestamp":"2025-12-17T14:01:01.342Z"}
+{"event":"LOGIN_FAILED","ip":"::1","level":"warn","message":"SECURITY_EVENT","reason":"invalid_user","service":"hospital-erp","timestamp":"2025-12-17T14:01:15.575Z","username":"admin"}
+{"level":"info","message":"Hospital ERP Backend running on http://localhost:4000","service":"hospital-erp","timestamp":"2025-12-17T14:02:36.424Z"}
+{"level":"info","message":"API Health: http://localhost:4000/api/health","service":"hospital-erp","timestamp":"2025-12-17T14:02:36.425Z"}
+{"event":"LOGIN_FAILED","ip":"::1","level":"warn","message":"SECURITY_EVENT","reason":"invalid_user","service":"hospital-erp","timestamp":"2025-12-17T14:03:10.480Z","username":"doctor1 "}

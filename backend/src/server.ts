@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -985,7 +986,7 @@ app.post('/api/commission-payouts', authenticateToken, async (req: any, res: Res
       return res.status(400).json({ error: 'No approved commissions found for payout' });
     }
 
-    const totalAmount = commissions.reduce((sum, c) => sum + parseFloat(c.commissionAmount.toString()), 0);
+    const totalAmount = commissions.reduce((sum: number, c: { commissionAmount: { toString: () => string; }; }) => sum + parseFloat(c.commissionAmount.toString()), 0);
 
     // Generate payout number
     const lastPayout = await prisma.commissionPayout.findFirst({
@@ -1010,7 +1011,7 @@ app.post('/api/commission-payouts', authenticateToken, async (req: any, res: Res
 
     // Update commissions
     await prisma.commission.updateMany({
-      where: { id: { in: commissions.map(c => c.id) } },
+      where: { id: { in: commissions.map((c: { id: any; }) => c.id) } },
       data: {
         status: 'paid',
         paidAt: new Date(),
@@ -1060,18 +1061,18 @@ app.get('/api/commissions/summary', authenticateToken, async (req: any, res: Res
     });
 
     const sources = await prisma.referralSource.findMany({
-      where: { id: { in: summary.map(s => s.referralSourceId) } },
+      where: { id: { in: summary.map((s: { referralSourceId: any; }) => s.referralSourceId) } },
       select: { id: true, name: true, code: true },
     });
 
-    const result = sources.map(source => {
-      const sourceSummary = summary.filter(s => s.referralSourceId === source.id);
+    const result = sources.map((source: { id: any; }) => {
+      const sourceSummary = summary.filter((s: { referralSourceId: any; }) => s.referralSourceId === source.id);
       return {
         ...source,
-        pending: sourceSummary.find(s => s.status === 'pending')?._sum.commissionAmount || 0,
-        approved: sourceSummary.find(s => s.status === 'approved')?._sum.commissionAmount || 0,
-        paid: sourceSummary.find(s => s.status === 'paid')?._sum.commissionAmount || 0,
-        totalCount: sourceSummary.reduce((sum, s) => sum + s._count, 0),
+        pending: sourceSummary.find((s: { status: string; }) => s.status === 'pending')?._sum.commissionAmount || 0,
+        approved: sourceSummary.find((s: { status: string; }) => s.status === 'approved')?._sum.commissionAmount || 0,
+        paid: sourceSummary.find((s: { status: string; }) => s.status === 'paid')?._sum.commissionAmount || 0,
+        totalCount: sourceSummary.reduce((sum: any, s: { _count: any; }) => sum + s._count, 0),
       };
     });
 
@@ -1252,14 +1253,14 @@ app.get('/api/trial-balance', authenticateToken, async (req: any, res: Response)
       orderBy: { code: 'asc' },
     });
 
-    const trialBalance = accounts.map(account => ({
+    const trialBalance = accounts.map((account: { type: string; currentBalance: any; }) => ({
       ...account,
       debit: ['asset', 'expense'].includes(account.type) ? account.currentBalance : 0,
       credit: ['liability', 'equity', 'income'].includes(account.type) ? account.currentBalance : 0,
     }));
 
-    const totalDebit = trialBalance.reduce((sum, acc) => sum + parseFloat(acc.debit.toString()), 0);
-    const totalCredit = trialBalance.reduce((sum, acc) => sum + parseFloat(acc.credit.toString()), 0);
+    const totalDebit = trialBalance.reduce((sum: number, acc: { debit: { toString: () => string; }; }) => sum + parseFloat(acc.debit.toString()), 0);
+    const totalCredit = trialBalance.reduce((sum: number, acc: { credit: { toString: () => string; }; }) => sum + parseFloat(acc.credit.toString()), 0);
 
     res.json({ accounts: trialBalance, totalDebit, totalCredit });
   } catch (error) {
@@ -1349,8 +1350,8 @@ app.post('/api/doctor-payouts', authenticateToken, async (req: any, res: Respons
       return res.status(400).json({ error: 'No approved revenues found for payout' });
     }
 
-    const totalRevenue = revenues.reduce((sum, r) => sum + parseFloat(r.revenueAmount.toString()), 0);
-    const totalShare = revenues.reduce((sum, r) => sum + parseFloat(r.shareAmount.toString()), 0);
+    const totalRevenue = revenues.reduce((sum: number, r: { revenueAmount: { toString: () => string; }; }) => sum + parseFloat(r.revenueAmount.toString()), 0);
+    const totalShare = revenues.reduce((sum: number, r: { shareAmount: { toString: () => string; }; }) => sum + parseFloat(r.shareAmount.toString()), 0);
     const netAmount = totalShare - parseFloat(deductions || 0);
 
     // Generate payout number
@@ -1379,7 +1380,7 @@ app.post('/api/doctor-payouts', authenticateToken, async (req: any, res: Respons
 
     // Update revenues
     await prisma.doctorRevenue.updateMany({
-      where: { id: { in: revenues.map(r => r.id) } },
+      where: { id: { in: revenues.map((r: { id: any; }) => r.id) } },
       data: {
         status: 'paid',
         paidAt: new Date(),
@@ -1987,7 +1988,7 @@ app.get('/api/admissions', authenticateToken, async (req: any, res: Response) =>
     });
 
     // Transform for frontend compatibility
-    res.json(admissions.map((adm, index) => ({
+    res.json(admissions.map((adm: { patient: { name: any; mrn: any; }; bed: { category: any; bedNumber: any; }; admittingDoctor: { name: any; }; diagnosis: any; encounter: { invoices: string | any[]; }; }, index: number) => ({
       ...adm,
       admissionId: `ADM-${String(index + 1).padStart(4, '0')}`,
       patientName: adm.patient?.name || 'Unknown',
@@ -2071,7 +2072,7 @@ app.get('/api/emergency/cases', authenticateToken, async (req: any, res: Respons
       orderBy: { arrivalTime: 'desc' },
     });
 
-    res.json(cases.map(c => ({
+    res.json(cases.map((c: { patientAge: any; patientGender: any; arrivalTime: { getTime: () => number; }; }) => ({
       ...c,
       age: c.patientAge,
       gender: c.patientGender,
@@ -2307,7 +2308,7 @@ app.get('/api/surgeries', authenticateToken, async (req: any, res: Response) => 
       orderBy: [{ scheduledDate: 'asc' }, { scheduledTime: 'asc' }],
     });
 
-    res.json(surgeries.map(s => ({
+    res.json(surgeries.map((s: { estimatedDuration: any; }) => ({
       ...s,
       duration: s.estimatedDuration,
     })));
@@ -2480,7 +2481,7 @@ app.get('/api/blood-bank/inventory', authenticateToken, async (req: any, res: Re
     });
 
     const inventoryWithExpiry = await Promise.all(
-      inventory.map(async (item) => {
+      inventory.map(async (item: { bloodType: any; component: any; _count: { id: any; }; }) => {
         const expiringIn3Days = await prisma.bloodInventory.count({
           where: {
             bloodType: item.bloodType,
@@ -2534,7 +2535,7 @@ app.get('/api/blood-bank/donors', authenticateToken, async (req: any, res: Respo
       orderBy: { createdAt: 'desc' },
     });
 
-    res.json(donors.map(d => ({
+    res.json(donors.map((d: { isEligible: any; lastDonationAt: any; }) => ({
       ...d,
       status: d.isEligible ? 'ELIGIBLE' : 'NOT_ELIGIBLE',
       lastDonation: d.lastDonationAt,
@@ -2584,7 +2585,7 @@ app.get('/api/blood-bank/requests', authenticateToken, async (req: any, res: Res
       orderBy: { requestedAt: 'desc' },
     });
 
-    res.json(requests.map(r => ({
+    res.json(requests.map((r: { unitsRequested: any; requestedAt: any; crossMatchResult: any; }) => ({
       ...r,
       unitsRequired: r.unitsRequested,
       requestDate: r.requestedAt,
@@ -2726,7 +2727,7 @@ app.get('/api/hr/attendance', authenticateToken, async (req: any, res: Response)
       orderBy: { date: 'desc' },
     });
 
-    res.json(attendance.map(a => ({
+    res.json(attendance.map((a: { employee: { name: any; }; checkIn: { toLocaleTimeString: () => any; }; checkOut: { toLocaleTimeString: () => any; }; }) => ({
       ...a,
       employeeName: a.employee.name,
       checkIn: a.checkIn?.toLocaleTimeString(),
@@ -2784,7 +2785,7 @@ app.get('/api/hr/leaves', authenticateToken, async (req: any, res: Response) => 
       orderBy: { createdAt: 'desc' },
     });
 
-    res.json(leaves.map(l => ({
+    res.json(leaves.map((l: { employee: { name: any; }; createdAt: any; }) => ({
       ...l,
       employeeName: l.employee.name,
       appliedDate: l.createdAt,
@@ -2885,7 +2886,7 @@ app.get('/api/inventory/items', authenticateToken, async (req: any, res: Respons
       orderBy: { name: 'asc' },
     });
 
-    const itemsWithStock = items.map(item => ({
+    const itemsWithStock = items.map((item: { code: any; price: any; stocks: any[]; reorderLevel: number; }) => ({
       ...item,
       itemCode: item.code,
       unitPrice: item.price,
@@ -2894,7 +2895,7 @@ app.get('/api/inventory/items', authenticateToken, async (req: any, res: Respons
     }));
 
     if (lowStock === 'true') {
-      res.json(itemsWithStock.filter(i => i.isLowStock));
+      res.json(itemsWithStock.filter((i: { isLowStock: any; }) => i.isLowStock));
     } else {
       res.json(itemsWithStock);
     }
@@ -2946,7 +2947,7 @@ app.get('/api/inventory/purchase-orders', authenticateToken, async (req: any, re
       orderBy: { orderDate: 'desc' },
     });
 
-    res.json(orders.map(o => ({
+    res.json(orders.map((o: { vendorName: any; expectedDate: any; items: any[]; }) => ({
       ...o,
       supplier: o.vendorName,
       expectedDelivery: o.expectedDate,
@@ -3034,7 +3035,7 @@ app.get('/api/ambulance/vehicles', authenticateToken, async (req: any, res: Resp
       orderBy: { vehicleNumber: 'asc' },
     });
 
-    res.json(vehicles.map(v => ({
+    res.json(vehicles.map((v: { driverName: any; lastMaintenance: any; }) => ({
       ...v,
       driver: v.driverName,
       lastService: v.lastMaintenance,
@@ -3077,7 +3078,7 @@ app.get('/api/ambulance/trips', authenticateToken, async (req: any, res: Respons
       orderBy: { startTime: 'desc' },
     });
 
-    res.json(trips.map(t => ({
+    res.json(trips.map((t: { patientId: any; startTime: any; vehicleNumber: any; }) => ({
       ...t,
       patientName: t.patientId || 'Walk-in',
       requestTime: t.startTime,
@@ -3184,7 +3185,7 @@ app.get('/api/housekeeping/tasks', authenticateToken, async (req: any, res: Resp
       orderBy: { createdAt: 'desc' },
     });
 
-    res.json(tasks.map(t => ({
+    res.json(tasks.map((t: { bedId: any; remarks: any; scheduledAt: { toLocaleTimeString: () => any; }; }) => ({
       ...t,
       location: t.bedId || 'General Area',
       area: t.remarks || '',
@@ -3245,7 +3246,7 @@ app.get('/api/housekeeping/laundry', authenticateToken, async (req: any, res: Re
       orderBy: { createdAt: 'desc' },
     });
 
-    res.json(laundry.map(l => ({
+    res.json(laundry.map((l: { id: any; bedId: any; remarks: any; createdAt: any; status: string; }) => ({
       id: l.id,
       department: l.bedId || 'General',
       itemType: l.remarks || 'Mixed Items',
@@ -3282,7 +3283,7 @@ app.get('/api/diet/orders', authenticateToken, async (req: any, res: Response) =
       orderBy: { orderDate: 'desc' },
     });
 
-    res.json(orders.map(o => ({
+    res.json(orders.map((o: { patient: { name: any; mrn: any; }; orderDate: { toLocaleTimeString: () => any; }; }) => ({
       ...o,
       patientName: o.patient.name,
       patientMRN: o.patient.mrn,
@@ -3440,7 +3441,7 @@ app.get('/api/bills', authenticateToken, async (req: any, res: Response) => {
       take: 100,
     });
 
-    const bills = invoices.map(inv => {
+    const bills = invoices.map((inv: { payments: any[]; items: any[]; id: string; patientId: any; patient: { name: any; mrn: any; }; type: any; subtotal: any; discount: any; tax: any; total: any; status: string; createdAt: { toISOString: () => any; }; }) => {
       const paidAmount = inv.payments.reduce((sum: number, p: any) => sum + Number(p.amount), 0);
       const items = inv.items as any[] || [];
       return {
@@ -3479,7 +3480,7 @@ app.get('/api/emergency', authenticateToken, async (req: any, res: Response) => 
       orderBy: { arrivalTime: 'desc' },
     });
 
-    res.json(cases.map(c => ({
+    res.json(cases.map((c: { id: any; patientName: any; patientId: any; patientAge: any; patientGender: any; patientContact: any; triageCategory: any; chiefComplaint: any; vitalSigns: any; status: any; arrivalTime: { toISOString: () => any; }; assignedDoctor: any; isMLC: any; mlcNumber: any; disposition: any; }) => ({
       id: c.id,
       patientName: c.patientName || 'Unknown',
       patientId: c.patientId,
@@ -3510,7 +3511,7 @@ app.get('/api/ot/rooms', authenticateToken, async (req: any, res: Response) => {
       orderBy: { name: 'asc' },
     });
 
-    res.json(rooms.map(room => ({
+    res.json(rooms.map((room: { id: any; name: any; type: any; floor: any; status: any; currentSurgery: any; equipment: any; }) => ({
       id: room.id,
       roomNumber: room.name,
       name: room.name,
@@ -3533,7 +3534,7 @@ app.get('/api/pharmacy/drugs', authenticateToken, async (req: any, res: Response
       orderBy: { name: 'asc' },
     });
 
-    res.json(drugs.map(d => ({
+    res.json(drugs.map((d: { id: string; name: any; genericName: any; category: any; form: any; strength: any; price: any; isNarcotic: any; isActive: any; }) => ({
       id: d.id,
       code: d.id.substring(0, 8).toUpperCase(),
       name: d.name,
@@ -3564,7 +3565,7 @@ app.get('/api/pharmacy/stock', authenticateToken, async (req: any, res: Response
       orderBy: { name: 'asc' },
     });
 
-    res.json(drugs.map(d => ({
+    res.json(drugs.map((d: { id: string; name: any; price: any; }) => ({
       id: d.id,
       drugId: d.id,
       drugName: d.name,
@@ -3588,7 +3589,7 @@ app.get('/api/employees', authenticateToken, async (req: any, res: Response) => 
       orderBy: { name: 'asc' },
     });
 
-    res.json(employees.map(emp => ({
+    res.json(employees.map((emp: { id: any; employeeId: any; name: any; email: any; phone: any; department: any; designation: any; joiningDate: { toISOString: () => any; }; salary: any; status: any; shift: any; }) => ({
       id: emp.id,
       employeeId: emp.employeeId,
       employeeCode: emp.employeeId,
@@ -3623,7 +3624,7 @@ app.get('/api/attendance', authenticateToken, async (req: any, res: Response) =>
       take: 100,
     });
 
-    res.json(attendance.map(a => ({
+    res.json(attendance.map((a: { id: any; employeeId: any; employee: { name: any; employeeId: any; }; date: { toISOString: () => any; }; checkIn: { toISOString: () => any; }; checkOut: { toISOString: () => any; }; status: any; remarks: any; }) => ({
       id: a.id,
       employeeId: a.employeeId,
       employeeName: a.employee?.name || '',
@@ -3647,7 +3648,7 @@ app.get('/api/ambulances', authenticateToken, async (req: any, res: Response) =>
       orderBy: { vehicleNumber: 'asc' },
     });
 
-    res.json(vehicles.map(v => ({
+    res.json(vehicles.map((v: { id: any; vehicleNumber: any; type: any; status: any; driverName: any; driverPhone: any; currentLocation: any; lastMaintenance: { toISOString: () => any; }; }) => ({
       id: v.id,
       vehicleNumber: v.vehicleNumber,
       type: v.type,
@@ -3687,9 +3688,9 @@ app.get('/api/nurse/medications', authenticateToken, async (req: any, res: Respo
     });
 
     const medications: any[] = [];
-    admissions.forEach(adm => {
+    admissions.forEach((adm: { encounter: { opdNotes: any[]; }; patientId: any; patient: { name: any; mrn: any; }; }) => {
       adm.encounter?.opdNotes?.forEach(note => {
-        note.prescriptions?.forEach(rx => {
+        note.prescriptions?.forEach((rx: { drugs: any[]; id: any; }) => {
           const drugs = rx.drugs as any[] || [];
           drugs.forEach((drug, idx) => {
             medications.push({
@@ -3728,7 +3729,7 @@ app.get('/api/nurse/vitals', authenticateToken, async (req: any, res: Response) 
       take: 100,
     });
 
-    res.json(vitals.map(v => ({
+    res.json(vitals.map((v: { id: any; patientId: any; icuBed: { bedNumber: any; }; temperature: any; systolicBP: any; diastolicBP: any; heartRate: any; respiratoryRate: any; spo2: any; gcs: any; recordedAt: { toISOString: () => any; }; recordedBy: any; }) => ({
       id: v.id,
       patientId: v.patientId || '',
       bedNumber: v.icuBed?.bedNumber || '',
