@@ -4,11 +4,15 @@ dotenv.config();
 const requiredEnvVars = ['DATABASE_URL', 'JWT_SECRET'];
 
 // Validate required environment variables
-for (const envVar of requiredEnvVars) {
-  if (!process.env[envVar]) {
-    console.error(`Missing required environment variable: ${envVar}`);
-    process.exit(1);
+const missingVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
+if (missingVars.length > 0) {
+  const errorMsg = `Missing required environment variables: ${missingVars.join(', ')}`;
+  console.error(errorMsg);
+  // In serverless, throw error instead of process.exit
+  if (process.env.VERCEL) {
+    throw new Error(errorMsg);
   }
+  process.exit(1);
 }
 
 export const config = {
@@ -64,6 +68,14 @@ export const config = {
   upload: {
     maxSizeMB: parseInt(process.env.MAX_FILE_SIZE_MB || '10', 10),
     dir: process.env.UPLOAD_DIR || './uploads',
+  },
+
+  // Payment Gateway - Razorpay
+  razorpay: {
+    keyId: process.env.RAZORPAY_KEY_ID || '',
+    keySecret: process.env.RAZORPAY_KEY_SECRET || '',
+    webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || '',
+    enabled: !!process.env.RAZORPAY_KEY_ID && !!process.env.RAZORPAY_KEY_SECRET,
   },
 } as const;
 
