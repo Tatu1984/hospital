@@ -1,5 +1,14 @@
-import { config } from '../config';
 import { logger } from '../utils/logger';
+
+// Safe config access
+const getEmailConfig = () => {
+  try {
+    const { config } = require('../config');
+    return config?.email || {};
+  } catch {
+    return {};
+  }
+};
 import nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 
@@ -545,14 +554,15 @@ class EmailService {
   private smtpTransporter: Transporter | null = null;
 
   constructor() {
+    const emailConfig = getEmailConfig();
     this.config = {
       provider: (process.env.EMAIL_PROVIDER as EmailConfig['provider']) || 'mock',
-      host: config.email?.host,
-      port: config.email?.port,
-      user: config.email?.user,
-      pass: config.email?.pass,
+      host: emailConfig?.host,
+      port: emailConfig?.port,
+      user: emailConfig?.user,
+      pass: emailConfig?.pass,
       apiKey: process.env.SENDGRID_API_KEY,
-      from: config.email?.from || 'noreply@hospital.com',
+      from: emailConfig?.from || 'noreply@hospital.com',
     };
 
     // Initialize SMTP transporter if configured

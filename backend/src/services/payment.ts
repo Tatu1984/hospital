@@ -1,6 +1,15 @@
 import crypto from 'crypto';
-import { config } from '../config';
 import { logger } from '../utils/logger';
+
+// Safe config access
+const getPaymentConfig = () => {
+  try {
+    const { config } = require('../config');
+    return config?.razorpay || { keyId: '', keySecret: '', webhookSecret: '', enabled: false };
+  } catch {
+    return { keyId: '', keySecret: '', webhookSecret: '', enabled: false };
+  }
+};
 
 // Razorpay API base URL
 const RAZORPAY_API = 'https://api.razorpay.com/v1';
@@ -79,10 +88,11 @@ export class PaymentService {
   private enabled: boolean;
 
   constructor() {
-    this.keyId = config.razorpay.keyId;
-    this.keySecret = config.razorpay.keySecret;
-    this.webhookSecret = config.razorpay.webhookSecret;
-    this.enabled = config.razorpay.enabled;
+    const paymentConfig = getPaymentConfig();
+    this.keyId = paymentConfig.keyId;
+    this.keySecret = paymentConfig.keySecret;
+    this.webhookSecret = paymentConfig.webhookSecret;
+    this.enabled = paymentConfig.enabled;
   }
 
   /**
