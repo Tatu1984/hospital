@@ -116,39 +116,26 @@ const PORT = process.env.PORT || 4000;
 // GLOBAL MIDDLEWARE SETUP
 // ============================================
 
-// Security headers
+// CORS MUST be the FIRST middleware (before everything else)
+// This is critical for Vercel serverless functions
+app.use(cors({
+  origin: true, // Allow all origins in serverless - use CORS_ORIGIN env for production
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+  exposedHeaders: ['Content-Length', 'X-Request-Id'],
+  maxAge: 86400, // 24 hours
+}));
+
+// Explicit OPTIONS handler for preflight requests (critical for serverless)
+app.options('*', cors());
+
+// Security headers (after CORS)
 app.use(securityHeaders);
 app.use(apiSecurityHeaders);
 
 // Request sanitization
 app.use(sanitizeRequest);
-
-// CORS configuration - supports multiple origins (comma-separated in env var)
-const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173')
-  .split(',')
-  .map(origin => origin.trim());
-
-app.use(cors({
-  origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-
-    // Check if the origin is in our allowed list
-    if (allowedOrigins.some(allowed => origin === allowed || allowed === '*')) {
-      return callback(null, true);
-    }
-
-    // For Vercel preview deployments, allow any vercel.app subdomain
-    if (origin.endsWith('.vercel.app')) {
-      return callback(null, true);
-    }
-
-    callback(new Error('Not allowed by CORS'));
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-}));
 
 // Body parsing with size limits
 app.use(express.json({ limit: '10mb' }));
