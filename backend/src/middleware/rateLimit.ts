@@ -1,5 +1,14 @@
 import { Request, Response, NextFunction } from 'express';
-import { config } from '../config';
+
+// Safe config access
+const getConfig = () => {
+  try {
+    const { config } = require('../config');
+    return config?.rateLimit || { windowMs: 900000, maxRequests: 100 };
+  } catch {
+    return { windowMs: 900000, maxRequests: 100 };
+  }
+};
 
 // In-memory store for rate limiting (use Redis in production for distributed systems)
 interface RateLimitEntry {
@@ -39,9 +48,10 @@ export interface RateLimitOptions {
 
 // Create rate limiter middleware
 export function rateLimit(options: RateLimitOptions = {}) {
+  const rateLimitConfig = getConfig();
   const {
-    windowMs = config.rateLimit.windowMs,
-    maxRequests = config.rateLimit.maxRequests,
+    windowMs = rateLimitConfig.windowMs,
+    maxRequests = rateLimitConfig.maxRequests,
     message = 'Too many requests, please try again later.',
     keyGenerator = getClientId,
   } = options;

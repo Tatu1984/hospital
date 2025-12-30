@@ -2,8 +2,31 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import compression from 'compression';
 import { Request, Response, NextFunction } from 'express';
-import { config } from '../config';
 import { logger, auditLogger } from '../utils/logger';
+
+// Safe config access - use defaults if config fails
+const getCorsOrigin = () => {
+  try {
+    const { config } = require('../config');
+    return config?.cors?.origin || '*';
+  } catch {
+    return '*';
+  }
+};
+
+const getRateLimitConfig = () => {
+  try {
+    const { config } = require('../config');
+    return {
+      windowMs: config?.rateLimit?.windowMs || 900000,
+      maxRequests: config?.rateLimit?.maxRequests || 100,
+    };
+  } catch {
+    return { windowMs: 900000, maxRequests: 100 };
+  }
+};
+
+const rateLimitConfig = getRateLimitConfig();
 
 // Helmet security headers
 export const securityHeaders = helmet({
@@ -14,7 +37,7 @@ export const securityHeaders = helmet({
       scriptSrc: ["'self'"],
       imgSrc: ["'self'", 'data:', 'blob:'],
       fontSrc: ["'self'"],
-      connectSrc: ["'self'", config.cors.origin],
+      connectSrc: ["'self'", getCorsOrigin()],
     },
   },
   crossOriginEmbedderPolicy: false,
@@ -23,8 +46,8 @@ export const securityHeaders = helmet({
 
 // Rate limiting - general
 export const generalRateLimiter = rateLimit({
-  windowMs: config.rateLimit.windowMs,
-  max: config.rateLimit.maxRequests,
+  windowMs: rateLimitConfig.windowMs,
+  max: rateLimitConfig.maxRequests,
   message: {
     error: 'Too many requests',
     message: 'You have exceeded the rate limit. Please try again later.',
