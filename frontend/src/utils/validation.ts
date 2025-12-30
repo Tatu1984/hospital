@@ -2,7 +2,6 @@ import { z } from 'zod';
 
 // Common validation patterns
 const phoneRegex = /^[+]?[\d\s-]{10,15}$/;
-const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Reusable validators
 export const validators = {
@@ -181,7 +180,7 @@ export function validateForm<T>(schema: z.ZodSchema<T>, data: unknown): { succes
   }
 
   const errors: Record<string, string> = {};
-  result.error.errors.forEach((err) => {
+  result.error.issues.forEach((err) => {
     const path = err.path.join('.');
     errors[path] = err.message;
   });
@@ -195,7 +194,7 @@ export function validateField<T>(schema: z.ZodSchema<T>, value: unknown): string
   if (result.success) {
     return null;
   }
-  return result.error.errors[0]?.message || 'Invalid value';
+  return result.error.issues[0]?.message || 'Invalid value';
 }
 
 export default {

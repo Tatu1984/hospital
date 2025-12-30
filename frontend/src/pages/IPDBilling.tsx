@@ -558,7 +558,7 @@ export default function IPDBilling() {
                             {admission.invoiceStatus === 'paid' && <CheckCircle className="w-3 h-3 mr-1" />}
                             {admission.invoiceStatus === 'partial' && <Clock className="w-3 h-3 mr-1" />}
                             {admission.invoiceStatus === 'pending' && <AlertCircle className="w-3 h-3 mr-1" />}
-                            {admission.invoiceStatus?.charAt(0).toUpperCase() + admission.invoiceStatus?.slice(1)}
+                            {admission.invoiceStatus ? admission.invoiceStatus.charAt(0).toUpperCase() + admission.invoiceStatus.slice(1) : ''}
                           </Badge>
                         ) : (
                           <Badge variant="outline" className="border-slate-300 text-slate-500">

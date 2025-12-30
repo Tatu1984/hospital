@@ -56,7 +56,7 @@ export default function BillingPage() {
   const location = useLocation();
   const queryParams = new URLSearchParams(location.search);
   const { isAvailable: isOnlinePaymentAvailable, loading: paymentLoading, initiatePayment } = useRazorpay();
-  const { showToast } = useToast();
+  const { success: showSuccess, error: showError } = useToast();
 
   const [bills, setBills] = useState<Bill[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -213,10 +213,10 @@ export default function BillingPage() {
         taxPercent: 5
       });
 
-      showToast(`Bill created successfully! Invoice: ${newBill.billNo}`, 'success');
+      showSuccess(`Bill created successfully! Invoice: ${newBill.billNo}`);
     } catch (error) {
       console.error('Error creating bill:', error);
-      showToast('Failed to create bill', 'error');
+      showError('Failed to create bill');
     } finally {
       setLoading(false);
     }
@@ -236,7 +236,7 @@ export default function BillingPage() {
 
     const amount = parseFloat(paymentAmount);
     if (isNaN(amount) || amount <= 0 || amount > selectedBill.balance) {
-      showToast('Invalid payment amount', 'error');
+      showError('Invalid payment amount');
       return;
     }
 
@@ -263,10 +263,10 @@ export default function BillingPage() {
       }));
 
       setIsPaymentDialogOpen(false);
-      showToast('Payment recorded successfully', 'success');
+      showSuccess('Payment recorded successfully');
     } catch (error) {
       console.error('Error recording payment:', error);
-      showToast('Failed to record payment', 'error');
+      showError('Failed to record payment');
     } finally {
       setLoading(false);
     }
@@ -278,7 +278,7 @@ export default function BillingPage() {
 
     const amount = parseFloat(paymentAmount);
     if (isNaN(amount) || amount <= 0 || amount > selectedBill.balance) {
-      showToast('Invalid payment amount', 'error');
+      showError('Invalid payment amount');
       return;
     }
 
@@ -302,10 +302,10 @@ export default function BillingPage() {
         }));
 
         setIsPaymentDialogOpen(false);
-        showToast(`Payment successful! Transaction: ${transactionId}`, 'success');
+        showSuccess(`Payment successful! Transaction: ${transactionId}`);
       },
-      (error) => {
-        showToast(error, 'error');
+      (errorMsg) => {
+        showError(errorMsg);
       }
     );
   };

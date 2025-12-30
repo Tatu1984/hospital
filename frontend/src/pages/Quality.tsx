@@ -9,7 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Star, AlertTriangle, FileText, Plus, CheckCircle, XCircle, Eye, Search, Filter } from 'lucide-react';
+import { Star, AlertTriangle, FileText, CheckCircle, Eye, Search, Filter } from 'lucide-react';
 import { useToast } from '../components/Toast';
 import { PermissionGate } from '../components/PermissionGate';
 import api from '../services/api';
