@@ -22,6 +22,9 @@ frontend/node_modules
 
 # production
 /build
+dist/
+backend/dist/
+frontend/dist/
 
 # misc
 .DS_Store
@@ -33,8 +36,13 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env*
+# env files - NEVER commit these!
+.env
+.env.local
+.env.production
+.env.*.local
+# Allow .env.example for documentation
+!.env.example
 
 # vercel
 .vercel
@@ -42,3 +50,31 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# logs
+logs/
+*.log
+
+# uploads (user-generated content)
+uploads/
+backend/uploads/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+Thumbs.db
+
+# Prisma
+*.db
+*.db-journal
+
+# Duplicate/backup files
+backend/src/server 2.ts
+backend/src/server 3.ts
+backend/src/rbac 2.ts
+frontend/src/pages/Housekeeping 2.tsx
+
