@@ -329,7 +329,7 @@ class ReminderService {
     });
 
     return {
-      reminders: notifications.map(n => ({
+      reminders: notifications.map((n: { message: string | null; createdAt: Date; channel: string | null; status: string }) => ({
         type: n.message?.split(':')[0] || 'unknown',
         sentAt: n.createdAt,
         channel: n.channel || 'unknown',
@@ -365,7 +365,7 @@ class ReminderService {
       byStatus: { sent: 0, failed: 0 },
     };
 
-    notifications.forEach(n => {
+    notifications.forEach((n: { channel: string | null; status: string }) => {
       if (n.channel === 'sms') stats.byChannel.sms++;
       else if (n.channel === 'email') stats.byChannel.email++;
       else if (n.channel === 'both') stats.byChannel.both++;
