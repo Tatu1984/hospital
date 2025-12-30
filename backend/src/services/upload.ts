@@ -4,16 +4,23 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { logger } from '../utils/logger';
 
-// Ensure upload directory exists
+// Ensure upload directory exists (skip in serverless/Vercel - read-only filesystem)
 const uploadDir = process.env.UPLOAD_DIR || './uploads';
 const documentDir = path.join(uploadDir, 'documents');
 const imagesDir = path.join(uploadDir, 'images');
 
-[uploadDir, documentDir, imagesDir].forEach(dir => {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-});
+// Only create directories in non-serverless environments
+if (!process.env.VERCEL) {
+  [uploadDir, documentDir, imagesDir].forEach(dir => {
+    try {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+    } catch (error) {
+      logger.warn('Could not create upload directory', { dir, error });
+    }
+  });
+}
 
 // File type configurations
 const allowedMimeTypes = {
