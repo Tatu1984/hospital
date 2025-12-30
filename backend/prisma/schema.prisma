@@ -1,10 +1,12 @@
 generator client {
   provider = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model Tenant {
@@ -144,6 +146,7 @@ model Patient {
   referralSource    ReferralSource?    @relation(fields: [referralSourceId], references: [id])
   commissions       Commission[]
   insurances        PatientInsurance[]
+  documents         Document[]
 
   @@unique([tenantId, mrn])
   @@map("patients")
@@ -335,15 +338,25 @@ model Invoice {
 }
 
 model Payment {
-  id             String   @id @default(uuid())
-  invoiceId      String
-  amount         Decimal  @db.Decimal(10, 2)
-  mode           String
-  transactionRef String?
-  paidAt         DateTime @default(now())
-  receivedBy     String?
-  createdAt      DateTime @default(now())
-  invoice        Invoice  @relation(fields: [invoiceId], references: [id])
+  id                 String   @id @default(uuid())
+  invoiceId          String
+  amount             Decimal  @db.Decimal(10, 2)
+  mode               String   // cash, card, upi, netbanking, razorpay, etc.
+  transactionRef     String?
+  paidAt             DateTime @default(now())
+  receivedBy         String?
+  createdAt          DateTime @default(now())
+  invoice            Invoice  @relation(fields: [invoiceId], references: [id])
+
+  // Razorpay specific fields
+  razorpayOrderId    String?  @unique
+  razorpayPaymentId  String?  @unique
+  razorpaySignature  String?
+  gatewayStatus      String?  // initiated, captured, failed, refunded
+  gatewayResponse    Json?    // Full gateway response for debugging
+  refundId           String?  // For refund tracking
+  refundAmount       Decimal? @db.Decimal(10, 2)
+  refundedAt         DateTime?
 
   @@map("payments")
 }
@@ -1274,4 +1287,41 @@ model OTRoom {
   updatedAt       DateTime  @updatedAt
 
   @@map("ot_rooms")
+}
+
+model Document {
+  id            String    @id @default(uuid())
+  tenantId      String
+  patientId     String
+  filename      String
+  originalName  String
+  mimeType      String
+  size          Int
+  category      String    // id_proof, insurance, medical_records, lab_reports, radiology, prescription, consent_form, discharge_summary, referral_letter, other
+  description   String?
+  path          String
+  uploadedBy    String
+  uploadedAt    DateTime  @default(now())
+  isDeleted     Boolean   @default(false)
+  patient       Patient   @relation(fields: [patientId], references: [id])
+
+  @@map("documents")
+}
+
+model Notification {
+  id            String    @id @default(uuid())
+  tenantId      String
+  type          String    // APPOINTMENT_REMINDER, APPOINTMENT_CONFIRMATION, LAB_RESULT, etc.
+  message       String
+  userId        String?   // Optional: the user this notification is for
+  referenceId   String?   // The ID of the related entity (appointment, order, etc.)
+  referenceType String?   // appointment, order, patient, etc.
+  channel       String?   // sms, email, both, push
+  status        String    @default("pending") // pending, sent, failed, delivered
+  sentAt        DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([tenantId, type])
+  @@index([referenceId])
+  @@map("notifications")
 }
