@@ -145,6 +145,34 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/api', generalRateLimiter);
 
 // ============================================
+// CONFIG ERROR CHECK (for serverless)
+// ============================================
+import { configError } from './config';
+
+// Health check endpoint (always works, shows config errors)
+app.get('/api/health', (req: Request, res: Response) => {
+  if (configError) {
+    return res.status(503).json({
+      status: 'error',
+      message: configError,
+      hint: 'Add DATABASE_URL and JWT_SECRET to your Vercel Environment Variables'
+    });
+  }
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// If config is missing, return helpful error for all other API routes
+if (configError) {
+  app.use('/api', (req: Request, res: Response) => {
+    res.status(503).json({
+      error: 'CONFIGURATION_ERROR',
+      message: configError,
+      hint: 'Go to Vercel Dashboard → Your Backend Project → Settings → Environment Variables'
+    });
+  });
+}
+
+// ============================================
 // API DOCUMENTATION (Swagger UI)
 // ============================================
 app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {

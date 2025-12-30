@@ -5,13 +5,13 @@ const requiredEnvVars = ['DATABASE_URL', 'JWT_SECRET'];
 
 // Validate required environment variables
 const missingVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
-if (missingVars.length > 0) {
-  const errorMsg = `Missing required environment variables: ${missingVars.join(', ')}`;
-  console.error(errorMsg);
-  // In serverless, throw error instead of process.exit
-  if (process.env.VERCEL) {
-    throw new Error(errorMsg);
-  }
+export const configError = missingVars.length > 0
+  ? `Missing required environment variables: ${missingVars.join(', ')}. Please add them to your Vercel project settings.`
+  : null;
+
+// Only crash in non-serverless environments
+if (missingVars.length > 0 && !process.env.VERCEL) {
+  console.error(configError);
   process.exit(1);
 }
 
