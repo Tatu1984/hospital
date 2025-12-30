@@ -1,8 +1,10 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+
+// Import centralized database client (supports NeonDB serverless)
+import { prisma, disconnectPrisma } from './lib/db';
 import jwt from 'jsonwebtoken';
 import swaggerUi from 'swagger-ui-express';
 import { swaggerSpec } from './swagger';
@@ -33,6 +35,22 @@ import {
   apiSecurityHeaders,
   dynamicRBAC,
 } from './middleware';
+
+// Import notification service
+import { notificationService } from './services/notification';
+
+// Import export service
+import { exportService } from './services/export';
+
+// Import PDF service
+import { pdfService } from './services/pdf';
+
+// Import upload service
+import { documentUpload, getFilePath, deleteFile, documentCategories } from './services/upload';
+import path from 'path';
+
+// Import reminder service
+import { reminderService } from './services/reminder';
 
 // Import validators
 import {
@@ -92,7 +110,6 @@ import { logger, auditLogger } from './utils/logger';
 dotenv.config();
 
 const app = express();
-const prisma = new PrismaClient();
 const PORT = process.env.PORT || 4000;
 
 // ============================================
@@ -521,6 +538,389 @@ app.get('/api/doctors', authenticateToken, async (req: any, res: Response) => {
   }
 });
 
+// ============================================
+// EXPORT APIs
+// ============================================
+
+// Export patients to Excel
+app.get('/api/export/patients', authenticateToken, requirePermission('patients:view'), async (req: any, res: Response) => {
+  try {
+    const patients = await prisma.patient.findMany({
+      where: { tenantId: req.user.tenantId },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const buffer = exportService.toExcel(patients, exportService.patientColumns, { sheetName: 'Patients' });
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=patients_${Date.now()}.xlsx`);
+    res.send(buffer);
+  } catch (error) {
+    console.error('Export patients error:', error);
+    res.status(500).json({ error: 'Export failed' });
+  }
+});
+
+// Export appointments to Excel
+app.get('/api/export/appointments', authenticateToken, requirePermission('appointments:view'), async (req: any, res: Response) => {
+  try {
+    const { from, to } = req.query;
+    const where: any = { tenantId: req.user.tenantId };
+
+    if (from) where.appointmentDate = { gte: new Date(from as string) };
+    if (to) where.appointmentDate = { ...where.appointmentDate, lte: new Date(to as string) };
+
+    const appointments = await prisma.appointment.findMany({
+      where,
+      include: {
+        patient: { select: { name: true, mrn: true } },
+        doctor: { select: { name: true } },
+      },
+      orderBy: { appointmentDate: 'desc' },
+    });
+
+    const buffer = exportService.toExcel(appointments, exportService.appointmentColumns, { sheetName: 'Appointments' });
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=appointments_${Date.now()}.xlsx`);
+    res.send(buffer);
+  } catch (error) {
+    console.error('Export appointments error:', error);
+    res.status(500).json({ error: 'Export failed' });
+  }
+});
+
+// Export invoices to Excel
+app.get('/api/export/invoices', authenticateToken, requirePermission('billing:view'), async (req: any, res: Response) => {
+  try {
+    const { from, to, status } = req.query;
+    const where: any = { patient: { tenantId: req.user.tenantId } };
+
+    if (from) where.createdAt = { gte: new Date(from as string) };
+    if (to) where.createdAt = { ...where.createdAt, lte: new Date(to as string) };
+    if (status) where.status = status;
+
+    const invoices = await prisma.invoice.findMany({
+      where,
+      include: { patient: { select: { name: true, mrn: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const buffer = exportService.toExcel(invoices, exportService.invoiceColumns, { sheetName: 'Invoices' });
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=invoices_${Date.now()}.xlsx`);
+    res.send(buffer);
+  } catch (error) {
+    console.error('Export invoices error:', error);
+    res.status(500).json({ error: 'Export failed' });
+  }
+});
+
+// Export payments/collections to Excel
+app.get('/api/export/payments', authenticateToken, requirePermission('billing:view'), async (req: any, res: Response) => {
+  try {
+    const { from, to } = req.query;
+    const where: any = { invoice: { patient: { tenantId: req.user.tenantId } } };
+
+    if (from) where.paidAt = { gte: new Date(from as string) };
+    if (to) where.paidAt = { ...where.paidAt, lte: new Date(to as string) };
+
+    const payments = await prisma.payment.findMany({
+      where,
+      include: { invoice: { include: { patient: { select: { name: true, mrn: true } } } } },
+      orderBy: { paidAt: 'desc' },
+    });
+
+    const buffer = exportService.toExcel(payments, exportService.paymentColumns, { sheetName: 'Collections' });
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=collections_${Date.now()}.xlsx`);
+    res.send(buffer);
+  } catch (error) {
+    console.error('Export payments error:', error);
+    res.status(500).json({ error: 'Export failed' });
+  }
+});
+
+// Export lab orders to Excel
+app.get('/api/export/lab-orders', authenticateToken, requirePermission('lab:view'), async (req: any, res: Response) => {
+  try {
+    const { from, to, status } = req.query;
+    const where: any = { orderType: 'lab', patient: { tenantId: req.user.tenantId } };
+
+    if (from) where.createdAt = { gte: new Date(from as string) };
+    if (to) where.createdAt = { ...where.createdAt, lte: new Date(to as string) };
+    if (status) where.status = status;
+
+    const orders = await prisma.order.findMany({
+      where,
+      include: {
+        patient: { select: { name: true, mrn: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const buffer = exportService.toExcel(orders, exportService.labOrderColumns, { sheetName: 'Lab Orders' });
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=lab_orders_${Date.now()}.xlsx`);
+    res.send(buffer);
+  } catch (error) {
+    console.error('Export lab orders error:', error);
+    res.status(500).json({ error: 'Export failed' });
+  }
+});
+
+// Export employees to Excel
+app.get('/api/export/employees', authenticateToken, requirePermission('hr:view'), async (req: any, res: Response) => {
+  try {
+    const employees = await prisma.employee.findMany({
+      orderBy: { name: 'asc' },
+    });
+
+    const buffer = exportService.toExcel(employees, exportService.employeeColumns, { sheetName: 'Employees' });
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=employees_${Date.now()}.xlsx`);
+    res.send(buffer);
+  } catch (error) {
+    console.error('Export employees error:', error);
+    res.status(500).json({ error: 'Export failed' });
+  }
+});
+
+// Export admissions to Excel
+app.get('/api/export/admissions', authenticateToken, requirePermission('ipd:view'), async (req: any, res: Response) => {
+  try {
+    const { from, to, status } = req.query;
+    const where: any = { patient: { tenantId: req.user.tenantId } };
+
+    if (from) where.admissionDate = { gte: new Date(from as string) };
+    if (to) where.admissionDate = { ...where.admissionDate, lte: new Date(to as string) };
+    if (status) where.status = status;
+
+    const admissions = await prisma.admission.findMany({
+      where,
+      include: {
+        patient: { select: { name: true, mrn: true } },
+        bed: true,
+        admittingDoctor: { select: { name: true } },
+      },
+      orderBy: { admissionDate: 'desc' },
+    });
+
+    const buffer = exportService.toExcel(admissions, exportService.admissionColumns, { sheetName: 'Admissions' });
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=admissions_${Date.now()}.xlsx`);
+    res.send(buffer);
+  } catch (error) {
+    console.error('Export admissions error:', error);
+    res.status(500).json({ error: 'Export failed' });
+  }
+});
+
+// ============================================
+// PDF GENERATION APIs
+// ============================================
+
+// Generate Invoice PDF
+app.get('/api/pdf/invoice/:id', authenticateToken, requirePermission('billing:view'), async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const invoice = await prisma.invoice.findFirst({
+      where: { id, patient: { tenantId: req.user.tenantId } },
+      include: {
+        patient: true,
+        payments: true,
+      },
+    });
+
+    if (!invoice) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+
+    const paid = invoice.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+
+    const pdfBuffer = await pdfService.generateInvoice({
+      invoiceNumber: invoice.id.slice(0, 8).toUpperCase(),
+      invoiceDate: invoice.createdAt,
+      patient: {
+        name: invoice.patient.name,
+        mrn: invoice.patient.mrn,
+        contact: invoice.patient.contact || undefined,
+        address: invoice.patient.address || undefined,
+      },
+      items: (invoice.items as any[]).map(item => ({
+        description: item.description || item.name,
+        quantity: item.quantity || 1,
+        unitPrice: item.unitPrice || item.rate || item.amount,
+        amount: item.amount,
+      })),
+      subtotal: Number(invoice.subtotal),
+      discount: Number(invoice.discount),
+      tax: Number(invoice.tax || 0),
+      total: Number(invoice.total),
+      paid,
+      balance: Number(invoice.balance),
+    });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=invoice_${invoice.id.slice(0, 8)}.pdf`);
+    res.send(pdfBuffer);
+  } catch (error) {
+    console.error('Generate invoice PDF error:', error);
+    res.status(500).json({ error: 'Failed to generate PDF' });
+  }
+});
+
+// Generate Payment Receipt PDF
+app.get('/api/pdf/receipt/:id', authenticateToken, requirePermission('billing:view'), async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const payment = await prisma.payment.findFirst({
+      where: { id },
+      include: {
+        invoice: {
+          include: { patient: true },
+        },
+      },
+    });
+
+    if (!payment) {
+      return res.status(404).json({ error: 'Payment not found' });
+    }
+
+    const pdfBuffer = await pdfService.generateReceipt({
+      receiptNumber: payment.id.slice(0, 8).toUpperCase(),
+      receiptDate: payment.paidAt,
+      patient: {
+        name: payment.invoice.patient.name,
+        mrn: payment.invoice.patient.mrn,
+      },
+      amount: Number(payment.amount),
+      paymentMode: payment.mode,
+      transactionRef: payment.transactionRef || undefined,
+      invoiceNumber: payment.invoiceId.slice(0, 8).toUpperCase(),
+      receivedBy: payment.receivedBy || undefined,
+    });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=receipt_${payment.id.slice(0, 8)}.pdf`);
+    res.send(pdfBuffer);
+  } catch (error) {
+    console.error('Generate receipt PDF error:', error);
+    res.status(500).json({ error: 'Failed to generate PDF' });
+  }
+});
+
+// Generate Lab Report PDF
+app.get('/api/pdf/lab-report/:id', authenticateToken, requirePermission('lab:view'), async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const result = await prisma.result.findFirst({
+      where: { id },
+      include: {
+        order: {
+          include: {
+            patient: true,
+          },
+        },
+      },
+    });
+
+    if (!result) {
+      return res.status(404).json({ error: 'Lab result not found' });
+    }
+
+    const resultData = result.resultData as any;
+    const tests = Array.isArray(resultData) ? resultData : [{ name: 'Test', result: resultData?.value || '-' }];
+    const order = result.order as any;
+
+    const pdfBuffer = await pdfService.generateLabReport({
+      reportNumber: result.id.slice(0, 8).toUpperCase(),
+      reportDate: result.createdAt,
+      patient: {
+        name: order.patient.name,
+        mrn: order.patient.mrn,
+        gender: order.patient.gender || undefined,
+      },
+      referringDoctor: order.orderedBy,
+      tests: tests.map((t: any) => ({
+        name: t.name || t.testName,
+        result: t.result || t.value,
+        unit: t.unit,
+        referenceRange: t.referenceRange || t.normalRange,
+        isCritical: t.isCritical || result.isCritical,
+      })),
+      verifiedBy: result.verifiedBy || undefined,
+    });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=lab_report_${result.id.slice(0, 8)}.pdf`);
+    res.send(pdfBuffer);
+  } catch (error) {
+    console.error('Generate lab report PDF error:', error);
+    res.status(500).json({ error: 'Failed to generate PDF' });
+  }
+});
+
+// Generate Discharge Summary PDF
+app.get('/api/pdf/discharge/:id', authenticateToken, requirePermission('ipd:view'), async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const admission = await prisma.admission.findFirst({
+      where: { id, patient: { tenantId: req.user.tenantId } },
+      include: {
+        patient: true,
+        bed: true,
+        admittingDoctor: true,
+      },
+    });
+
+    if (!admission) {
+      return res.status(404).json({ error: 'Admission not found' });
+    }
+
+    if (admission.status !== 'discharged') {
+      return res.status(400).json({ error: 'Patient not yet discharged' });
+    }
+
+    const admissionData = admission as any;
+
+    const pdfBuffer = await pdfService.generateDischargeSummary({
+      admissionNumber: admission.id.slice(0, 8).toUpperCase(),
+      patient: {
+        name: admissionData.patient.name,
+        mrn: admissionData.patient.mrn,
+        gender: admissionData.patient.gender || undefined,
+        address: admissionData.patient.address || undefined,
+      },
+      admissionDate: admission.admissionDate,
+      dischargeDate: admission.dischargeDate || new Date(),
+      ward: admissionData.bed?.wardId || 'N/A',
+      bed: admissionData.bed?.bedNumber || 'N/A',
+      attendingDoctor: admissionData.admittingDoctor?.name || 'N/A',
+      diagnosis: admission.diagnosis || 'N/A',
+      treatmentGiven: admissionData.treatmentGiven || 'As per clinical notes',
+      conditionAtDischarge: admissionData.conditionAtDischarge || 'Stable',
+      followUpInstructions: admissionData.dischargeSummary || undefined,
+    });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=discharge_${admission.id.slice(0, 8)}.pdf`);
+    res.send(pdfBuffer);
+  } catch (error) {
+    console.error('Generate discharge PDF error:', error);
+    res.status(500).json({ error: 'Failed to generate PDF' });
+  }
+});
+
 // Encounter routes
 app.post('/api/encounters', authenticateToken, requirePermission('encounters:create'), validateBody(createEncounterSchema), async (req: any, res: Response) => {
   try {
@@ -581,7 +981,7 @@ app.get('/api/encounters', authenticateToken, async (req: any, res: Response) =>
 });
 
 // OPD Notes
-app.post('/api/opd-notes', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/opd-notes', authenticateToken, validateBody(opdNoteSchema), async (req: any, res: Response) => {
   try {
     const {
       encounterId,
@@ -595,7 +995,7 @@ app.post('/api/opd-notes', authenticateToken, async (req: any, res: Response) =>
       prescription,
     } = req.body;
 
-    const opdNote = await prisma.opdNote.create({
+    const opdNote = await prisma.oPDNote.create({
       data: {
         encounterId,
         patientId,
@@ -620,7 +1020,7 @@ app.post('/api/opd-notes', authenticateToken, async (req: any, res: Response) =>
       });
     }
 
-    const result = await prisma.opdNote.findUnique({
+    const result = await prisma.oPDNote.findUnique({
       where: { id: opdNote.id },
       include: {
         prescriptions: true,
@@ -639,7 +1039,7 @@ app.get('/api/opd-notes/:encounterId', authenticateToken, async (req: any, res: 
   try {
     const { encounterId } = req.params;
 
-    const opdNotes = await prisma.opdNote.findMany({
+    const opdNotes = await prisma.oPDNote.findMany({
       where: { encounterId },
       include: {
         prescriptions: true,
@@ -656,7 +1056,7 @@ app.get('/api/opd-notes/:encounterId', authenticateToken, async (req: any, res: 
 });
 
 // Invoice routes
-app.post('/api/invoices', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/invoices', authenticateToken, validateBody(createInvoiceSchema), async (req: any, res: Response) => {
   try {
     const { patientId, encounterId, type, items } = req.body;
 
@@ -687,7 +1087,7 @@ app.post('/api/invoices', authenticateToken, async (req: any, res: Response) => 
   }
 });
 
-app.post('/api/invoices/:id/payment', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/invoices/:id/payment', authenticateToken, validateBody(paymentSchema), async (req: any, res: Response) => {
   try {
     const { id } = req.params;
     const { amount, mode, transactionRef } = req.body;
@@ -779,6 +1179,393 @@ app.get('/api/invoices', authenticateToken, async (req: any, res: Response) => {
   }
 });
 
+// ============================================================================
+// PAYMENT GATEWAY ROUTES (Razorpay)
+// ============================================================================
+
+import { paymentService, PaymentService } from './services/payment';
+
+// Get payment gateway configuration (public)
+app.get('/api/payments/config', authenticateToken, async (req: any, res: Response) => {
+  try {
+    res.json({
+      enabled: paymentService.isEnabled(),
+      publicKey: paymentService.isEnabled() ? paymentService.getPublicKey() : null,
+      currency: 'INR',
+    });
+  } catch (error) {
+    console.error('Get payment config error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Create Razorpay order for an invoice
+app.post('/api/payments/create-order', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { invoiceId, amount } = req.body;
+
+    if (!paymentService.isEnabled()) {
+      return res.status(400).json({ error: 'Online payment is not configured' });
+    }
+
+    // Validate invoice exists and amount matches
+    const invoice = await prisma.invoice.findUnique({
+      where: { id: invoiceId },
+      include: { patient: true },
+    });
+
+    if (!invoice) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+
+    const balanceDue = parseFloat(invoice.balance.toString());
+    const paymentAmount = parseFloat(amount);
+
+    if (paymentAmount <= 0 || paymentAmount > balanceDue) {
+      return res.status(400).json({
+        error: `Invalid amount. Balance due: ${balanceDue}`
+      });
+    }
+
+    // Create Razorpay order
+    const order = await paymentService.createOrder({
+      amount: PaymentService.toPaise(paymentAmount),
+      currency: 'INR',
+      receipt: `INV-${invoiceId.slice(0, 8)}`,
+      notes: {
+        invoiceId,
+        patientId: invoice.patientId,
+        patientName: invoice.patient.name,
+      },
+    });
+
+    // Create pending payment record
+    const payment = await prisma.payment.create({
+      data: {
+        invoiceId,
+        amount: paymentAmount,
+        mode: 'razorpay',
+        razorpayOrderId: order.id,
+        gatewayStatus: 'initiated',
+        receivedBy: req.user.userId,
+      },
+    });
+
+    res.json({
+      orderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      paymentId: payment.id,
+      key: paymentService.getPublicKey(),
+      prefill: {
+        name: invoice.patient.name,
+        email: invoice.patient.email || '',
+        contact: invoice.patient.contact || '',
+      },
+    });
+  } catch (error: any) {
+    console.error('Create payment order error:', error);
+    res.status(500).json({ error: error.message || 'Failed to create payment order' });
+  }
+});
+
+// Verify payment after Razorpay checkout
+app.post('/api/payments/verify', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const {
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+      paymentId
+    } = req.body;
+
+    if (!paymentService.isEnabled()) {
+      return res.status(400).json({ error: 'Online payment is not configured' });
+    }
+
+    // Verify signature
+    const isValid = paymentService.verifyPaymentSignature({
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+    });
+
+    if (!isValid) {
+      // Update payment as failed
+      await prisma.payment.update({
+        where: { id: paymentId },
+        data: {
+          gatewayStatus: 'failed',
+          gatewayResponse: { error: 'Invalid signature' },
+        },
+      });
+      return res.status(400).json({ error: 'Payment verification failed' });
+    }
+
+    // Get payment details from Razorpay
+    const paymentDetails = await paymentService.getPaymentDetails(razorpay_payment_id);
+
+    // Update payment record
+    const payment = await prisma.payment.update({
+      where: { id: paymentId },
+      data: {
+        razorpayPaymentId: razorpay_payment_id,
+        razorpaySignature: razorpay_signature,
+        gatewayStatus: 'captured',
+        gatewayResponse: paymentDetails as any,
+        transactionRef: razorpay_payment_id,
+        paidAt: new Date(),
+      },
+      include: { invoice: { include: { patient: { include: { referralSource: true } } } } },
+    });
+
+    // Update invoice
+    const invoice = payment.invoice;
+    const totalPaid = parseFloat(invoice.paid.toString()) + parseFloat(payment.amount.toString());
+    const newBalance = parseFloat(invoice.total.toString()) - totalPaid;
+
+    await prisma.invoice.update({
+      where: { id: invoice.id },
+      data: {
+        paid: totalPaid,
+        balance: newBalance,
+        status: newBalance <= 0 ? 'paid' : 'final',
+      },
+    });
+
+    // Auto-create commission if applicable
+    if (newBalance <= 0 && invoice.patient.referralSourceId && invoice.patient.referralSource) {
+      const referralSource = invoice.patient.referralSource;
+      const invoiceTotal = parseFloat(invoice.total.toString());
+      const commissionAmount = calculateCommission(invoiceTotal, referralSource);
+
+      if (commissionAmount > 0) {
+        await prisma.commission.create({
+          data: {
+            referralSourceId: referralSource.id,
+            patientId: invoice.patientId,
+            invoiceId: invoice.id,
+            invoiceAmount: invoiceTotal,
+            commissionType: referralSource.commissionType,
+            commissionRate: referralSource.commissionType === 'percentage'
+              ? parseFloat(referralSource.commissionValue.toString())
+              : null,
+            commissionAmount,
+            status: 'pending',
+          },
+        });
+      }
+    }
+
+    // Send payment receipt notification (async - don't wait)
+    const patient = invoice.patient;
+    if (patient.contact || patient.email) {
+      notificationService.send({
+        type: 'PAYMENT_RECEIPT',
+        recipientPhone: patient.contact || undefined,
+        recipientEmail: patient.email || undefined,
+        message: '',
+        data: {
+          patientName: patient.name,
+          amount: payment.amount.toString(),
+          receiptNumber: razorpay_payment_id,
+          balance: newBalance.toFixed(2),
+          paymentMode: 'Online (Razorpay)',
+          invoiceNumber: invoice.id.slice(0, 8).toUpperCase(),
+          previousBalance: invoice.balance.toString(),
+          date: new Date().toLocaleDateString('en-IN'),
+          hospitalName: 'Hospital ERP',
+        },
+      }).catch(err => console.error('Payment notification failed:', err));
+    }
+
+    res.json({
+      success: true,
+      message: 'Payment verified successfully',
+      payment: {
+        id: payment.id,
+        amount: payment.amount,
+        transactionRef: razorpay_payment_id,
+        status: 'captured',
+      },
+    });
+  } catch (error: any) {
+    console.error('Verify payment error:', error);
+    res.status(500).json({ error: error.message || 'Payment verification failed' });
+  }
+});
+
+// Razorpay webhook handler
+app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), async (req: Request, res: Response) => {
+  try {
+    const signature = req.headers['x-razorpay-signature'] as string;
+    const body = req.body.toString();
+
+    // Verify webhook signature
+    if (!paymentService.verifyWebhookSignature(body, signature)) {
+      console.error('Invalid webhook signature');
+      return res.status(400).json({ error: 'Invalid signature' });
+    }
+
+    const event = JSON.parse(body);
+    const eventType = event.event;
+    const payload = event.payload;
+
+    console.log('Razorpay webhook received:', eventType);
+
+    switch (eventType) {
+      case 'payment.captured': {
+        const paymentData = payload.payment.entity;
+
+        // Find and update payment by Razorpay order ID
+        const payment = await prisma.payment.findFirst({
+          where: { razorpayOrderId: paymentData.order_id },
+        });
+
+        if (payment && payment.gatewayStatus !== 'captured') {
+          await prisma.payment.update({
+            where: { id: payment.id },
+            data: {
+              razorpayPaymentId: paymentData.id,
+              gatewayStatus: 'captured',
+              gatewayResponse: paymentData,
+              transactionRef: paymentData.id,
+              paidAt: new Date(),
+            },
+          });
+
+          // Update invoice
+          const invoice = await prisma.invoice.findUnique({ where: { id: payment.invoiceId } });
+          if (invoice) {
+            const totalPaid = parseFloat(invoice.paid.toString()) + parseFloat(payment.amount.toString());
+            const newBalance = parseFloat(invoice.total.toString()) - totalPaid;
+            await prisma.invoice.update({
+              where: { id: invoice.id },
+              data: {
+                paid: totalPaid,
+                balance: newBalance,
+                status: newBalance <= 0 ? 'paid' : 'final',
+              },
+            });
+          }
+        }
+        break;
+      }
+
+      case 'payment.failed': {
+        const paymentData = payload.payment.entity;
+
+        await prisma.payment.updateMany({
+          where: { razorpayOrderId: paymentData.order_id },
+          data: {
+            gatewayStatus: 'failed',
+            gatewayResponse: paymentData,
+          },
+        });
+        break;
+      }
+
+      case 'refund.created': {
+        const refundData = payload.refund.entity;
+
+        await prisma.payment.updateMany({
+          where: { razorpayPaymentId: refundData.payment_id },
+          data: {
+            refundId: refundData.id,
+            refundAmount: PaymentService.toRupees(refundData.amount),
+            refundedAt: new Date(),
+            gatewayStatus: 'refunded',
+          },
+        });
+        break;
+      }
+    }
+
+    res.json({ received: true });
+  } catch (error) {
+    console.error('Webhook processing error:', error);
+    res.status(500).json({ error: 'Webhook processing failed' });
+  }
+});
+
+// Initiate refund
+app.post('/api/payments/:id/refund', authenticateToken, requirePermission('billing:refund'), async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { amount, reason } = req.body;
+
+    if (!paymentService.isEnabled()) {
+      return res.status(400).json({ error: 'Online payment is not configured' });
+    }
+
+    const payment = await prisma.payment.findUnique({
+      where: { id },
+      include: { invoice: true },
+    });
+
+    if (!payment) {
+      return res.status(404).json({ error: 'Payment not found' });
+    }
+
+    if (!payment.razorpayPaymentId) {
+      return res.status(400).json({ error: 'This payment cannot be refunded online' });
+    }
+
+    if (payment.gatewayStatus === 'refunded') {
+      return res.status(400).json({ error: 'Payment already refunded' });
+    }
+
+    const refundAmount = amount
+      ? PaymentService.toPaise(parseFloat(amount))
+      : undefined;
+
+    const refund = await paymentService.createRefund({
+      paymentId: payment.razorpayPaymentId,
+      amount: refundAmount,
+      notes: { reason: reason || 'Refund requested' },
+    });
+
+    // Update payment record
+    await prisma.payment.update({
+      where: { id },
+      data: {
+        refundId: refund.id,
+        refundAmount: PaymentService.toRupees(refund.amount),
+        refundedAt: new Date(),
+        gatewayStatus: 'refunded',
+      },
+    });
+
+    // Update invoice balance
+    const invoice = payment.invoice;
+    const refundedRupees = PaymentService.toRupees(refund.amount);
+    await prisma.invoice.update({
+      where: { id: invoice.id },
+      data: {
+        paid: parseFloat(invoice.paid.toString()) - refundedRupees,
+        balance: parseFloat(invoice.balance.toString()) + refundedRupees,
+        status: 'final',
+      },
+    });
+
+    res.json({
+      success: true,
+      refund: {
+        id: refund.id,
+        amount: refundedRupees,
+        status: refund.status,
+      },
+    });
+  } catch (error: any) {
+    console.error('Refund error:', error);
+    res.status(500).json({ error: error.message || 'Refund failed' });
+  }
+});
+
+// ============================================================================
+// END PAYMENT GATEWAY ROUTES
+// ============================================================================
+
 // Dashboard stats
 app.get('/api/dashboard/stats', authenticateToken, async (req: any, res: Response) => {
   try {
@@ -829,6 +1616,188 @@ app.get('/api/dashboard/stats', authenticateToken, async (req: any, res: Respons
   }
 });
 
+// ============================================
+// DASHBOARD ANALYTICS APIs
+// ============================================
+
+// Revenue analytics - daily/weekly/monthly trends
+app.get('/api/analytics/revenue', authenticateToken, requirePermission('dashboard:view'), async (req: any, res: Response) => {
+  try {
+    const { period = '7d' } = req.query;
+    const days = period === '30d' ? 30 : period === '7d' ? 7 : 1;
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+    startDate.setHours(0, 0, 0, 0);
+
+    const payments = await prisma.payment.findMany({
+      where: {
+        paidAt: { gte: startDate },
+        invoice: { patient: { tenantId: req.user.tenantId } },
+      },
+      select: { paidAt: true, amount: true, mode: true },
+    });
+
+    // Group by date
+    const dailyRevenue: Record<string, number> = {};
+    const byPaymentMode: Record<string, number> = {};
+
+    payments.forEach(p => {
+      const dateKey = p.paidAt.toISOString().split('T')[0];
+      dailyRevenue[dateKey] = (dailyRevenue[dateKey] || 0) + Number(p.amount);
+      byPaymentMode[p.mode] = (byPaymentMode[p.mode] || 0) + Number(p.amount);
+    });
+
+    const totalRevenue = payments.reduce((sum, p) => sum + Number(p.amount), 0);
+
+    res.json({
+      totalRevenue,
+      dailyRevenue: Object.entries(dailyRevenue).map(([date, amount]) => ({ date, amount })),
+      byPaymentMode: Object.entries(byPaymentMode).map(([mode, amount]) => ({ mode, amount })),
+    });
+  } catch (error) {
+    console.error('Revenue analytics error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Patient analytics - registrations, demographics
+app.get('/api/analytics/patients', authenticateToken, requirePermission('dashboard:view'), async (req: any, res: Response) => {
+  try {
+    const { period = '30d' } = req.query;
+    const days = period === '30d' ? 30 : period === '7d' ? 7 : 1;
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+
+    const [totalPatients, newPatients, genderDistribution] = await Promise.all([
+      prisma.patient.count({ where: { tenantId: req.user.tenantId } }),
+      prisma.patient.count({
+        where: { tenantId: req.user.tenantId, createdAt: { gte: startDate } },
+      }),
+      prisma.patient.groupBy({
+        by: ['gender'],
+        where: { tenantId: req.user.tenantId },
+        _count: { id: true },
+      }),
+    ]);
+
+    // Daily registrations
+    const registrations = await prisma.patient.findMany({
+      where: { tenantId: req.user.tenantId, createdAt: { gte: startDate } },
+      select: { createdAt: true },
+    });
+
+    const dailyRegistrations: Record<string, number> = {};
+    registrations.forEach(p => {
+      const dateKey = p.createdAt.toISOString().split('T')[0];
+      dailyRegistrations[dateKey] = (dailyRegistrations[dateKey] || 0) + 1;
+    });
+
+    res.json({
+      totalPatients,
+      newPatients,
+      genderDistribution: genderDistribution.map(g => ({ gender: g.gender || 'Unknown', count: g._count.id })),
+      dailyRegistrations: Object.entries(dailyRegistrations).map(([date, count]) => ({ date, count })),
+    });
+  } catch (error) {
+    console.error('Patient analytics error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Appointment analytics
+app.get('/api/analytics/appointments', authenticateToken, requirePermission('dashboard:view'), async (req: any, res: Response) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const weekStart = new Date(today);
+    weekStart.setDate(weekStart.getDate() - 7);
+
+    const [todayAppointments, weekAppointments, statusDistribution, departmentDistribution] = await Promise.all([
+      prisma.appointment.count({
+        where: { tenantId: req.user.tenantId, appointmentDate: { gte: today } },
+      }),
+      prisma.appointment.count({
+        where: { tenantId: req.user.tenantId, appointmentDate: { gte: weekStart } },
+      }),
+      prisma.appointment.groupBy({
+        by: ['status'],
+        where: { tenantId: req.user.tenantId, appointmentDate: { gte: weekStart } },
+        _count: { id: true },
+      }),
+      prisma.appointment.groupBy({
+        by: ['department'],
+        where: { tenantId: req.user.tenantId, appointmentDate: { gte: weekStart } },
+        _count: { id: true },
+      }),
+    ]);
+
+    res.json({
+      todayAppointments,
+      weekAppointments,
+      statusDistribution: statusDistribution.map(s => ({ status: s.status, count: s._count.id })),
+      departmentDistribution: departmentDistribution.map(d => ({ department: d.department || 'General', count: d._count.id })),
+    });
+  } catch (error) {
+    console.error('Appointment analytics error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Lab analytics
+app.get('/api/analytics/lab', authenticateToken, requirePermission('dashboard:view'), async (req: any, res: Response) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const [pendingOrders, completedToday, statusDistribution] = await Promise.all([
+      prisma.order.count({
+        where: { orderType: 'lab', status: { in: ['pending', 'in_progress'] } },
+      }),
+      prisma.order.count({
+        where: { orderType: 'lab', status: 'completed', updatedAt: { gte: today } },
+      }),
+      prisma.order.groupBy({
+        by: ['status'],
+        where: { orderType: 'lab' },
+        _count: { id: true },
+      }),
+    ]);
+
+    res.json({
+      pendingOrders,
+      completedToday,
+      statusDistribution: statusDistribution.map(s => ({ status: s.status, count: s._count.id })),
+    });
+  } catch (error) {
+    console.error('Lab analytics error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// IPD analytics
+app.get('/api/analytics/ipd', authenticateToken, requirePermission('dashboard:view'), async (req: any, res: Response) => {
+  try {
+    const [activeAdmissions, totalBeds, occupiedBeds] = await Promise.all([
+      prisma.admission.count({ where: { status: 'active' } }),
+      prisma.bed.count(),
+      prisma.bed.count({ where: { status: 'occupied' } }),
+    ]);
+
+    const occupancyRate = totalBeds > 0 ? ((occupiedBeds / totalBeds) * 100).toFixed(1) : 0;
+
+    res.json({
+      activeAdmissions,
+      totalBeds,
+      occupiedBeds,
+      availableBeds: totalBeds - occupiedBeds,
+      occupancyRate,
+    });
+  } catch (error) {
+    console.error('IPD analytics error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ===========================
 // BROKER/REFERRAL COMMISSION SYSTEM APIs
 // ===========================
@@ -866,7 +1835,7 @@ app.get('/api/referral-sources', authenticateToken, async (req: any, res: Respon
 });
 
 // Create referral source
-app.post('/api/referral-sources', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/referral-sources', authenticateToken, validateBody(referralSourceSchema), async (req: any, res: Response) => {
   try {
     const source = await prisma.referralSource.create({
       data: {
@@ -1160,7 +2129,7 @@ app.get('/api/journal-entries', authenticateToken, async (req: any, res: Respons
 });
 
 // Create journal entry
-app.post('/api/journal-entries', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/journal-entries', authenticateToken, validateBody(journalEntrySchema), async (req: any, res: Response) => {
   try {
     const { description, lines, fiscalYearId } = req.body;
 
@@ -1445,7 +2414,7 @@ app.get('/api/drugs', authenticateToken, async (req: any, res: Response) => {
   }
 });
 
-app.post('/api/drugs', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/drugs', authenticateToken, validateBody(drugMasterSchema), async (req: any, res: Response) => {
   try {
     const drug = await prisma.drug.create({ data: req.body });
     res.status(201).json(drug);
@@ -1488,7 +2457,7 @@ app.get('/api/lab-tests', authenticateToken, async (req: any, res: Response) => 
   }
 });
 
-app.post('/api/lab-tests', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/lab-tests', authenticateToken, validateBody(labTestMasterSchema), async (req: any, res: Response) => {
   try {
     const test = await prisma.labTestMaster.create({ data: req.body });
     res.status(201).json(test);
@@ -1614,7 +2583,7 @@ app.get('/api/appointments', authenticateToken, async (req: any, res: Response) 
   }
 });
 
-app.post('/api/appointments', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/appointments', authenticateToken, validateBody(createAppointmentSchema), async (req: any, res: Response) => {
   try {
     const { patientId, doctorId, appointmentDate, appointmentTime, type, reason, notes, department } = req.body;
 
@@ -1637,10 +2606,31 @@ app.post('/api/appointments', authenticateToken, async (req: any, res: Response)
         createdBy: req.user.userId,
       },
       include: {
-        patient: { select: { id: true, name: true, mrn: true, contact: true } },
+        patient: { select: { id: true, name: true, mrn: true, contact: true, email: true } },
         doctor: { select: { id: true, name: true } },
       },
     });
+
+    // Send appointment confirmation notification (async - don't wait)
+    if (appointment.patient.contact || appointment.patient.email) {
+      notificationService.send({
+        type: 'APPOINTMENT_CONFIRMATION',
+        recipientPhone: appointment.patient.contact || undefined,
+        recipientEmail: appointment.patient.email || undefined,
+        message: '',
+        data: {
+          patientName: appointment.patient.name,
+          doctorName: appointment.doctor.name,
+          date: new Date(appointmentDate).toLocaleDateString('en-IN'),
+          time: appointmentTime,
+          department: department || 'General',
+          appointmentId: appointment.id.slice(0, 8).toUpperCase(),
+          hospitalName: 'Hospital ERP',
+          hospitalAddress: 'Hospital Address',
+          contactNumber: '+91-XXXXXXXXXX',
+        },
+      }).catch(err => console.error('Notification failed:', err));
+    }
 
     res.status(201).json(appointment);
   } catch (error) {
@@ -1649,7 +2639,7 @@ app.post('/api/appointments', authenticateToken, async (req: any, res: Response)
   }
 });
 
-app.put('/api/appointments/:id', authenticateToken, async (req: any, res: Response) => {
+app.put('/api/appointments/:id', authenticateToken, validateBody(updateAppointmentSchema), async (req: any, res: Response) => {
   try {
     const { id } = req.params;
     const { appointmentDate, appointmentTime, type, reason, notes, status, department } = req.body;
@@ -1731,11 +2721,465 @@ app.post('/api/appointments/:id/cancel', authenticateToken, async (req: any, res
   }
 });
 
+// ============================================
+// QUEUE MANAGEMENT APIs
+// ============================================
+
+// Get OPD queue for a department/doctor
+app.get('/api/queue/opd', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { department, doctorId } = req.query;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const where: any = {
+      tenantId: req.user.tenantId,
+      appointmentDate: { gte: today },
+      status: { in: ['confirmed', 'checked_in', 'in_progress'] },
+    };
+
+    if (department) where.department = department;
+    if (doctorId) where.doctorId = doctorId;
+
+    const appointments = await prisma.appointment.findMany({
+      where,
+      include: {
+        patient: { select: { id: true, name: true, mrn: true, contact: true } },
+        doctor: { select: { name: true } },
+      },
+      orderBy: [
+        { status: 'asc' }, // checked_in first
+        { appointmentTime: 'asc' },
+      ],
+    });
+
+    // Calculate queue position and estimated wait time
+    const queue = appointments.map((apt, index) => ({
+      ...apt,
+      queuePosition: index + 1,
+      tokenNumber: `${(apt.department || 'GEN').slice(0, 3).toUpperCase()}-${String(index + 1).padStart(3, '0')}`,
+      estimatedWaitMinutes: index * 15, // Assume 15 min per patient
+    }));
+
+    res.json(queue);
+  } catch (error) {
+    console.error('Get OPD queue error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Check-in patient for appointment
+app.post('/api/queue/check-in/:appointmentId', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { appointmentId } = req.params;
+
+    const appointment = await prisma.appointment.findFirst({
+      where: { id: appointmentId, tenantId: req.user.tenantId },
+    });
+
+    if (!appointment) {
+      return res.status(404).json({ error: 'Appointment not found' });
+    }
+
+    if (appointment.status !== 'confirmed' && appointment.status !== 'scheduled') {
+      return res.status(400).json({ error: 'Appointment cannot be checked in' });
+    }
+
+    const updated = await prisma.appointment.update({
+      where: { id: appointmentId },
+      data: {
+        status: 'checked_in',
+        notes: appointment.notes ? `${appointment.notes}\nChecked in at ${new Date().toLocaleTimeString()}` : `Checked in at ${new Date().toLocaleTimeString()}`,
+      },
+      include: {
+        patient: { select: { name: true, mrn: true } },
+      },
+    });
+
+    res.json({ message: 'Patient checked in successfully', appointment: updated });
+  } catch (error) {
+    console.error('Check-in error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Call next patient (mark as in_progress)
+app.post('/api/queue/call-next/:appointmentId', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { appointmentId } = req.params;
+
+    const appointment = await prisma.appointment.update({
+      where: { id: appointmentId },
+      data: { status: 'in_progress' },
+      include: {
+        patient: { select: { name: true, mrn: true, contact: true } },
+      },
+    });
+
+    res.json({ message: 'Patient called', appointment });
+  } catch (error) {
+    console.error('Call next error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get queue display (public display screen)
+app.get('/api/queue/display/:department', async (req: Request, res: Response) => {
+  try {
+    const { department } = req.params;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        department,
+        appointmentDate: { gte: today },
+        status: { in: ['checked_in', 'in_progress'] },
+      },
+      include: {
+        patient: { select: { name: true } },
+        doctor: { select: { name: true } },
+      },
+      orderBy: { appointmentTime: 'asc' },
+      take: 10,
+    });
+
+    const display = {
+      department,
+      currentlyServing: appointments.find(a => a.status === 'in_progress'),
+      waiting: appointments.filter(a => a.status === 'checked_in').map((apt, i) => ({
+        tokenNumber: `${department.slice(0, 3).toUpperCase()}-${String(i + 2).padStart(3, '0')}`,
+        patientName: apt.patient.name.split(' ')[0], // First name only for privacy
+        doctorName: apt.doctor.name,
+      })),
+      timestamp: new Date(),
+    };
+
+    res.json(display);
+  } catch (error) {
+    console.error('Get queue display error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Lab sample collection queue
+app.get('/api/queue/lab', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const orders = await prisma.order.findMany({
+      where: {
+        orderType: 'lab',
+        status: { in: ['pending', 'sample_collected'] },
+        createdAt: { gte: today },
+      },
+      include: {
+        patient: { select: { name: true, mrn: true } },
+      },
+      orderBy: [
+        { priority: 'desc' }, // STAT first
+        { createdAt: 'asc' },
+      ],
+    });
+
+    const queue = orders.map((order, index) => ({
+      ...order,
+      queuePosition: index + 1,
+      tokenNumber: `LAB-${String(index + 1).padStart(3, '0')}`,
+    }));
+
+    res.json(queue);
+  } catch (error) {
+    console.error('Get lab queue error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Pharmacy dispensing queue
+app.get('/api/queue/pharmacy', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const prescriptions = await prisma.prescription.findMany({
+      where: {
+        createdAt: { gte: today },
+      },
+      include: {
+        opdNote: {
+          include: {
+            patient: { select: { name: true, mrn: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const queue = prescriptions.map((rx: any, index) => ({
+      id: rx.id,
+      queuePosition: index + 1,
+      tokenNumber: `PHR-${String(index + 1).padStart(3, '0')}`,
+      patientName: rx.opdNote?.patient?.name || 'Unknown',
+      patientMRN: rx.opdNote?.patient?.mrn || 'N/A',
+      status: 'pending',
+      createdAt: rx.createdAt,
+    }));
+
+    res.json(queue);
+  } catch (error) {
+    console.error('Get pharmacy queue error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ============================================
+// DOCUMENT UPLOAD APIs
+// ============================================
+
+// Upload patient document
+app.post('/api/documents/patient/:patientId', authenticateToken, requirePermission('patients:edit'), documentUpload.single('file'), async (req: any, res: Response) => {
+  try {
+    const { patientId } = req.params;
+    const { category, description } = req.body;
+    const file = req.file;
+
+    if (!file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    // Verify patient exists and belongs to tenant
+    const patient = await prisma.patient.findFirst({
+      where: { id: patientId, tenantId: req.user.tenantId },
+    });
+
+    if (!patient) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    // Store document metadata in database
+    const document = await prisma.document.create({
+      data: {
+        tenantId: req.user.tenantId,
+        patientId,
+        filename: file.filename,
+        originalName: file.originalname,
+        mimeType: file.mimetype,
+        size: file.size,
+        category: category || 'other',
+        description,
+        uploadedBy: req.user.userId,
+        path: file.path,
+      },
+    });
+
+    res.status(201).json(document);
+  } catch (error) {
+    console.error('Document upload error:', error);
+    res.status(500).json({ error: 'Failed to upload document' });
+  }
+});
+
+// Get patient documents
+app.get('/api/documents/patient/:patientId', authenticateToken, requirePermission('patients:view'), async (req: any, res: Response) => {
+  try {
+    const { patientId } = req.params;
+    const { category } = req.query;
+
+    const where: any = { patientId, isDeleted: false };
+    if (category) where.category = category;
+
+    const documents = await prisma.document.findMany({
+      where,
+      orderBy: { uploadedAt: 'desc' },
+    });
+
+    res.json(documents);
+  } catch (error) {
+    console.error('Get documents error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Download/view document
+app.get('/api/documents/:id/download', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const document = await prisma.document.findFirst({
+      where: { id },
+      include: { patient: true },
+    });
+
+    if (!document) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+
+    // Verify access
+    if (document.patient.tenantId !== req.user.tenantId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const filePath = document.path;
+    if (!require('fs').existsSync(filePath)) {
+      return res.status(404).json({ error: 'File not found on disk' });
+    }
+
+    res.setHeader('Content-Type', document.mimeType);
+    res.setHeader('Content-Disposition', `inline; filename="${document.originalName}"`);
+    res.sendFile(path.resolve(filePath));
+  } catch (error) {
+    console.error('Download document error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete document (soft delete)
+app.delete('/api/documents/:id', authenticateToken, requirePermission('patients:edit'), async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const document = await prisma.document.findFirst({
+      where: { id },
+      include: { patient: true },
+    });
+
+    if (!document) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+
+    if (document.patient.tenantId !== req.user.tenantId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    // Delete file from disk
+    await deleteFile(document.path);
+
+    // Delete from database
+    await prisma.document.delete({ where: { id } });
+
+    res.json({ message: 'Document deleted successfully' });
+  } catch (error) {
+    console.error('Delete document error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get document categories
+app.get('/api/documents/categories', authenticateToken, (req: any, res: Response) => {
+  res.json(documentCategories);
+});
+
+// ============================================
+// APPOINTMENT REMINDER APIs
+// ============================================
+
+// Get reminder status for an appointment
+app.get('/api/reminders/appointment/:appointmentId', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { appointmentId } = req.params;
+    const status = await reminderService.getReminderStatus(appointmentId);
+    res.json(status);
+  } catch (error) {
+    console.error('Get reminder status error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Send manual reminder for an appointment
+app.post('/api/reminders/appointment/:appointmentId/send', authenticateToken, requirePermission('appointments:edit'), async (req: any, res: Response) => {
+  try {
+    const { appointmentId } = req.params;
+    const result = await reminderService.sendManualReminder(appointmentId, req.user.tenantId);
+
+    if (!result.success) {
+      return res.status(400).json({ error: result.message });
+    }
+
+    res.json({ message: result.message });
+  } catch (error) {
+    console.error('Send manual reminder error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get reminder statistics
+app.get('/api/reminders/stats', authenticateToken, requireRole('ADMIN', 'FRONT_OFFICE'), async (req: any, res: Response) => {
+  try {
+    const { startDate, endDate } = req.query;
+
+    const stats = await reminderService.getStats(
+      req.user.tenantId,
+      startDate ? new Date(startDate as string) : undefined,
+      endDate ? new Date(endDate as string) : undefined
+    );
+
+    res.json(stats);
+  } catch (error) {
+    console.error('Get reminder stats error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get today's pending reminders
+app.get('/api/reminders/pending', authenticateToken, requireRole('ADMIN', 'FRONT_OFFICE'), async (req: any, res: Response) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    // Get appointments scheduled for today that haven't received reminders
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        tenantId: req.user.tenantId,
+        appointmentDate: {
+          gte: today,
+          lt: tomorrow,
+        },
+        status: { in: ['scheduled', 'confirmed'] },
+      },
+      include: {
+        patient: { select: { name: true, mrn: true, contact: true, email: true } },
+        doctor: { select: { name: true } },
+      },
+      orderBy: { appointmentDate: 'asc' },
+    });
+
+    // Check which have received reminders
+    const appointmentIds = appointments.map(a => a.id);
+    const sentReminders = await prisma.notification.findMany({
+      where: {
+        type: 'APPOINTMENT_REMINDER',
+        referenceId: { in: appointmentIds },
+      },
+      select: { referenceId: true },
+    });
+
+    const sentIds = new Set(sentReminders.map((r: any) => r.referenceId));
+
+    const result = appointments.map((apt: any) => ({
+      id: apt.id,
+      appointmentDate: apt.appointmentDate,
+      appointmentTime: apt.appointmentTime,
+      patient: apt.patient,
+      doctor: apt.doctor?.name || 'N/A',
+      department: apt.department,
+      reminderSent: sentIds.has(apt.id),
+    }));
+
+    res.json(result);
+  } catch (error) {
+    console.error('Get pending reminders error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ===========================
 // LABORATORY APIs
 // ===========================
 
-app.post('/api/lab-orders', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/lab-orders', authenticateToken, validateBody(createLabOrderSchema), async (req: any, res: Response) => {
   try {
     const { patientId, encounterId, tests } = req.body;
 
@@ -1803,7 +3247,7 @@ app.put('/api/lab-orders/:id', authenticateToken, async (req: any, res: Response
   }
 });
 
-app.post('/api/lab-results', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/lab-results', authenticateToken, validateBody(labResultSchema), async (req: any, res: Response) => {
   try {
     const { orderId, resultData, isCritical } = req.body;
 
@@ -1832,7 +3276,7 @@ app.post('/api/lab-results', authenticateToken, async (req: any, res: Response) 
 // RADIOLOGY APIs
 // ===========================
 
-app.post('/api/radiology-orders', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/radiology-orders', authenticateToken, validateBody(createRadiologyOrderSchema), async (req: any, res: Response) => {
   try {
     const { patientId, encounterId, tests } = req.body;
 
@@ -1930,7 +3374,7 @@ app.get('/api/pharmacy/pending-prescriptions', authenticateToken, async (req: an
 // IPD (INPATIENT) APIs
 // ===========================
 
-app.post('/api/admissions', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/admissions', authenticateToken, validateBody(createAdmissionSchema), async (req: any, res: Response) => {
   try {
     const { encounterId, patientId, bedId, diagnosis } = req.body;
 
@@ -2006,7 +3450,7 @@ app.get('/api/admissions', authenticateToken, async (req: any, res: Response) =>
   }
 });
 
-app.post('/api/admissions/:id/discharge', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/admissions/:id/discharge', authenticateToken, validateBody(dischargeSchema), async (req: any, res: Response) => {
   try {
     const { id } = req.params;
     const { dischargeSummary } = req.body;
@@ -2083,7 +3527,7 @@ app.get('/api/emergency/cases', authenticateToken, async (req: any, res: Respons
   }
 });
 
-app.post('/api/emergency/cases', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/emergency/cases', authenticateToken, validateBody(createEmergencySchema), async (req: any, res: Response) => {
   try {
     const { patientName, patientAge, patientGender, patientContact, triageCategory, chiefComplaint, vitalSigns, isMLC, mlcNumber, assignedDoctor, notes } = req.body;
 
@@ -2234,7 +3678,7 @@ app.post('/api/icu/beds', authenticateToken, async (req: any, res: Response) => 
   }
 });
 
-app.post('/api/icu/vitals', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/icu/vitals', authenticateToken, validateBody(icuVitalsSchema), async (req: any, res: Response) => {
   try {
     const { icuBedId, patientId, heartRate, systolicBP, diastolicBP, temperature, spo2, respiratoryRate, gcs, ventilatorMode, fio2, peep } = req.body;
 
@@ -2317,7 +3761,7 @@ app.get('/api/surgeries', authenticateToken, async (req: any, res: Response) => 
   }
 });
 
-app.post('/api/surgeries', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/surgeries', authenticateToken, validateBody(scheduleSurgerySchema), async (req: any, res: Response) => {
   try {
     const { patientId, patientName, patientMRN, procedureName, surgeonId, surgeonName, anesthetistName, otRoom, scheduledDate, scheduledTime, estimatedDuration, anesthesiaType, priority, notes } = req.body;
 
@@ -2545,7 +3989,7 @@ app.get('/api/blood-bank/donors', authenticateToken, async (req: any, res: Respo
   }
 });
 
-app.post('/api/blood-bank/donors', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/blood-bank/donors', authenticateToken, validateBody(bloodDonorSchema), async (req: any, res: Response) => {
   try {
     const { name, age, gender, bloodType, phone, email, address } = req.body;
 
@@ -2596,7 +4040,7 @@ app.get('/api/blood-bank/requests', authenticateToken, async (req: any, res: Res
   }
 });
 
-app.post('/api/blood-bank/requests', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/blood-bank/requests', authenticateToken, validateBody(bloodRequestSchema), async (req: any, res: Response) => {
   try {
     const { patientName, patientMRN, bloodType, component, unitsRequired, urgency, requestedBy, indication } = req.body;
 
@@ -2682,7 +4126,7 @@ app.get('/api/hr/employees', authenticateToken, async (req: any, res: Response) 
   }
 });
 
-app.post('/api/hr/employees', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/hr/employees', authenticateToken, validateBody(createEmployeeSchema), async (req: any, res: Response) => {
   try {
     const { name, email, phone, department, designation, joiningDate, salary, shift } = req.body;
 
@@ -2795,7 +4239,7 @@ app.get('/api/hr/leaves', authenticateToken, async (req: any, res: Response) => 
   }
 });
 
-app.post('/api/hr/leaves', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/hr/leaves', authenticateToken, validateBody(leaveRequestSchema), async (req: any, res: Response) => {
   try {
     const { employeeId, leaveType, fromDate, toDate, reason } = req.body;
 
@@ -2964,7 +4408,7 @@ app.get('/api/inventory/purchase-orders', authenticateToken, async (req: any, re
   }
 });
 
-app.post('/api/inventory/purchase-orders', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/inventory/purchase-orders', authenticateToken, validateBody(createPurchaseOrderSchema), async (req: any, res: Response) => {
   try {
     const { vendorName, vendorContact, expectedDate, items, remarks } = req.body;
 
@@ -3045,7 +4489,7 @@ app.get('/api/ambulance/vehicles', authenticateToken, async (req: any, res: Resp
   }
 });
 
-app.post('/api/ambulance/vehicles', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/ambulance/vehicles', authenticateToken, validateBody(ambulanceVehicleSchema), async (req: any, res: Response) => {
   try {
     const { vehicleNumber, type, driverName, driverPhone } = req.body;
 
@@ -3089,7 +4533,7 @@ app.get('/api/ambulance/trips', authenticateToken, async (req: any, res: Respons
   }
 });
 
-app.post('/api/ambulance/trips', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/ambulance/trips', authenticateToken, validateBody(ambulanceTripSchema), async (req: any, res: Response) => {
   try {
     const { patientName, patientPhone, pickupLocation, dropLocation, tripType, urgency, notes, vehicleNumber } = req.body;
 
@@ -3196,7 +4640,7 @@ app.get('/api/housekeeping/tasks', authenticateToken, async (req: any, res: Resp
   }
 });
 
-app.post('/api/housekeeping/tasks', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/housekeeping/tasks', authenticateToken, validateBody(housekeepingTaskSchema), async (req: any, res: Response) => {
   try {
     const { bedId, taskType, assignedTo, priority, scheduledAt, remarks } = req.body;
 
@@ -3296,7 +4740,7 @@ app.get('/api/diet/orders', authenticateToken, async (req: any, res: Response) =
   }
 });
 
-app.post('/api/diet/orders', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/diet/orders', authenticateToken, validateBody(dietOrderSchema), async (req: any, res: Response) => {
   try {
     const { patientId, admissionId, dietType, mealType, remarks } = req.body;
 
@@ -4305,7 +5749,7 @@ app.get('/api/users', authenticateToken, async (req: any, res: Response) => {
 });
 
 // Create user
-app.post('/api/users', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/users', authenticateToken, validateBody(createUserSchema), async (req: any, res: Response) => {
   try {
     const { username, fullName, email, phone, role, password } = req.body;
     const bcrypt = await import('bcryptjs');
@@ -4339,7 +5783,7 @@ app.post('/api/users', authenticateToken, async (req: any, res: Response) => {
 });
 
 // Update user
-app.put('/api/users/:id', authenticateToken, async (req: any, res: Response) => {
+app.put('/api/users/:id', authenticateToken, validateBody(updateUserSchema), async (req: any, res: Response) => {
   try {
     const { id } = req.params;
     const { username, fullName, email, role, status } = req.body;
@@ -4698,7 +6142,7 @@ app.get('/api/tpa/pre-authorizations', authenticateToken, async (req: any, res: 
 });
 
 // Submit pre-authorization
-app.post('/api/tpa/pre-authorizations', authenticateToken, async (req: any, res: Response) => {
+app.post('/api/tpa/pre-authorizations', authenticateToken, validateBody(preAuthorizationSchema), async (req: any, res: Response) => {
   try {
     const { patientInsuranceId, procedure, estimatedAmount, patientId } = req.body;
 
@@ -6056,30 +7500,49 @@ app.use(errorHandler);
 // ============================================
 // SERVER STARTUP
 // ============================================
-app.listen(PORT, () => {
-  logger.info(`Hospital ERP Backend running on http://localhost:${PORT}`);
-  logger.info(`API Health: http://localhost:${PORT}/api/health`);
-  console.log(`🏥 HMS Backend running on http://localhost:${PORT}`);
-  console.log(`📊 API Health: http://localhost:${PORT}/api/health`);
-});
 
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-  logger.info('SIGTERM received, shutting down gracefully');
-  await prisma.$disconnect();
-  process.exit(0);
-});
+// Export app for Vercel serverless functions
+export default app;
+export { app };
 
-process.on('SIGINT', async () => {
-  logger.info('SIGINT received, shutting down gracefully');
-  await prisma.$disconnect();
-  process.exit(0);
-});
+// Only start the server if not in Vercel serverless environment
+const isVercel = process.env.VERCEL === '1';
+
+if (!isVercel) {
+  app.listen(PORT, () => {
+    logger.info(`Hospital ERP Backend running on http://localhost:${PORT}`);
+    logger.info(`API Health: http://localhost:${PORT}/api/health`);
+    console.log(`Hospital ERP Backend running on http://localhost:${PORT}`);
+    console.log(`API Health: http://localhost:${PORT}/api/health`);
+
+    // Start appointment reminder service (checks every 15 minutes)
+    // Note: In serverless, use Vercel Cron Jobs instead
+    if (process.env.ENABLE_REMINDERS !== 'false') {
+      reminderService.start(15);
+      console.log(`Appointment reminder service started`);
+    }
+  });
+
+  // Graceful shutdown (only for non-serverless)
+  process.on('SIGTERM', async () => {
+    logger.info('SIGTERM received, shutting down gracefully');
+    reminderService.stop();
+    await disconnectPrisma();
+    process.exit(0);
+  });
+
+  process.on('SIGINT', async () => {
+    logger.info('SIGINT received, shutting down gracefully');
+    reminderService.stop();
+    await disconnectPrisma();
+    process.exit(0);
+  });
+}
 
 // Handle uncaught exceptions
 process.on('uncaughtException', (error) => {
   logger.error('Uncaught Exception:', error);
-  process.exit(1);
+  if (!isVercel) process.exit(1);
 });
 
 // Handle unhandled promise rejections

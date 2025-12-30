@@ -1,5 +1,7 @@
 import { config } from '../config';
 import { logger } from '../utils/logger';
+import nodemailer from 'nodemailer';
+import type { Transporter } from 'nodemailer';
 
 // Notification types
 export type NotificationType =
@@ -389,18 +391,21 @@ class SMSService {
   constructor() {
     this.config = {
       provider: (process.env.SMS_PROVIDER as SMSConfig['provider']) || 'mock',
-      apiKey: process.env.SMS_API_KEY,
-      apiSecret: process.env.SMS_API_SECRET,
-      senderId: process.env.SMS_SENDER_ID || 'HOSPTL',
+      apiKey: process.env.SMS_API_KEY || process.env.TWILIO_AUTH_TOKEN || process.env.MSG91_AUTH_KEY,
+      apiSecret: process.env.SMS_API_SECRET || process.env.TWILIO_ACCOUNT_SID,
+      senderId: process.env.SMS_SENDER_ID || process.env.TWILIO_PHONE_NUMBER || 'HOSPTL',
     };
   }
 
   async send(phone: string, message: string, priority: string = 'NORMAL'): Promise<boolean> {
     try {
+      // Normalize phone number (ensure it has country code)
+      const normalizedPhone = this.normalizePhone(phone);
+
       if (this.config.provider === 'mock' || !this.config.apiKey) {
         // Mock implementation - log instead of sending
         logger.info('SMS_MOCK', {
-          to: phone,
+          to: normalizedPhone,
           message: message.substring(0, 50) + '...',
           priority,
           timestamp: new Date().toISOString(),
@@ -410,11 +415,11 @@ class SMSService {
 
       switch (this.config.provider) {
         case 'twilio':
-          return await this.sendViaTwilio(phone, message);
+          return await this.sendViaTwilio(normalizedPhone, message);
         case 'msg91':
-          return await this.sendViaMsg91(phone, message);
+          return await this.sendViaMsg91(normalizedPhone, message);
         case 'aws-sns':
-          return await this.sendViaAWSSNS(phone, message);
+          return await this.sendViaAWSSNS(normalizedPhone, message);
         default:
           logger.warn('Unknown SMS provider', { provider: this.config.provider });
           return false;
@@ -425,22 +430,111 @@ class SMSService {
     }
   }
 
+  private normalizePhone(phone: string): string {
+    // Remove any non-numeric characters except +
+    let cleaned = phone.replace(/[^\d+]/g, '');
+    // Add India country code if not present
+    if (!cleaned.startsWith('+')) {
+      if (cleaned.length === 10) {
+        cleaned = '+91' + cleaned;
+      } else if (!cleaned.startsWith('91') && cleaned.length === 10) {
+        cleaned = '+91' + cleaned;
+      } else {
+        cleaned = '+' + cleaned;
+      }
+    }
+    return cleaned;
+  }
+
   private async sendViaTwilio(phone: string, message: string): Promise<boolean> {
-    // Twilio implementation placeholder
-    // In production, use: const twilio = require('twilio')(accountSid, authToken);
-    logger.info('SMS_TWILIO', { to: phone, messageLength: message.length });
-    return true;
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    const fromNumber = process.env.TWILIO_PHONE_NUMBER;
+
+    if (!accountSid || !authToken || !fromNumber) {
+      logger.error('Twilio credentials not configured');
+      return false;
+    }
+
+    try {
+      const response = await fetch(
+        `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Basic ' + Buffer.from(`${accountSid}:${authToken}`).toString('base64'),
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: new URLSearchParams({
+            To: phone,
+            From: fromNumber,
+            Body: message,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        logger.error('Twilio SMS failed', { error: data });
+        return false;
+      }
+
+      logger.info('SMS_TWILIO_SENT', { to: phone, sid: (data as any).sid });
+      return true;
+    } catch (error) {
+      logger.error('Twilio API error', { error });
+      return false;
+    }
   }
 
   private async sendViaMsg91(phone: string, message: string): Promise<boolean> {
-    // MSG91 implementation placeholder
-    logger.info('SMS_MSG91', { to: phone, messageLength: message.length });
-    return true;
+    const authKey = process.env.MSG91_AUTH_KEY;
+    const senderId = process.env.MSG91_SENDER_ID || 'HOSPTL';
+    const templateId = process.env.MSG91_TEMPLATE_ID;
+
+    if (!authKey) {
+      logger.error('MSG91 credentials not configured');
+      return false;
+    }
+
+    try {
+      // MSG91 Flow API
+      const response = await fetch('https://api.msg91.com/api/v5/flow/', {
+        method: 'POST',
+        headers: {
+          'authkey': authKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          flow_id: templateId,
+          sender: senderId,
+          mobiles: phone.replace('+', ''),
+          VAR1: message, // Template variable
+        }),
+      });
+
+      const data = await response.json();
+
+      const result = data as any;
+      if (result.type !== 'success') {
+        logger.error('MSG91 SMS failed', { error: result });
+        return false;
+      }
+
+      logger.info('SMS_MSG91_SENT', { to: phone, requestId: result.request_id });
+      return true;
+    } catch (error) {
+      logger.error('MSG91 API error', { error });
+      return false;
+    }
   }
 
   private async sendViaAWSSNS(phone: string, message: string): Promise<boolean> {
-    // AWS SNS implementation placeholder
-    logger.info('SMS_AWS_SNS', { to: phone, messageLength: message.length });
+    // AWS SNS requires AWS SDK - using fetch for simplicity
+    // In production, use @aws-sdk/client-sns
+    logger.warn('AWS SNS not fully implemented - use AWS SDK');
+    logger.info('SMS_AWS_SNS_MOCK', { to: phone, messageLength: message.length });
     return true;
   }
 }
@@ -448,6 +542,7 @@ class SMSService {
 // Email Service
 class EmailService {
   private config: EmailConfig;
+  private smtpTransporter: Transporter | null = null;
 
   constructor() {
     this.config = {
@@ -459,6 +554,28 @@ class EmailService {
       apiKey: process.env.SENDGRID_API_KEY,
       from: config.email?.from || 'noreply@hospital.com',
     };
+
+    // Initialize SMTP transporter if configured
+    if (this.config.provider === 'smtp' && this.config.host) {
+      this.initSMTPTransporter();
+    }
+  }
+
+  private initSMTPTransporter(): void {
+    try {
+      this.smtpTransporter = nodemailer.createTransport({
+        host: this.config.host,
+        port: this.config.port || 587,
+        secure: this.config.port === 465, // true for 465, false for other ports
+        auth: {
+          user: this.config.user,
+          pass: this.config.pass,
+        },
+      });
+      logger.info('SMTP transporter initialized');
+    } catch (error) {
+      logger.error('Failed to initialize SMTP transporter', { error });
+    }
   }
 
   async send(
@@ -468,7 +585,13 @@ class EmailService {
     attachments?: any[]
   ): Promise<boolean> {
     try {
-      if (this.config.provider === 'mock' || !this.config.host) {
+      // Check for valid email
+      if (!to || !this.isValidEmail(to)) {
+        logger.warn('Invalid email address', { to });
+        return false;
+      }
+
+      if (this.config.provider === 'mock' || (!this.config.host && !this.config.apiKey)) {
         // Mock implementation - log instead of sending
         logger.info('EMAIL_MOCK', {
           to,
@@ -497,16 +620,46 @@ class EmailService {
     }
   }
 
+  private isValidEmail(email: string): boolean {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  }
+
   private async sendViaSMTP(
     to: string,
     subject: string,
     body: string,
     attachments?: any[]
   ): Promise<boolean> {
-    // Nodemailer implementation placeholder
-    // In production, use nodemailer with transporter.sendMail()
-    logger.info('EMAIL_SMTP', { to, subject });
-    return true;
+    if (!this.smtpTransporter) {
+      this.initSMTPTransporter();
+      if (!this.smtpTransporter) {
+        logger.error('SMTP transporter not available');
+        return false;
+      }
+    }
+
+    try {
+      const mailOptions: nodemailer.SendMailOptions = {
+        from: this.config.from,
+        to,
+        subject,
+        text: body,
+        html: this.textToHtml(body),
+        attachments: attachments?.map(att => ({
+          filename: att.filename,
+          content: att.content,
+          contentType: att.contentType,
+        })),
+      };
+
+      const result = await this.smtpTransporter.sendMail(mailOptions);
+      logger.info('EMAIL_SMTP_SENT', { to, subject, messageId: result.messageId });
+      return true;
+    } catch (error) {
+      logger.error('SMTP send failed', { to, subject, error });
+      return false;
+    }
   }
 
   private async sendViaSendGrid(
@@ -515,9 +668,56 @@ class EmailService {
     body: string,
     attachments?: any[]
   ): Promise<boolean> {
-    // SendGrid implementation placeholder
-    logger.info('EMAIL_SENDGRID', { to, subject });
-    return true;
+    const apiKey = process.env.SENDGRID_API_KEY;
+
+    if (!apiKey) {
+      logger.error('SendGrid API key not configured');
+      return false;
+    }
+
+    try {
+      const emailData: any = {
+        personalizations: [{ to: [{ email: to }] }],
+        from: { email: this.config.from },
+        subject,
+        content: [
+          { type: 'text/plain', value: body },
+          { type: 'text/html', value: this.textToHtml(body) },
+        ],
+      };
+
+      if (attachments?.length) {
+        emailData.attachments = attachments.map(att => ({
+          content: Buffer.isBuffer(att.content)
+            ? att.content.toString('base64')
+            : att.content,
+          filename: att.filename,
+          type: att.contentType,
+          disposition: 'attachment',
+        }));
+      }
+
+      const response = await fetch('https://api.sendgrid.com/v3/mail/send', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(emailData),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.text();
+        logger.error('SendGrid send failed', { to, subject, error: errorData });
+        return false;
+      }
+
+      logger.info('EMAIL_SENDGRID_SENT', { to, subject });
+      return true;
+    } catch (error) {
+      logger.error('SendGrid API error', { to, subject, error });
+      return false;
+    }
   }
 
   private async sendViaAWSSES(
@@ -526,9 +726,31 @@ class EmailService {
     body: string,
     attachments?: any[]
   ): Promise<boolean> {
-    // AWS SES implementation placeholder
-    logger.info('EMAIL_AWS_SES', { to, subject });
+    // AWS SES requires AWS SDK
+    // In production, use @aws-sdk/client-ses
+    logger.warn('AWS SES not fully implemented - use AWS SDK');
+    logger.info('EMAIL_AWS_SES_MOCK', { to, subject });
     return true;
+  }
+
+  private textToHtml(text: string): string {
+    // Convert plain text to simple HTML
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          ${text.replace(/\n/g, '<br>')}
+        </div>
+      </body>
+      </html>
+    `;
   }
 }
 
