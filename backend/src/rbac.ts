@@ -69,7 +69,7 @@ export type Permission =
   | 'pharmacy:view' | 'pharmacy:dispense' | 'pharmacy:manage'
 
   // Billing & Finance
-  | 'billing:view' | 'billing:create' | 'billing:edit' | 'billing:payment'
+  | 'billing:view' | 'billing:create' | 'billing:edit' | 'billing:payment' | 'billing:refund'
   | 'invoices:view' | 'invoices:create' | 'invoices:payment'
   | 'accounts:view' | 'accounts:create' | 'accounts:edit'
   | 'commissions:view' | 'commissions:manage' | 'commissions:payout'
@@ -152,7 +152,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'blood_donors:view', 'blood_donors:create',
     'blood_requests:view', 'blood_requests:create', 'blood_requests:issue',
     'pharmacy:view', 'pharmacy:dispense', 'pharmacy:manage',
-    'billing:view', 'billing:create', 'billing:edit', 'billing:payment',
+    'billing:view', 'billing:create', 'billing:edit', 'billing:payment', 'billing:refund',
     'invoices:view', 'invoices:create', 'invoices:payment',
     'accounts:view', 'accounts:create', 'accounts:edit',
     'commissions:view', 'commissions:manage', 'commissions:payout',
@@ -254,7 +254,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'patients:view',
     'appointments:view',
     'admissions:view',
-    'billing:view', 'billing:create', 'billing:edit', 'billing:payment',
+    'billing:view', 'billing:create', 'billing:edit', 'billing:payment', 'billing:refund',
     'invoices:view', 'invoices:create', 'invoices:payment',
     'accounts:view', 'accounts:create',
     'accounting:view', 'accounting:create', 'accounting:edit',

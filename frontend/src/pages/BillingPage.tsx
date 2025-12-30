@@ -9,9 +9,11 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Receipt, Trash2, Printer, DollarSign } from 'lucide-react';
+import { Plus, Receipt, Trash2, Printer, DollarSign, CreditCard, Wallet } from 'lucide-react';
 import api from '../services/api';
 import { generateBillPDF } from '../utils/pdfGenerator';
+import { useRazorpay } from '../hooks/useRazorpay';
+import { useToast } from '../components/Toast';
 
 interface BillItem {
   id: string;
@@ -53,12 +55,18 @@ interface Patient {
 export default function BillingPage() {
   const location = useLocation();
   const queryParams = new URLSearchParams(location.search);
+  const { isAvailable: isOnlinePaymentAvailable, loading: paymentLoading, initiatePayment } = useRazorpay();
+  const { showToast } = useToast();
 
   const [bills, setBills] = useState<Bill[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [billItems, setBillItems] = useState<BillItem[]>([]);
 
   const [isNewBillDialogOpen, setIsNewBillDialogOpen] = useState(false);
+  const [isPaymentDialogOpen, setIsPaymentDialogOpen] = useState(false);
+  const [selectedBill, setSelectedBill] = useState<Bill | null>(null);
+  const [paymentAmount, setPaymentAmount] = useState<string>('');
+  const [paymentMode, setPaymentMode] = useState<string>('cash');
   const [loading, setLoading] = useState(false);
 
   const [billFormData, setBillFormData] = useState({
@@ -205,13 +213,101 @@ export default function BillingPage() {
         taxPercent: 5
       });
 
-      alert(`Bill created successfully! Invoice: ${newBill.billNo}`);
+      showToast(`Bill created successfully! Invoice: ${newBill.billNo}`, 'success');
     } catch (error) {
       console.error('Error creating bill:', error);
-      alert('Failed to create bill');
+      showToast('Failed to create bill', 'error');
     } finally {
       setLoading(false);
     }
+  };
+
+  // Open payment dialog for a bill
+  const handleOpenPaymentDialog = (bill: Bill) => {
+    setSelectedBill(bill);
+    setPaymentAmount(bill.balance.toString());
+    setPaymentMode('cash');
+    setIsPaymentDialogOpen(true);
+  };
+
+  // Handle cash/card payment
+  const handleRecordPayment = async () => {
+    if (!selectedBill) return;
+
+    const amount = parseFloat(paymentAmount);
+    if (isNaN(amount) || amount <= 0 || amount > selectedBill.balance) {
+      showToast('Invalid payment amount', 'error');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await api.post(`/api/invoices/${selectedBill.id}/payment`, {
+        amount,
+        mode: paymentMode,
+      });
+
+      // Update local state
+      setBills(bills.map(bill => {
+        if (bill.id === selectedBill.id) {
+          const newPaid = bill.paid + amount;
+          const newBalance = bill.balance - amount;
+          return {
+            ...bill,
+            paid: newPaid,
+            balance: newBalance,
+            status: newBalance <= 0 ? 'Paid' : 'Partial',
+          };
+        }
+        return bill;
+      }));
+
+      setIsPaymentDialogOpen(false);
+      showToast('Payment recorded successfully', 'success');
+    } catch (error) {
+      console.error('Error recording payment:', error);
+      showToast('Failed to record payment', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle online payment via Razorpay
+  const handleOnlinePayment = () => {
+    if (!selectedBill) return;
+
+    const amount = parseFloat(paymentAmount);
+    if (isNaN(amount) || amount <= 0 || amount > selectedBill.balance) {
+      showToast('Invalid payment amount', 'error');
+      return;
+    }
+
+    initiatePayment(
+      selectedBill.id,
+      amount,
+      (transactionId) => {
+        // Update local state on success
+        setBills(bills.map(bill => {
+          if (bill.id === selectedBill.id) {
+            const newPaid = bill.paid + amount;
+            const newBalance = bill.balance - amount;
+            return {
+              ...bill,
+              paid: newPaid,
+              balance: newBalance,
+              status: newBalance <= 0 ? 'Paid' : 'Partial',
+            };
+          }
+          return bill;
+        }));
+
+        setIsPaymentDialogOpen(false);
+        showToast(`Payment successful! Transaction: ${transactionId}`, 'success');
+      },
+      (error) => {
+        showToast(error, 'error');
+      }
+    );
   };
 
   const subtotal = billItems.reduce((sum, item) => sum + item.total, 0);
@@ -611,8 +707,9 @@ export default function BillingPage() {
                           <Printer className="w-4 h-4" />
                         </Button>
                         {bill.balance > 0 && (
-                          <Button size="sm">
-                            <DollarSign className="w-4 h-4" />
+                          <Button size="sm" onClick={() => handleOpenPaymentDialog(bill)}>
+                            <DollarSign className="w-4 h-4 mr-1" />
+                            Pay
                           </Button>
                         )}
                       </div>
@@ -624,6 +721,105 @@ export default function BillingPage() {
           </Table>
         </CardContent>
       </Card>
+
+      {/* Payment Dialog */}
+      <Dialog open={isPaymentDialogOpen} onOpenChange={setIsPaymentDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Collect Payment</DialogTitle>
+            <DialogDescription>
+              {selectedBill && (
+                <span>
+                  Bill: {selectedBill.billNo} | Patient: {selectedBill.patientName}
+                </span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedBill && (
+            <div className="space-y-4">
+              <div className="bg-slate-50 p-4 rounded-lg space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span>Total Amount:</span>
+                  <span className="font-semibold">Rs. {selectedBill.total.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span>Already Paid:</span>
+                  <span className="font-semibold text-green-600">Rs. {selectedBill.paid.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-sm border-t pt-2">
+                  <span>Balance Due:</span>
+                  <span className="font-bold text-red-600">Rs. {selectedBill.balance.toFixed(2)}</span>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Payment Amount (Rs.)</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  max={selectedBill.balance}
+                  step="0.01"
+                  value={paymentAmount}
+                  onChange={(e) => setPaymentAmount(e.target.value)}
+                  placeholder="Enter amount"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Payment Method</Label>
+                <Select value={paymentMode} onValueChange={setPaymentMode}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="cash">Cash</SelectItem>
+                    <SelectItem value="card">Card (Swipe)</SelectItem>
+                    <SelectItem value="upi">UPI (Manual)</SelectItem>
+                    <SelectItem value="cheque">Cheque</SelectItem>
+                    <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex gap-2 pt-4">
+                <Button
+                  className="flex-1"
+                  variant="outline"
+                  onClick={handleRecordPayment}
+                  disabled={loading || paymentLoading}
+                >
+                  <Wallet className="w-4 h-4 mr-2" />
+                  {loading ? 'Processing...' : 'Record Payment'}
+                </Button>
+
+                {isOnlinePaymentAvailable && (
+                  <Button
+                    className="flex-1 bg-blue-600 hover:bg-blue-700"
+                    onClick={handleOnlinePayment}
+                    disabled={loading || paymentLoading}
+                  >
+                    <CreditCard className="w-4 h-4 mr-2" />
+                    {paymentLoading ? 'Processing...' : 'Pay Online'}
+                  </Button>
+                )}
+              </div>
+
+              {isOnlinePaymentAvailable && (
+                <p className="text-xs text-slate-500 text-center">
+                  Online payment powered by Razorpay (Cards, UPI, NetBanking)
+                </p>
+              )}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setIsPaymentDialogOpen(false)}>
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
