@@ -1,13 +1,9 @@
 import winston from 'winston';
 import path from 'path';
 import fs from 'fs';
-import { config } from '../config';
 
-// Ensure log directory exists
-const logDir = config.logging.dir;
-if (!fs.existsSync(logDir)) {
-  fs.mkdirSync(logDir, { recursive: true });
-}
+// Check if running in serverless environment
+const isServerless = !!process.env.VERCEL || !!process.env.AWS_LAMBDA_FUNCTION_NAME;
 
 // Custom format for console output
 const consoleFormat = winston.format.combine(
@@ -26,15 +22,24 @@ const fileFormat = winston.format.combine(
   winston.format.json()
 );
 
-// Create logger
-export const logger = winston.createLogger({
-  level: config.logging.level,
-  defaultMeta: { service: 'hospital-erp' },
-  transports: [
-    // Console transport
-    new winston.transports.Console({
-      format: consoleFormat,
-    }),
+// Build transports array
+const transports: winston.transport[] = [
+  // Console transport (always enabled)
+  new winston.transports.Console({
+    format: consoleFormat,
+  }),
+];
+
+// Only add file transports in non-serverless environments
+if (!isServerless) {
+  const logDir = process.env.LOG_DIR || './logs';
+
+  // Ensure log directory exists
+  if (!fs.existsSync(logDir)) {
+    fs.mkdirSync(logDir, { recursive: true });
+  }
+
+  transports.push(
     // Error log file
     new winston.transports.File({
       filename: path.join(logDir, 'error.log'),
@@ -57,8 +62,15 @@ export const logger = winston.createLogger({
       format: fileFormat,
       maxsize: 10485760, // 10MB
       maxFiles: 10,
-    }),
-  ],
+    })
+  );
+}
+
+// Create logger
+export const logger = winston.createLogger({
+  level: process.env.LOG_LEVEL || 'info',
+  defaultMeta: { service: 'hospital-erp' },
+  transports,
 });
 
 // Create audit logger for sensitive operations

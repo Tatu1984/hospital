@@ -1,0 +1,11 @@
+# Ignore duplicate/backup files
+src/server 2.ts
+src/server 3.ts
+src/rbac 2.ts
+
+# Ignore logs
+logs/
+
+# Ignore local env
+.env
+.env.local
