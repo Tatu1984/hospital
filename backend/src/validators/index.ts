@@ -23,11 +23,11 @@ export const searchSchema = z.object({
 // Auth validators
 export const loginSchema = z.object({
   username: z.string().min(3, 'Username must be at least 3 characters').max(50),
-  password: z.string().min(6, 'Password must be at least 6 characters').max(100),
+  password: z.string().min(8, 'Password must be at least 8 characters').max(100),
 });
 
 export const changePasswordSchema = z.object({
-  currentPassword: z.string().min(6),
+  currentPassword: z.string().min(8),
   newPassword: z
     .string()
     .min(8, 'Password must be at least 8 characters')

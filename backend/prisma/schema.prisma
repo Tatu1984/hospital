@@ -314,6 +314,8 @@ model IPDNote {
   createdAt   DateTime  @default(now())
   admission   Admission @relation(fields: [admissionId], references: [id])
 
+  @@index([admissionId])
+  @@index([noteType])
   @@map("ipd_notes")
 }
 
@@ -679,6 +681,9 @@ model PatientInsurance {
   tpa                       TPAMaster                     @relation(fields: [tpaId], references: [id])
   eligibilityChecks         InsuranceEligibilityCheck[]
 
+  @@index([patientId])
+  @@index([tpaId])
+  @@index([policyNumber])
   @@map("patient_insurances")
 }
 

@@ -25,7 +25,7 @@ import {
   getAvailableBedsQuerySchema,
   idParamSchema,
 } from '../validators';
-import { bedManagementService } from '../services/bedManagement';
+import { bedManagementService, checkBedAvailabilityBatch } from '../services/bedManagement';
 
 const router = Router();
 
@@ -66,34 +66,29 @@ router.get(
       }
     });
 
-    // If date range provided, check availability for each bed
+    // If date range provided, check availability using batch query (optimized - no N+1)
     if (fromDate) {
       const from = new Date(fromDate as string);
       const to = toDate ? new Date(toDate as string) : undefined;
 
-      const availabilityPromises = beds.map(async (bed) => {
-        const availability = await bedManagementService.checkBedAvailability(
-          bed.id,
-          from,
-          to
-        );
+      // Use batch function instead of N+1 individual queries
+      const bedIds = beds.map(bed => bed.id);
+      const availabilityMap = await checkBedAvailabilityBatch(bedIds, from, to);
 
-        if (availability.isAvailable) {
-          return {
-            id: bed.id,
-            bedNumber: bed.bedNumber,
-            category: bed.category,
-            floor: bed.floor,
-            wardId: bed.wardId,
-            status: bed.status,
-            branchName: bed.branch.name
-          };
-        }
-        return null;
-      });
-
-      const results = await Promise.all(availabilityPromises);
-      const availableBeds = results.filter(bed => bed !== null);
+      const availableBeds = beds
+        .filter(bed => {
+          const availability = availabilityMap.get(bed.id);
+          return availability?.isAvailable ?? false;
+        })
+        .map(bed => ({
+          id: bed.id,
+          bedNumber: bed.bedNumber,
+          category: bed.category,
+          floor: bed.floor,
+          wardId: bed.wardId,
+          status: bed.status,
+          branchName: bed.branch.name
+        }));
 
       res.json({
         success: true,

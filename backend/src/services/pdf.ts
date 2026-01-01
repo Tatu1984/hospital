@@ -84,11 +84,11 @@ interface DischargeData {
 
 class PDFService {
   private defaultHospitalInfo: HospitalInfo = {
-    name: 'Hospital ERP',
-    address: '123 Healthcare Avenue, Medical District',
-    phone: '+91-XXXXXXXXXX',
-    email: 'info@hospital.com',
-    gstin: 'XXXXXXXXXXXX',
+    name: process.env.HOSPITAL_NAME || 'Hospital Name',
+    address: process.env.HOSPITAL_ADDRESS || 'Address not configured',
+    phone: process.env.HOSPITAL_PHONE || 'Phone not configured',
+    email: process.env.HOSPITAL_EMAIL || 'email@hospital.com',
+    gstin: process.env.HOSPITAL_GSTIN,
   };
 
   /**
