@@ -1,5 +1,6 @@
 import { Router, Response } from 'express';
 import { prisma } from '../lib/db';
+import { logger } from '../utils/logger';
 import {
   verifyEligibility,
   checkCoverageLimit,
@@ -84,7 +85,7 @@ router.post('/verify', async (req: any, res: Response) => {
       },
     });
   } catch (error) {
-    console.error('Verify insurance error:', error);
+    logger.error('Verify insurance error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -132,7 +133,7 @@ router.get('/patient/:patientId', async (req: any, res: Response) => {
 
     res.json(insurancesWithStatus);
   } catch (error) {
-    console.error('Get patient insurances error:', error);
+    logger.error('Get patient insurances error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -198,7 +199,7 @@ router.post('/pre-auth/request', async (req: any, res: Response) => {
       }
     } catch (eligibilityError) {
       // Log but don't fail pre-auth creation
-      console.warn('Eligibility check failed during pre-auth:', eligibilityError);
+      logger.warn('Eligibility check failed during pre-auth', { error: eligibilityError instanceof Error ? eligibilityError.message : eligibilityError });
     }
 
     // Create pre-authorization request
@@ -236,7 +237,7 @@ router.post('/pre-auth/request', async (req: any, res: Response) => {
 
     res.status(201).json(preAuth);
   } catch (error) {
-    console.error('Create pre-authorization error:', error);
+    logger.error('Create pre-authorization error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -262,7 +263,7 @@ router.get('/pre-auth', async (req: any, res: Response) => {
 
     res.json(preAuths);
   } catch (error) {
-    console.error('List pre-authorizations error:', error);
+    logger.error('List pre-authorizations error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -304,7 +305,7 @@ router.get('/pre-auth/:id', async (req: any, res: Response) => {
 
     res.json(preAuth);
   } catch (error) {
-    console.error('Get pre-authorization error:', error);
+    logger.error('Get pre-authorization error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -367,7 +368,7 @@ router.put('/pre-auth/:id/approve', async (req: any, res: Response) => {
 
     res.json(preAuth);
   } catch (error) {
-    console.error('Approve pre-authorization error:', error);
+    logger.error('Approve pre-authorization error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -406,7 +407,7 @@ router.put('/pre-auth/:id/reject', async (req: any, res: Response) => {
 
     res.json(preAuth);
   } catch (error) {
-    console.error('Reject pre-authorization error:', error);
+    logger.error('Reject pre-authorization error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -448,7 +449,7 @@ router.post('/verify-eligibility', async (req: any, res: Response) => {
 
     res.json(result);
   } catch (error) {
-    console.error('Verify eligibility error:', error);
+    logger.error('Verify eligibility error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({
       error: 'Internal server error',
       message: error instanceof Error ? error.message : 'Unknown error',
@@ -475,7 +476,7 @@ router.get('/coverage/:patientInsuranceId', async (req: any, res: Response) => {
 
     res.json(coverage);
   } catch (error) {
-    console.error('Get coverage error:', error);
+    logger.error('Get coverage error', { error: error instanceof Error ? error.message : error });
     if (error instanceof Error && error.message === 'Insurance policy not found') {
       return res.status(404).json({ error: error.message });
     }
@@ -513,7 +514,7 @@ router.post('/coverage/:patientInsuranceId/check-limit', async (req: any, res: R
 
     res.json(result);
   } catch (error) {
-    console.error('Check coverage limit error:', error);
+    logger.error('Check coverage limit error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({
       error: 'Internal server error',
       message: error instanceof Error ? error.message : 'Unknown error',
@@ -549,7 +550,7 @@ router.get('/utilization/:patientInsuranceId', async (req: any, res: Response) =
       history,
     });
   } catch (error) {
-    console.error('Get utilization error:', error);
+    logger.error('Get utilization error', { error: error instanceof Error ? error.message : error });
     if (error instanceof Error && error.message === 'Insurance policy not found') {
       return res.status(404).json({ error: error.message });
     }
@@ -602,7 +603,7 @@ router.post('/utilization/:patientInsuranceId/update', async (req: any, res: Res
       coverage,
     });
   } catch (error) {
-    console.error('Update utilization error:', error);
+    logger.error('Update utilization error', { error: error instanceof Error ? error.message : error });
     if (error instanceof Error && error.message === 'Insurance policy not found') {
       return res.status(404).json({ error: error.message });
     }
@@ -634,7 +635,7 @@ router.get('/eligibility-history/:patientInsuranceId', async (req: any, res: Res
 
     res.json(history);
   } catch (error) {
-    console.error('Get eligibility history error:', error);
+    logger.error('Get eligibility history error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({
       error: 'Internal server error',
       message: error instanceof Error ? error.message : 'Unknown error',

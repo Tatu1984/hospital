@@ -7,6 +7,7 @@
 import { Router, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { authenticateToken, AuthenticatedRequest } from '../middleware';
+import { logger } from '../utils/logger';
 import {
   executeReport,
   scheduleReport,
@@ -107,7 +108,7 @@ router.get('/templates', authenticateToken, async (req: AuthenticatedRequest, re
       total: templates.length
     });
   } catch (error) {
-    console.error('List templates error:', error);
+    logger.error('List templates error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -131,7 +132,7 @@ router.get('/templates/:id', authenticateToken, async (req: AuthenticatedRequest
 
     res.json(template);
   } catch (error) {
-    console.error('Get template error:', error);
+    logger.error('Get template error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -172,7 +173,7 @@ router.post('/templates', authenticateToken, async (req: AuthenticatedRequest, r
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'Validation error', details: error.errors });
     }
-    console.error('Create template error:', error);
+    logger.error('Create template error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -210,7 +211,7 @@ router.put('/templates/:id', authenticateToken, async (req: AuthenticatedRequest
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'Validation error', details: error.errors });
     }
-    console.error('Update template error:', error);
+    logger.error('Update template error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -243,7 +244,7 @@ router.delete('/templates/:id', authenticateToken, async (req: AuthenticatedRequ
 
     res.json({ message: 'Template deactivated successfully' });
   } catch (error) {
-    console.error('Delete template error:', error);
+    logger.error('Delete template error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -291,7 +292,7 @@ router.post('/generate', authenticateToken, async (req: AuthenticatedRequest, re
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'Validation error', details: error.errors });
     }
-    console.error('Generate report error:', error);
+    logger.error('Generate report error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({ error: 'Failed to generate report', details: error instanceof Error ? error.message : 'Unknown error' });
   }
 });
@@ -338,7 +339,7 @@ router.get('/generated', authenticateToken, async (req: AuthenticatedRequest, re
       offset: parseInt(offset as string)
     });
   } catch (error) {
-    console.error('List generated reports error:', error);
+    logger.error('List generated reports error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -389,7 +390,7 @@ router.get('/generated/:id/download', authenticateToken, async (req: Authenticat
     const fileStream = createReadStream(report.filePath);
     fileStream.pipe(res);
   } catch (error) {
-    console.error('Download report error:', error);
+    logger.error('Download report error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -436,7 +437,7 @@ router.post('/schedule', authenticateToken, async (req: AuthenticatedRequest, re
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'Validation error', details: error.errors });
     }
-    console.error('Create schedule error:', error);
+    logger.error('Create schedule error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -480,7 +481,7 @@ router.get('/schedules', authenticateToken, async (req: AuthenticatedRequest, re
 
     res.json({ schedules: filteredSchedules });
   } catch (error) {
-    console.error('List schedules error:', error);
+    logger.error('List schedules error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -522,7 +523,7 @@ router.put('/schedules/:id', authenticateToken, async (req: AuthenticatedRequest
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'Validation error', details: error.errors });
     }
-    console.error('Update schedule error:', error);
+    logger.error('Update schedule error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -541,7 +542,7 @@ router.delete('/schedules/:id', authenticateToken, async (req: AuthenticatedRequ
 
     res.json({ message: 'Schedule deleted successfully' });
   } catch (error) {
-    console.error('Delete schedule error:', error);
+    logger.error('Delete schedule error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -580,7 +581,7 @@ router.post('/system/seed', authenticateToken, async (req: AuthenticatedRequest,
       total: systemTemplates.length
     });
   } catch (error) {
-    console.error('Seed templates error:', error);
+    logger.error('Seed templates error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -598,7 +599,7 @@ router.post('/cleanup', authenticateToken, async (req: AuthenticatedRequest, res
       deletedReports: deletedCount
     });
   } catch (error) {
-    console.error('Cleanup error:', error);
+    logger.error('Cleanup error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({ error: 'Internal server error' });
   }
 });
