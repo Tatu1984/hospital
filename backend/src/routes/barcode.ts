@@ -7,6 +7,7 @@
 
 import { Router, Response } from 'express';
 import { prisma } from '../lib/db';
+import { logger } from '../utils/logger';
 import {
   barcodeService,
   BarcodeType,
@@ -68,7 +69,7 @@ router.post('/generate', async (req: any, res: Response) => {
       },
     });
   } catch (error) {
-    console.error('Generate barcode error:', error);
+    logger.error('Generate barcode error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({
       error: 'Failed to generate barcode',
       details: error instanceof Error ? error.message : 'Unknown error',
@@ -131,7 +132,7 @@ router.post('/bulk-generate', async (req: any, res: Response) => {
       },
     });
   } catch (error) {
-    console.error('Bulk generate barcodes error:', error);
+    logger.error('Bulk generate barcodes error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({
       error: 'Failed to bulk generate barcodes',
       details: error instanceof Error ? error.message : 'Unknown error',
@@ -183,7 +184,7 @@ router.get('/lookup/:code', async (req: any, res: Response) => {
       barcode: result.barcode,
     });
   } catch (error) {
-    console.error('Barcode lookup error:', error);
+    logger.error('Barcode lookup error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({
       error: 'Failed to lookup barcode',
       details: error instanceof Error ? error.message : 'Unknown error',
@@ -244,7 +245,7 @@ router.post('/scan', async (req: any, res: Response) => {
       lookupResult,
     });
   } catch (error) {
-    console.error('Record scan error:', error);
+    logger.error('Record scan error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({
       error: 'Failed to record scan',
       details: error instanceof Error ? error.message : 'Unknown error',
@@ -285,7 +286,7 @@ router.get('/scan-history', async (req: any, res: Response) => {
       count: scans.length,
     });
   } catch (error) {
-    console.error('Get scan history error:', error);
+    logger.error('Get scan history error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({
       error: 'Failed to fetch scan history',
       details: error instanceof Error ? error.message : 'Unknown error',
@@ -315,7 +316,7 @@ router.get('/:id/label', async (req: any, res: Response) => {
 
     res.json(labelData);
   } catch (error) {
-    console.error('Get barcode label error:', error);
+    logger.error('Get barcode label error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({
       error: 'Failed to generate label data',
       details: error instanceof Error ? error.message : 'Unknown error',
@@ -358,7 +359,7 @@ router.get('/entity/:entityType/:entityId', async (req: any, res: Response) => {
       count: barcodes.length,
     });
   } catch (error) {
-    console.error('Get entity barcodes error:', error);
+    logger.error('Get entity barcodes error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({
       error: 'Failed to fetch barcodes',
       details: error instanceof Error ? error.message : 'Unknown error',
@@ -385,7 +386,7 @@ router.put('/:id/deactivate', async (req: any, res: Response) => {
       },
     });
   } catch (error) {
-    console.error('Deactivate barcode error:', error);
+    logger.error('Deactivate barcode error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({
       error: 'Failed to deactivate barcode',
       details: error instanceof Error ? error.message : 'Unknown error',
@@ -412,7 +413,7 @@ router.put('/:id/reactivate', async (req: any, res: Response) => {
       },
     });
   } catch (error) {
-    console.error('Reactivate barcode error:', error);
+    logger.error('Reactivate barcode error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({
       error: 'Failed to reactivate barcode',
       details: error instanceof Error ? error.message : 'Unknown error',
@@ -436,7 +437,7 @@ router.post('/validate', async (req: any, res: Response) => {
 
     res.json(validation);
   } catch (error) {
-    console.error('Validate barcode error:', error);
+    logger.error('Validate barcode error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({
       error: 'Failed to validate barcode',
       details: error instanceof Error ? error.message : 'Unknown error',

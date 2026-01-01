@@ -7,6 +7,7 @@
 
 import { prisma } from '../lib/db';
 import { Prisma } from '@prisma/client';
+import { logger } from '../utils/logger';
 
 export type BedStatus = 'vacant' | 'occupied' | 'reserved' | 'maintenance' | 'dirty';
 
@@ -215,7 +216,112 @@ export async function checkBedAvailability(
     };
 
   } catch (error) {
-    console.error('Error checking bed availability:', error);
+    logger.error('Error checking bed availability:', error);
+    throw error;
+  }
+}
+
+/**
+ * Batch check availability for multiple beds (optimized to avoid N+1 queries)
+ * @param bedIds - Array of bed IDs to check
+ * @param fromDate - Start date for availability check
+ * @param toDate - Optional end date for reservation
+ * @returns Map of bedId -> availability status
+ */
+export async function checkBedAvailabilityBatch(
+  bedIds: string[],
+  fromDate: Date,
+  toDate?: Date
+): Promise<Map<string, { isAvailable: boolean; reason?: string }>> {
+  const results = new Map<string, { isAvailable: boolean; reason?: string }>();
+
+  if (bedIds.length === 0) {
+    return results;
+  }
+
+  try {
+    // Single query to get all beds with their active admissions
+    const beds = await prisma.bed.findMany({
+      where: {
+        id: { in: bedIds }
+      },
+      include: {
+        admissions: {
+          where: {
+            status: { in: ['active', 'admitted'] },
+            dischargeDate: null
+          },
+          select: {
+            id: true,
+            patient: { select: { name: true, mrn: true } }
+          },
+          take: 1
+        }
+      }
+    });
+
+    // Create a map for quick lookup
+    const bedMap = new Map(beds.map(b => [b.id, b]));
+
+    // Get overlapping reservations for all beds in a single query (if date range provided)
+    let reservedBedIds = new Set<string>();
+    if (toDate) {
+      const overlappingReservations = await prisma.bedReservation.findMany({
+        where: {
+          bedId: { in: bedIds },
+          status: 'active',
+          reservedFrom: { lte: toDate },
+          reservedUntil: { gte: fromDate }
+        },
+        select: { bedId: true }
+      });
+      reservedBedIds = new Set(overlappingReservations.map(r => r.bedId));
+    }
+
+    // Process each bed
+    for (const bedId of bedIds) {
+      const bed = bedMap.get(bedId);
+
+      if (!bed) {
+        results.set(bedId, { isAvailable: false, reason: 'Bed not found' });
+        continue;
+      }
+
+      // Check if occupied
+      if (bed.admissions && bed.admissions.length > 0) {
+        const admission = bed.admissions[0];
+        results.set(bedId, {
+          isAvailable: false,
+          reason: `Occupied by ${admission.patient.name} (${admission.patient.mrn})`
+        });
+        continue;
+      }
+
+      // Check if reserved
+      if (reservedBedIds.has(bedId)) {
+        results.set(bedId, {
+          isAvailable: false,
+          reason: 'Reserved for another patient'
+        });
+        continue;
+      }
+
+      // Check maintenance status
+      if (bed.status === 'maintenance' || bed.status === 'dirty') {
+        results.set(bedId, {
+          isAvailable: false,
+          reason: `Bed is ${bed.status}`
+        });
+        continue;
+      }
+
+      // Available!
+      results.set(bedId, { isAvailable: true });
+    }
+
+    return results;
+  } catch (error) {
+    logger.error('Error in batch bed availability check:', error);
     throw error;
   }
 }
@@ -269,7 +375,7 @@ export async function findAvailableBeds(
     return results.filter((bed): bed is NonNullable<typeof bed> => bed !== null) as AvailableBed[];
 
   } catch (error) {
-    console.error('Error finding available beds:', error);
+    logger.error('Error finding available beds', { error: error instanceof Error ? error.message : error });
     throw error;
   }
 }
@@ -352,7 +458,7 @@ export async function detectConflicts(
     };
 
   } catch (error) {
-    console.error('Error detecting bed conflicts:', error);
+    logger.error('Error detecting bed conflicts', { error: error instanceof Error ? error.message : error });
     throw error;
   }
 }
@@ -408,7 +514,7 @@ export async function getBedHistory(bedId: string, limit: number = 50) {
     }));
 
   } catch (error) {
-    console.error('Error fetching bed history:', error);
+    logger.error('Error fetching bed history', { error: error instanceof Error ? error.message : error });
     throw error;
   }
 }
@@ -474,7 +580,7 @@ export async function reserveBed(
     return reservation;
 
   } catch (error) {
-    console.error('Error reserving bed:', error);
+    logger.error('Error reserving bed', { error: error instanceof Error ? error.message : error });
     throw error;
   }
 }
@@ -520,7 +626,7 @@ export async function cancelReservation(reservationId: string) {
     return reservation;
 
   } catch (error) {
-    console.error('Error cancelling reservation:', error);
+    logger.error('Error cancelling reservation', { error: error instanceof Error ? error.message : error });
     throw error;
   }
 }
@@ -547,7 +653,7 @@ export async function updateBedStatus(bedId: string, status: BedStatus) {
     return bed;
 
   } catch (error) {
-    console.error('Error updating bed status:', error);
+    logger.error('Error updating bed status', { error: error instanceof Error ? error.message : error });
     throw error;
   }
 }
@@ -597,7 +703,7 @@ export async function transferBed(
     return admission;
 
   } catch (error) {
-    console.error('Error transferring bed:', error);
+    logger.error('Error transferring bed', { error: error instanceof Error ? error.message : error });
     throw error;
   }
 }
