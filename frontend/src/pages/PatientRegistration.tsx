@@ -118,7 +118,15 @@ export default function PatientRegistration() {
       });
     } catch (error: any) {
       console.error('Error creating patient:', error);
-      const errorMessage = error?.response?.data?.error || error?.response?.data?.message || error?.message || 'Unknown error';
+      const data = error?.response?.data;
+      let errorMessage = data?.message || data?.error || error?.message || 'Unknown error';
+
+      // Show validation details if available
+      if (data?.details && Array.isArray(data.details)) {
+        const fieldErrors = data.details.map((d: any) => `${d.field}: ${d.message}`).join('\n');
+        errorMessage += '\n\nDetails:\n' + fieldErrors;
+      }
+
       alert(`Failed to create patient: ${errorMessage}`);
     } finally {
       setLoading(false);
