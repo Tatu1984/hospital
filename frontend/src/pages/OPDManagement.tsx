@@ -10,11 +10,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
-  UserPlus, Search, Receipt, CreditCard, FileText, Calendar,
-  DollarSign, RefreshCw, Printer, Save, X, Clock, User,
-  ChevronLeft, ChevronRight, Camera, Upload, Stethoscope
+  Search, Calendar, RefreshCw, Printer, Save, X, Clock, User,
+  ChevronLeft, ChevronRight, Camera, Upload
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
 
 // Interfaces
@@ -150,7 +148,6 @@ const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export default function OPDManagement() {
-  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('registration');
   const [loading, setLoading] = useState(false);
 
@@ -239,6 +236,15 @@ export default function OPDManagement() {
     fetchDepartments();
     fetchDoctors();
     fetchServices();
+
+    // Listen for tab change events from sidebar
+    const handleTabChange = (e: CustomEvent) => {
+      setActiveTab(e.detail);
+    };
+    window.addEventListener('setOpdTab', handleTabChange as EventListener);
+    return () => {
+      window.removeEventListener('setOpdTab', handleTabChange as EventListener);
+    };
   }, []);
 
   const fetchDepartments = async () => {
@@ -566,52 +572,9 @@ export default function OPDManagement() {
         </div>
       </div>
 
-      <div className="flex gap-6">
-        {/* Sidebar Menu */}
-        <div className="w-64 shrink-0">
-          <Card>
-            <CardHeader className="bg-slate-700 text-white py-3">
-              <CardTitle className="text-sm">OUTPATIENT MANAGEMENT</CardTitle>
-            </CardHeader>
-            <CardContent className="p-0">
-              <nav className="flex flex-col">
-                {/* OPD Consultation - Link to separate page */}
-                <button
-                  onClick={() => navigate('/opd-consultation')}
-                  className="flex items-center gap-2 px-4 py-3 text-left text-sm border-b hover:bg-slate-50 text-slate-700 bg-blue-50"
-                >
-                  <Stethoscope className="w-4 h-4" />
-                  OPD Consultation
-                </button>
-
-                {[
-                  { id: 'registration', label: 'Patient Registration', icon: UserPlus },
-                  { id: 'assign-doctor', label: 'Assign Doctor', icon: Calendar },
-                  { id: 'search', label: 'Patient Search', icon: Search },
-                  { id: 'billing', label: 'OPD Billing', icon: Receipt },
-                  { id: 'refund', label: 'Refund', icon: CreditCard },
-                  { id: 'tariff', label: 'Hospital Tariff', icon: FileText },
-                  { id: 'collection', label: 'Daily Collection Report', icon: DollarSign }
-                ].map(item => (
-                  <button
-                    key={item.id}
-                    onClick={() => setActiveTab(item.id)}
-                    className={`flex items-center gap-2 px-4 py-3 text-left text-sm border-b hover:bg-slate-50 ${
-                      activeTab === item.id ? 'bg-slate-100 font-medium text-blue-600' : 'text-slate-700'
-                    }`}
-                  >
-                    <item.icon className="w-4 h-4" />
-                    {item.label}
-                  </button>
-                ))}
-              </nav>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Main Content */}
-        <div className="flex-1">
-          {/* Patient Registration Tab */}
+      {/* Main Content */}
+      <div>
+        {/* Patient Registration Tab */}
           {activeTab === 'registration' && (
             <Card>
               <CardHeader className="bg-slate-500 text-white py-3">
@@ -1767,7 +1730,6 @@ export default function OPDManagement() {
               </CardContent>
             </Card>
           )}
-        </div>
       </div>
 
       {/* Payment Details Dialog */}

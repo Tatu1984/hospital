@@ -39,14 +39,41 @@ import {
   ClipboardList,
   Utensils,
   Wrench,
-  Star
+  Star,
+  ChevronDown,
+  UserPlus,
+  Search,
+  CreditCard,
+  FileText,
+  DollarSign
 } from 'lucide-react';
 
 const MainLayout = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [expandedMenus, setExpandedMenus] = useState<string[]>(['opd']); // OPD expanded by default
   const { user, logout, hasAccess } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+
+  const toggleMenu = (menuId: string) => {
+    setExpandedMenus(prev =>
+      prev.includes(menuId)
+        ? prev.filter(id => id !== menuId)
+        : [...prev, menuId]
+    );
+  };
+
+  // OPD Submenu items
+  const opdSubItems = [
+    { path: '/opd-consultation', icon: Stethoscope, label: 'OPD Consultation' },
+    { path: '/opd?tab=registration', icon: UserPlus, label: 'Patient Registration' },
+    { path: '/opd?tab=assign-doctor', icon: Calendar, label: 'Assign Doctor' },
+    { path: '/opd?tab=search', icon: Search, label: 'Patient Search' },
+    { path: '/opd?tab=billing', icon: Receipt, label: 'OPD Billing' },
+    { path: '/opd?tab=refund', icon: CreditCard, label: 'Refund' },
+    { path: '/opd?tab=tariff', icon: FileText, label: 'Hospital Tariff' },
+    { path: '/opd?tab=collection', icon: DollarSign, label: 'Daily Collection Report' },
+  ];
 
   const menuGroups = [
     {
@@ -60,7 +87,7 @@ const MainLayout = () => {
     {
       title: 'Clinical',
       items: [
-        { path: '/opd', icon: Stethoscope, label: 'OPD' },
+        { path: '/opd', icon: Stethoscope, label: 'OPD', id: 'opd', hasSubmenu: true },
         { path: '/inpatient', icon: Bed, label: 'IPD / Ward' },
         { path: '/emergency', icon: AlertCircle, label: 'Emergency' },
         { path: '/icu', icon: Heart, label: 'ICU' },
@@ -164,9 +191,63 @@ const MainLayout = () => {
                       {group.title}
                     </h3>
                     <div className="space-y-1">
-                      {accessibleItems.map((item) => {
+                      {accessibleItems.map((item: any) => {
                         const Icon = item.icon;
-                        const isActive = location.pathname === item.path;
+                        const isActive = location.pathname === item.path || location.pathname.startsWith(item.path + '?');
+                        const isExpanded = item.hasSubmenu && expandedMenus.includes(item.id);
+                        const isOpdActive = item.id === 'opd' && (location.pathname === '/opd' || location.pathname === '/opd-consultation' || location.search.includes('tab='));
+
+                        if (item.hasSubmenu) {
+                          return (
+                            <div key={item.path}>
+                              <button
+                                onClick={() => toggleMenu(item.id)}
+                                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 ${
+                                  isOpdActive
+                                    ? 'bg-blue-600 text-white shadow-md'
+                                    : 'text-slate-700 hover:bg-slate-100 active:bg-slate-200'
+                                }`}
+                              >
+                                <Icon className="w-5 h-5 flex-shrink-0" />
+                                <span className="text-sm font-medium flex-1 text-left">{item.label}</span>
+                                <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                              </button>
+                              {isExpanded && (
+                                <div className="ml-4 mt-1 space-y-1 border-l-2 border-slate-200 pl-2">
+                                  {opdSubItems.map((subItem) => {
+                                    const SubIcon = subItem.icon;
+                                    const isSubActive = location.pathname + location.search === subItem.path ||
+                                      (subItem.path === '/opd-consultation' && location.pathname === '/opd-consultation');
+                                    return (
+                                      <button
+                                        key={subItem.path}
+                                        onClick={() => {
+                                          if (subItem.path.includes('?tab=')) {
+                                            const tab = subItem.path.split('tab=')[1];
+                                            navigate('/opd');
+                                            // Set tab via URL or state
+                                            window.dispatchEvent(new CustomEvent('setOpdTab', { detail: tab }));
+                                          } else {
+                                            navigate(subItem.path);
+                                          }
+                                        }}
+                                        className={`w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-all duration-200 ${
+                                          isSubActive
+                                            ? 'bg-blue-100 text-blue-700 font-medium'
+                                            : 'text-slate-600 hover:bg-slate-100'
+                                        }`}
+                                      >
+                                        <SubIcon className="w-4 h-4 flex-shrink-0" />
+                                        <span className="flex-1 text-left">{subItem.label}</span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        }
+
                         return (
                           <button
                             key={item.path}
