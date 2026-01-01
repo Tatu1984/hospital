@@ -2264,13 +2264,13 @@ app.get('/api/reports/collection', authenticateToken, async (req: any, res: Resp
 });
 
 // ============================================================================
-// DOCTOR MANAGEMENT
+// DOCTOR MANAGEMENT (Comprehensive)
 // ============================================================================
 
-// Get doctors (extended endpoint with more details)
+// Get all doctors with qualifications and licenses
 app.get('/api/doctors-management', authenticateToken, async (req: any, res: Response) => {
   try {
-    const { department, specialty, search, active } = req.query;
+    const { department, specialty, search, active, includeDetails } = req.query;
 
     const where: any = {
       tenantId: req.user.tenantId,
@@ -2284,22 +2284,68 @@ app.get('/api/doctors-management', authenticateToken, async (req: any, res: Resp
         { name: { contains: search, mode: 'insensitive' } },
         { email: { contains: search, mode: 'insensitive' } },
         { employeeId: { contains: search, mode: 'insensitive' } },
+        { specialty: { contains: search, mode: 'insensitive' } },
       ];
     }
 
     const doctors = await prisma.doctor.findMany({
       where,
+      include: includeDetails === 'true' ? {
+        qualifications: {
+          orderBy: [{ isPrimary: 'desc' }, { yearOfPassing: 'desc' }],
+        },
+        licenses: {
+          orderBy: { issueDate: 'desc' },
+        },
+      } : undefined,
       orderBy: { name: 'asc' },
     });
 
-    res.json(doctors);
+    // Add computed qualification string for display
+    const doctorsWithDisplayInfo = doctors.map((doc: any) => ({
+      ...doc,
+      qualificationDisplay: doc.qualifications
+        ? doc.qualifications.map((q: any) => q.degree).join(', ')
+        : '',
+      primaryLicense: doc.licenses?.find((l: any) => l.licenseType === 'medical_council' && l.status === 'active'),
+    }));
+
+    res.json(doctorsWithDisplayInfo);
   } catch (error) {
     logger.error('Get doctors management error:', error);
     res.status(500).json({ error: 'Failed to fetch doctors' });
   }
 });
 
-// Create doctor
+// Get single doctor with full details
+app.get('/api/doctors-management/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const doctor = await prisma.doctor.findUnique({
+      where: { id },
+      include: {
+        qualifications: {
+          orderBy: [{ isPrimary: 'desc' }, { yearOfPassing: 'desc' }],
+        },
+        licenses: {
+          orderBy: { issueDate: 'desc' },
+        },
+      },
+    });
+
+    if (!doctor) {
+      return res.status(404).json({ error: 'Doctor not found' });
+    }
+
+    res.json(doctor);
+  } catch (error) {
+    logger.error('Get doctor details error:', error);
+    res.status(500).json({ error: 'Failed to fetch doctor details' });
+  }
+});
+
+// Create doctor with qualifications and licenses
 app.post('/api/doctors-management', authenticateToken, async (req: any, res: Response) => {
   try {
     const {
@@ -2309,12 +2355,26 @@ app.post('/api/doctors-management', authenticateToken, async (req: any, res: Res
       phone,
       specialty,
       department,
-      qualification,
-      registrationNo,
+      designation,
+      gender,
+      dateOfBirth,
+      dateOfJoining,
+      address,
+      city,
+      state,
+      country,
+      pinCode,
+      experience,
       consultationFee,
+      followUpFee,
+      emergencyFee,
       schedule,
       availableSlots,
+      slotDuration,
       bio,
+      languages,
+      qualifications,
+      licenses,
     } = req.body;
 
     if (!employeeId || !name || !specialty || !department) {
@@ -2323,6 +2383,7 @@ app.post('/api/doctors-management', authenticateToken, async (req: any, res: Res
       });
     }
 
+    // Create doctor with nested qualifications and licenses
     const doctor = await prisma.doctor.create({
       data: {
         tenantId: req.user.tenantId,
@@ -2333,12 +2394,55 @@ app.post('/api/doctors-management', authenticateToken, async (req: any, res: Res
         phone,
         specialty,
         department,
-        qualification,
-        registrationNo,
+        designation,
+        gender,
+        dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
+        dateOfJoining: dateOfJoining ? new Date(dateOfJoining) : null,
+        address,
+        city,
+        state,
+        country,
+        pinCode,
+        experience: experience ? parseInt(experience) : null,
         consultationFee: consultationFee ? parseFloat(consultationFee) : null,
+        followUpFee: followUpFee ? parseFloat(followUpFee) : null,
+        emergencyFee: emergencyFee ? parseFloat(emergencyFee) : null,
         schedule: schedule || null,
         availableSlots: availableSlots || 20,
+        slotDuration: slotDuration || 15,
         bio,
+        languages: languages || [],
+        qualifications: qualifications?.length ? {
+          create: qualifications.map((q: any, index: number) => ({
+            degree: q.degree,
+            specialization: q.specialization,
+            institution: q.institution,
+            university: q.university,
+            yearOfPassing: parseInt(q.yearOfPassing),
+            country: q.country || 'India',
+            certificateNo: q.certificateNo,
+            certificateUrl: q.certificateUrl,
+            isPrimary: index === 0,
+          })),
+        } : undefined,
+        licenses: licenses?.length ? {
+          create: licenses.map((l: any) => ({
+            licenseType: l.licenseType,
+            licenseNumber: l.licenseNumber,
+            issuingAuthority: l.issuingAuthority,
+            issuingState: l.issuingState,
+            issueDate: new Date(l.issueDate),
+            expiryDate: l.expiryDate ? new Date(l.expiryDate) : null,
+            renewalDate: l.renewalDate ? new Date(l.renewalDate) : null,
+            status: l.status || 'active',
+            licenseUrl: l.licenseUrl,
+            remarks: l.remarks,
+          })),
+        } : undefined,
+      },
+      include: {
+        qualifications: true,
+        licenses: true,
       },
     });
 
@@ -2346,9 +2450,10 @@ app.post('/api/doctors-management', authenticateToken, async (req: any, res: Res
   } catch (error: any) {
     logger.error('Create doctor error:', error);
     if (error.code === 'P2002') {
-      return res.status(409).json({ error: 'Doctor with this employee ID already exists' });
+      const field = error.meta?.target?.[0] || 'field';
+      return res.status(409).json({ error: `Doctor with this ${field} already exists` });
     }
-    res.status(500).json({ error: 'Failed to create doctor' });
+    res.status(500).json({ error: 'Failed to create doctor', details: error.message });
   }
 });
 
@@ -2362,13 +2467,26 @@ app.put('/api/doctors-management/:id', authenticateToken, async (req: any, res: 
       phone,
       specialty,
       department,
-      qualification,
-      registrationNo,
+      designation,
+      gender,
+      dateOfBirth,
+      dateOfJoining,
+      address,
+      city,
+      state,
+      country,
+      pinCode,
+      experience,
       consultationFee,
+      followUpFee,
+      emergencyFee,
       schedule,
       availableSlots,
+      slotDuration,
       bio,
+      languages,
       isActive,
+      isOnLeave,
     } = req.body;
 
     const doctor = await prisma.doctor.update({
@@ -2379,13 +2497,30 @@ app.put('/api/doctors-management/:id', authenticateToken, async (req: any, res: 
         ...(phone !== undefined && { phone }),
         ...(specialty && { specialty }),
         ...(department && { department }),
-        ...(qualification !== undefined && { qualification }),
-        ...(registrationNo !== undefined && { registrationNo }),
+        ...(designation !== undefined && { designation }),
+        ...(gender !== undefined && { gender }),
+        ...(dateOfBirth !== undefined && { dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null }),
+        ...(dateOfJoining !== undefined && { dateOfJoining: dateOfJoining ? new Date(dateOfJoining) : null }),
+        ...(address !== undefined && { address }),
+        ...(city !== undefined && { city }),
+        ...(state !== undefined && { state }),
+        ...(country !== undefined && { country }),
+        ...(pinCode !== undefined && { pinCode }),
+        ...(experience !== undefined && { experience: experience ? parseInt(experience) : null }),
         ...(consultationFee !== undefined && { consultationFee: consultationFee ? parseFloat(consultationFee) : null }),
+        ...(followUpFee !== undefined && { followUpFee: followUpFee ? parseFloat(followUpFee) : null }),
+        ...(emergencyFee !== undefined && { emergencyFee: emergencyFee ? parseFloat(emergencyFee) : null }),
         ...(schedule !== undefined && { schedule }),
         ...(availableSlots !== undefined && { availableSlots }),
+        ...(slotDuration !== undefined && { slotDuration }),
         ...(bio !== undefined && { bio }),
+        ...(languages !== undefined && { languages }),
         ...(isActive !== undefined && { isActive }),
+        ...(isOnLeave !== undefined && { isOnLeave }),
+      },
+      include: {
+        qualifications: true,
+        licenses: true,
       },
     });
 
@@ -2411,6 +2546,359 @@ app.delete('/api/doctors-management/:id', authenticateToken, async (req: any, re
     logger.error('Delete doctor error:', error);
     res.status(500).json({ error: 'Failed to delete doctor' });
   }
+});
+
+// ============================================================================
+// DOCTOR QUALIFICATIONS
+// ============================================================================
+
+// Add qualification to doctor
+app.post('/api/doctors-management/:doctorId/qualifications', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { doctorId } = req.params;
+    const {
+      degree,
+      specialization,
+      institution,
+      university,
+      yearOfPassing,
+      country,
+      certificateNo,
+      certificateUrl,
+      isPrimary,
+    } = req.body;
+
+    if (!degree || !institution || !yearOfPassing) {
+      return res.status(400).json({
+        error: 'degree, institution and yearOfPassing are required'
+      });
+    }
+
+    // If setting as primary, unset other primaries
+    if (isPrimary) {
+      await prisma.doctorQualification.updateMany({
+        where: { doctorId },
+        data: { isPrimary: false },
+      });
+    }
+
+    const qualification = await prisma.doctorQualification.create({
+      data: {
+        doctorId,
+        degree,
+        specialization,
+        institution,
+        university,
+        yearOfPassing: parseInt(yearOfPassing),
+        country: country || 'India',
+        certificateNo,
+        certificateUrl,
+        isPrimary: isPrimary || false,
+      },
+    });
+
+    res.status(201).json(qualification);
+  } catch (error) {
+    logger.error('Add qualification error:', error);
+    res.status(500).json({ error: 'Failed to add qualification' });
+  }
+});
+
+// Update qualification
+app.put('/api/doctors-management/:doctorId/qualifications/:qualificationId', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { doctorId, qualificationId } = req.params;
+    const {
+      degree,
+      specialization,
+      institution,
+      university,
+      yearOfPassing,
+      country,
+      certificateNo,
+      certificateUrl,
+      isPrimary,
+      isVerified,
+    } = req.body;
+
+    // If setting as primary, unset other primaries
+    if (isPrimary) {
+      await prisma.doctorQualification.updateMany({
+        where: { doctorId, id: { not: qualificationId } },
+        data: { isPrimary: false },
+      });
+    }
+
+    const qualification = await prisma.doctorQualification.update({
+      where: { id: qualificationId },
+      data: {
+        ...(degree && { degree }),
+        ...(specialization !== undefined && { specialization }),
+        ...(institution && { institution }),
+        ...(university !== undefined && { university }),
+        ...(yearOfPassing && { yearOfPassing: parseInt(yearOfPassing) }),
+        ...(country && { country }),
+        ...(certificateNo !== undefined && { certificateNo }),
+        ...(certificateUrl !== undefined && { certificateUrl }),
+        ...(isPrimary !== undefined && { isPrimary }),
+        ...(isVerified !== undefined && {
+          isVerified,
+          verifiedBy: isVerified ? req.user.userId : null,
+          verifiedAt: isVerified ? new Date() : null,
+        }),
+      },
+    });
+
+    res.json(qualification);
+  } catch (error) {
+    logger.error('Update qualification error:', error);
+    res.status(500).json({ error: 'Failed to update qualification' });
+  }
+});
+
+// Delete qualification
+app.delete('/api/doctors-management/:doctorId/qualifications/:qualificationId', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { qualificationId } = req.params;
+
+    await prisma.doctorQualification.delete({
+      where: { id: qualificationId },
+    });
+
+    res.json({ message: 'Qualification deleted successfully' });
+  } catch (error) {
+    logger.error('Delete qualification error:', error);
+    res.status(500).json({ error: 'Failed to delete qualification' });
+  }
+});
+
+// ============================================================================
+// DOCTOR LICENSES
+// ============================================================================
+
+// Add license to doctor
+app.post('/api/doctors-management/:doctorId/licenses', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { doctorId } = req.params;
+    const {
+      licenseType,
+      licenseNumber,
+      issuingAuthority,
+      issuingState,
+      issueDate,
+      expiryDate,
+      renewalDate,
+      status,
+      licenseUrl,
+      remarks,
+    } = req.body;
+
+    if (!licenseType || !licenseNumber || !issuingAuthority || !issueDate) {
+      return res.status(400).json({
+        error: 'licenseType, licenseNumber, issuingAuthority and issueDate are required'
+      });
+    }
+
+    const license = await prisma.doctorLicense.create({
+      data: {
+        doctorId,
+        licenseType,
+        licenseNumber,
+        issuingAuthority,
+        issuingState,
+        issueDate: new Date(issueDate),
+        expiryDate: expiryDate ? new Date(expiryDate) : null,
+        renewalDate: renewalDate ? new Date(renewalDate) : null,
+        status: status || 'active',
+        licenseUrl,
+        remarks,
+      },
+    });
+
+    res.status(201).json(license);
+  } catch (error: any) {
+    logger.error('Add license error:', error);
+    if (error.code === 'P2002') {
+      return res.status(409).json({ error: 'License with this type and number already exists' });
+    }
+    res.status(500).json({ error: 'Failed to add license' });
+  }
+});
+
+// Update license
+app.put('/api/doctors-management/:doctorId/licenses/:licenseId', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { licenseId } = req.params;
+    const {
+      licenseNumber,
+      issuingAuthority,
+      issuingState,
+      issueDate,
+      expiryDate,
+      renewalDate,
+      status,
+      licenseUrl,
+      remarks,
+      isVerified,
+    } = req.body;
+
+    const license = await prisma.doctorLicense.update({
+      where: { id: licenseId },
+      data: {
+        ...(licenseNumber && { licenseNumber }),
+        ...(issuingAuthority && { issuingAuthority }),
+        ...(issuingState !== undefined && { issuingState }),
+        ...(issueDate && { issueDate: new Date(issueDate) }),
+        ...(expiryDate !== undefined && { expiryDate: expiryDate ? new Date(expiryDate) : null }),
+        ...(renewalDate !== undefined && { renewalDate: renewalDate ? new Date(renewalDate) : null }),
+        ...(status && { status }),
+        ...(licenseUrl !== undefined && { licenseUrl }),
+        ...(remarks !== undefined && { remarks }),
+        ...(isVerified !== undefined && {
+          isVerified,
+          verifiedBy: isVerified ? req.user.userId : null,
+          verifiedAt: isVerified ? new Date() : null,
+        }),
+      },
+    });
+
+    res.json(license);
+  } catch (error) {
+    logger.error('Update license error:', error);
+    res.status(500).json({ error: 'Failed to update license' });
+  }
+});
+
+// Delete license
+app.delete('/api/doctors-management/:doctorId/licenses/:licenseId', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { licenseId } = req.params;
+
+    await prisma.doctorLicense.delete({
+      where: { id: licenseId },
+    });
+
+    res.json({ message: 'License deleted successfully' });
+  } catch (error) {
+    logger.error('Delete license error:', error);
+    res.status(500).json({ error: 'Failed to delete license' });
+  }
+});
+
+// Get doctors with expiring licenses (for alerts)
+app.get('/api/doctors-management/alerts/expiring-licenses', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { daysAhead = 30 } = req.query;
+
+    const futureDate = new Date();
+    futureDate.setDate(futureDate.getDate() + parseInt(daysAhead as string));
+
+    const expiringLicenses = await prisma.doctorLicense.findMany({
+      where: {
+        doctor: {
+          tenantId: req.user.tenantId,
+          isActive: true,
+        },
+        status: 'active',
+        expiryDate: {
+          lte: futureDate,
+          gte: new Date(),
+        },
+      },
+      include: {
+        doctor: {
+          select: {
+            id: true,
+            name: true,
+            employeeId: true,
+            department: true,
+          },
+        },
+      },
+      orderBy: { expiryDate: 'asc' },
+    });
+
+    res.json(expiringLicenses);
+  } catch (error) {
+    logger.error('Get expiring licenses error:', error);
+    res.status(500).json({ error: 'Failed to fetch expiring licenses' });
+  }
+});
+
+// Get reference data for doctor management
+app.get('/api/doctors-management/reference/degrees', authenticateToken, async (req: any, res: Response) => {
+  res.json({
+    degrees: [
+      { code: 'MBBS', name: 'Bachelor of Medicine, Bachelor of Surgery', category: 'undergraduate' },
+      { code: 'BDS', name: 'Bachelor of Dental Surgery', category: 'undergraduate' },
+      { code: 'BAMS', name: 'Bachelor of Ayurvedic Medicine and Surgery', category: 'undergraduate' },
+      { code: 'BHMS', name: 'Bachelor of Homeopathic Medicine and Surgery', category: 'undergraduate' },
+      { code: 'MD', name: 'Doctor of Medicine', category: 'postgraduate' },
+      { code: 'MS', name: 'Master of Surgery', category: 'postgraduate' },
+      { code: 'DNB', name: 'Diplomate of National Board', category: 'postgraduate' },
+      { code: 'DM', name: 'Doctorate in Medicine (Super Specialty)', category: 'super_specialty' },
+      { code: 'MCh', name: 'Master of Chirurgiae (Super Specialty)', category: 'super_specialty' },
+      { code: 'FRCS', name: 'Fellow of Royal College of Surgeons', category: 'fellowship' },
+      { code: 'MRCP', name: 'Member of Royal College of Physicians', category: 'fellowship' },
+      { code: 'FACS', name: 'Fellow of American College of Surgeons', category: 'fellowship' },
+      { code: 'PhD', name: 'Doctor of Philosophy', category: 'research' },
+    ],
+    licenseTypes: [
+      { code: 'medical_council', name: 'Medical Council Registration', authority: 'Medical Council of India / NMC' },
+      { code: 'state_council', name: 'State Medical Council Registration', authority: 'State Medical Council' },
+      { code: 'dental_council', name: 'Dental Council Registration', authority: 'Dental Council of India' },
+      { code: 'nursing_council', name: 'Nursing Council Registration', authority: 'Indian Nursing Council' },
+      { code: 'pharmacy_council', name: 'Pharmacy Council Registration', authority: 'Pharmacy Council of India' },
+      { code: 'specialty_board', name: 'Specialty Board Certification', authority: 'National Board of Examinations' },
+    ],
+    designations: [
+      'Junior Resident',
+      'Senior Resident',
+      'Registrar',
+      'Assistant Professor',
+      'Associate Professor',
+      'Professor',
+      'Junior Consultant',
+      'Consultant',
+      'Senior Consultant',
+      'Chief Consultant',
+      'Head of Department',
+      'Medical Director',
+      'Chief Medical Officer',
+    ],
+    specialties: [
+      'General Medicine',
+      'General Surgery',
+      'Pediatrics',
+      'Obstetrics & Gynecology',
+      'Orthopedics',
+      'Cardiology',
+      'Neurology',
+      'Nephrology',
+      'Gastroenterology',
+      'Pulmonology',
+      'Dermatology',
+      'Psychiatry',
+      'Ophthalmology',
+      'ENT',
+      'Radiology',
+      'Pathology',
+      'Anesthesiology',
+      'Emergency Medicine',
+      'Critical Care',
+      'Oncology',
+      'Urology',
+      'Plastic Surgery',
+      'Neurosurgery',
+      'Cardiac Surgery',
+      'Endocrinology',
+      'Rheumatology',
+      'Hematology',
+      'Infectious Diseases',
+      'Physical Medicine & Rehabilitation',
+      'Family Medicine',
+    ],
+  });
 });
 
 // ============================================================================

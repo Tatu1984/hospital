@@ -34,6 +34,7 @@ import IPDBilling from './pages/IPDBilling';
 import TPA from './pages/TPA';
 import MasterData from './pages/MasterData';
 import SystemControl from './pages/SystemControl';
+import DoctorManagement from './pages/DoctorManagement';
 
 // Import all remaining modules from AllModules
 import {
@@ -187,6 +188,7 @@ const AppRoutes = () => {
         <Route path="master-data" element={<RoleProtectedRoute path="master-data"><MasterData /></RoleProtectedRoute>} />
         <Route path="software-management" element={<RoleProtectedRoute path="software-management"><SoftwareManagement /></RoleProtectedRoute>} />
         <Route path="system-control" element={<RoleProtectedRoute path="system-control"><SystemControl /></RoleProtectedRoute>} />
+        <Route path="doctor-management" element={<RoleProtectedRoute path="doctor-management"><DoctorManagement /></RoleProtectedRoute>} />
       </Route>
     </Routes>
   );

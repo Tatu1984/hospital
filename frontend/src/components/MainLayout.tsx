@@ -133,6 +133,7 @@ const MainLayout = () => {
       items: [
         { path: '/mis-report', icon: BarChart3, label: 'Analytics' },
         { path: '/quality', icon: Star, label: 'Quality' },
+        { path: '/doctor-management', icon: UserCog, label: 'Doctor Management' },
         { path: '/master-data', icon: Settings, label: 'Master Data' },
         { path: '/system-control', icon: ShieldCheck, label: 'System Control' },
       ]

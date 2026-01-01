@@ -2262,20 +2262,88 @@ model Doctor {
   phone           String?
   specialty       String
   department      String
-  qualification   String?
-  registrationNo  String?  // Medical council registration
+  designation     String?  // Senior Consultant, HOD, Junior Consultant, etc.
+  gender          String?
+  dateOfBirth     DateTime?
+  dateOfJoining   DateTime?
+  address         String?
+  city            String?
+  state           String?
+  country         String?
+  pinCode         String?
+  experience      Int?     // Years of experience
   consultationFee Decimal? @db.Decimal(10, 2)
+  followUpFee     Decimal? @db.Decimal(10, 2)
+  emergencyFee    Decimal? @db.Decimal(10, 2)
   schedule        Json?    // {monday: {from: "09:00", to: "17:00"}, ...}
   availableSlots  Int      @default(20)
+  slotDuration    Int      @default(15) // minutes per slot
   photo           String?
+  signature       String?  // Digital signature image
   bio             String?
+  languages       String[] // Languages spoken
   isActive        Boolean  @default(true)
+  isOnLeave       Boolean  @default(false)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+
+  qualifications  DoctorQualification[]
+  licenses        DoctorLicense[]
 
   @@index([tenantId, branchId])
   @@index([department])
   @@index([specialty])
   @@index([isActive])
   @@map("doctors")
+}
+
+model DoctorQualification {
+  id              String   @id @default(uuid())
+  doctorId        String
+  degree          String   // MBBS, MD, MS, DM, MCh, DNB, etc.
+  specialization  String?  // Cardiology, Orthopedics, etc.
+  institution     String   // University/College name
+  university      String?  // Awarding university
+  yearOfPassing   Int
+  country         String   @default("India")
+  certificateNo   String?
+  certificateUrl  String?  // Uploaded certificate
+  isVerified      Boolean  @default(false)
+  verifiedBy      String?
+  verifiedAt      DateTime?
+  isPrimary       Boolean  @default(false) // Primary qualification to display
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  doctor          Doctor   @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@index([doctorId])
+  @@index([degree])
+  @@map("doctor_qualifications")
+}
+
+model DoctorLicense {
+  id                String    @id @default(uuid())
+  doctorId          String
+  licenseType       String    // medical_council, state_council, specialty_board, etc.
+  licenseNumber     String
+  issuingAuthority  String    // Medical Council of India, State Medical Council, etc.
+  issuingState      String?   // State if applicable
+  issueDate         DateTime
+  expiryDate        DateTime?
+  renewalDate       DateTime?
+  status            String    @default("active") // active, expired, suspended, revoked
+  licenseUrl        String?   // Uploaded license document
+  isVerified        Boolean   @default(false)
+  verifiedBy        String?
+  verifiedAt        DateTime?
+  remarks           String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  doctor            Doctor    @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@unique([licenseType, licenseNumber])
+  @@index([doctorId])
+  @@index([status])
+  @@index([expiryDate])
+  @@map("doctor_licenses")
 }
