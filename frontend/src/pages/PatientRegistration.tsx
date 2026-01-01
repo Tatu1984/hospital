@@ -116,9 +116,10 @@ export default function PatientRegistration() {
         idProofNumber: '', insuranceProvider: '', insuranceNumber: '', allergies: '',
         chronicConditions: '', referralSourceId: ''
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error creating patient:', error);
-      alert('Failed to create patient. Please try again.');
+      const errorMessage = error?.response?.data?.error || error?.response?.data?.message || error?.message || 'Unknown error';
+      alert(`Failed to create patient: ${errorMessage}`);
     } finally {
       setLoading(false);
     }
