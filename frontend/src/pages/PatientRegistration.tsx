@@ -97,8 +97,8 @@ export default function PatientRegistration() {
       const payload = {
         name: `${formData.firstName} ${formData.lastName}`.trim(),
         dob: formData.dateOfBirth || null,
-        gender: formData.gender,
-        contact: formData.phone,
+        gender: formData.gender ? formData.gender.toUpperCase() : undefined,
+        contact: formData.phone || undefined,
         email: formData.email || null,
         address: formData.address || null,
         bloodGroup: formData.bloodGroup || null,
