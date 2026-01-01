@@ -96,14 +96,14 @@ export default function PatientRegistration() {
     try {
       const payload = {
         name: `${formData.firstName} ${formData.lastName}`.trim(),
-        dob: formData.dateOfBirth || null,
+        dob: formData.dateOfBirth || undefined,
         gender: formData.gender ? formData.gender.toUpperCase() : undefined,
         contact: formData.phone || undefined,
-        email: formData.email || null,
-        address: formData.address || null,
-        bloodGroup: formData.bloodGroup || null,
-        allergies: formData.allergies || null,
-        referralSourceId: formData.referralSourceId || null,
+        email: formData.email || undefined,
+        address: formData.address || undefined,
+        bloodGroup: formData.bloodGroup || undefined,
+        allergies: formData.allergies || undefined,
+        referralSourceId: formData.referralSourceId || undefined,
       };
 
       await api.post('/api/patients', payload);
