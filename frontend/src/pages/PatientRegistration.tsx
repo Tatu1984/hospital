@@ -86,6 +86,8 @@ export default function PatientRegistration() {
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
+    // Guard against autofill events with undefined/empty name
+    if (!name) return;
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
