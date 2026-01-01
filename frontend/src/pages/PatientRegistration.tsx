@@ -131,7 +131,8 @@ export default function PatientRegistration() {
 
   const handleEditPatient = (patient: Patient) => {
     setSelectedPatient(patient);
-    const [firstName, ...lastNameParts] = patient.name.split(' ');
+    const nameParts = (patient.name || '').split(' ');
+    const [firstName, ...lastNameParts] = nameParts;
     setFormData({
       mrn: patient.mrn,
       firstName: firstName || '',
@@ -185,7 +186,7 @@ export default function PatientRegistration() {
   };
 
   const handleCreateInvoice = (patient: Patient) => {
-    navigate(`/billing?patientId=${patient.id}&patientMRN=${patient.mrn}&patientName=${encodeURIComponent(patient.name)}`);
+    navigate(`/billing?patientId=${patient.id}&patientMRN=${patient.mrn || ''}&patientName=${encodeURIComponent(patient.name || '')}`);
   };
 
   const filteredPatients = patients.filter(patient =>
@@ -404,15 +405,15 @@ export default function PatientRegistration() {
             <TableBody>
               {filteredPatients.map((patient) => (
                 <TableRow key={patient.id}>
-                  <TableCell className="font-medium">{patient.mrn}</TableCell>
-                  <TableCell>{patient.name}</TableCell>
-                  <TableCell>{patient.age}Y / {patient.gender}</TableCell>
-                  <TableCell>{patient.phone}</TableCell>
-                  <TableCell>{patient.bloodGroup}</TableCell>
-                  <TableCell>{patient.registrationDate}</TableCell>
+                  <TableCell className="font-medium">{patient.mrn || '-'}</TableCell>
+                  <TableCell>{patient.name || '-'}</TableCell>
+                  <TableCell>{patient.age ?? '-'}Y / {patient.gender || '-'}</TableCell>
+                  <TableCell>{patient.phone || '-'}</TableCell>
+                  <TableCell>{patient.bloodGroup || '-'}</TableCell>
+                  <TableCell>{patient.registrationDate || '-'}</TableCell>
                   <TableCell>
                     <Badge variant={patient.status === 'Active' ? 'default' : 'secondary'}>
-                      {patient.status}
+                      {patient.status || 'Unknown'}
                     </Badge>
                   </TableCell>
                   <TableCell>
