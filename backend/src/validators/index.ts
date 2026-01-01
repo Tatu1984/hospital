@@ -21,13 +21,15 @@ export const searchSchema = z.object({
 }).merge(paginationSchema);
 
 // Auth validators
+// Note: loginSchema should NOT enforce password length - let authentication handle invalid passwords
+// Password length validation should only apply to new password creation/changes
 export const loginSchema = z.object({
   username: z.string().min(3, 'Username must be at least 3 characters').max(50),
-  password: z.string().min(8, 'Password must be at least 8 characters').max(100),
+  password: z.string().min(1, 'Password is required').max(100),
 });
 
 export const changePasswordSchema = z.object({
-  currentPassword: z.string().min(8),
+  currentPassword: z.string().min(1, 'Current password is required'),  // Don't enforce length for existing passwords
   newPassword: z
     .string()
     .min(8, 'Password must be at least 8 characters')
