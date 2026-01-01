@@ -258,11 +258,14 @@ model Bed {
   category     String           @default("general")
   status       String           @default("vacant")
   floor        String?
+  dailyRate    Decimal?         @db.Decimal(10, 2)
   admissions   Admission[]
   reservations BedReservation[]
   branch       Branch           @relation(fields: [branchId], references: [id])
+  ward         Ward?            @relation(fields: [wardId], references: [id])
 
   @@unique([branchId, bedNumber])
+  @@index([wardId])
   @@map("beds")
 }
 
@@ -604,13 +607,19 @@ model PackageMaster {
 
 model Ward {
   id           String  @id @default(uuid())
+  tenantId     String?
+  branchId     String?
   name         String
   type         String
   floor        String?
+  building     String?
   totalBeds    Int
   tariffPerDay Decimal @db.Decimal(10, 2)
   isActive     Boolean @default(true)
+  beds         Bed[]
 
+  @@index([tenantId])
+  @@index([branchId])
   @@map("wards")
 }
 

@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Bed, LogOut, Search } from 'lucide-react';
+import { Plus, Bed, LogOut, Search, Settings, Building2, Trash2, Edit } from 'lucide-react';
 import api from '../services/api';
 
 interface Admission {
@@ -25,16 +25,36 @@ interface Admission {
   admittingDoctor: string;
 }
 
+interface Ward {
+  id: string;
+  name: string;
+  type: string;
+  floor?: string;
+  building?: string;
+  totalBeds: number;
+  tariffPerDay: number;
+  isActive: boolean;
+  occupiedBeds?: number;
+  vacantBeds?: number;
+  actualTotalBeds?: number;
+}
+
 interface Bed {
   id: string;
   bedNumber: string;
-  ward: {
+  wardId?: string;
+  ward?: {
+    id: string;
     name: string;
-    building: string;
-    floor: string;
+    building?: string;
+    floor?: string;
+    tariffPerDay?: number;
   };
   status: string;
   bedType: string;
+  category: string;
+  dailyRate?: number;
+  floor?: string;
 }
 
 interface Patient {
@@ -49,12 +69,35 @@ interface Patient {
 export default function Inpatient() {
   const [admissions, setAdmissions] = useState<Admission[]>([]);
   const [beds, setBeds] = useState<Bed[]>([]);
+  const [wards, setWards] = useState<Ward[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [isAdmitDialogOpen, setIsAdmitDialogOpen] = useState(false);
   const [isDischargeDialogOpen, setIsDischargeDialogOpen] = useState(false);
   const [selectedAdmission, setSelectedAdmission] = useState<Admission | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Bed Management State
+  const [isBedDialogOpen, setIsBedDialogOpen] = useState(false);
+  const [isWardDialogOpen, setIsWardDialogOpen] = useState(false);
+  const [editingBed, setEditingBed] = useState<Bed | null>(null);
+  const [editingWard, setEditingWard] = useState<Ward | null>(null);
+  const [bedFormData, setBedFormData] = useState({
+    bedNumber: '',
+    wardId: '',
+    category: 'general',
+    status: 'vacant',
+    floor: '',
+    dailyRate: ''
+  });
+  const [wardFormData, setWardFormData] = useState({
+    name: '',
+    type: 'general',
+    floor: '',
+    building: '',
+    totalBeds: 0,
+    tariffPerDay: ''
+  });
 
   const [admitFormData, setAdmitFormData] = useState({
     patientId: '',
@@ -72,8 +115,18 @@ export default function Inpatient() {
   useEffect(() => {
     fetchAdmissions();
     fetchBeds();
+    fetchWards();
     fetchPatients();
   }, []);
+
+  const fetchWards = async () => {
+    try {
+      const response = await api.get('/api/wards');
+      setWards(response.data);
+    } catch (error) {
+      console.error('Error fetching wards:', error);
+    }
+  };
 
   const fetchAdmissions = async () => {
     try {
@@ -168,13 +221,148 @@ export default function Inpatient() {
     setIsDischargeDialogOpen(true);
   };
 
+  // Bed CRUD operations
+  const openBedDialog = (bed?: Bed) => {
+    if (bed) {
+      setEditingBed(bed);
+      setBedFormData({
+        bedNumber: bed.bedNumber,
+        wardId: bed.wardId || '',
+        category: bed.category || 'general',
+        status: bed.status || 'vacant',
+        floor: bed.floor || '',
+        dailyRate: bed.dailyRate?.toString() || ''
+      });
+    } else {
+      setEditingBed(null);
+      setBedFormData({
+        bedNumber: '',
+        wardId: '',
+        category: 'general',
+        status: 'vacant',
+        floor: '',
+        dailyRate: ''
+      });
+    }
+    setIsBedDialogOpen(true);
+  };
+
+  const handleSaveBed = async () => {
+    setLoading(true);
+    try {
+      const payload = {
+        bedNumber: bedFormData.bedNumber,
+        wardId: bedFormData.wardId || null,
+        category: bedFormData.category,
+        status: bedFormData.status,
+        floor: bedFormData.floor || null,
+        dailyRate: bedFormData.dailyRate ? parseFloat(bedFormData.dailyRate) : null
+      };
+
+      if (editingBed) {
+        await api.put(`/api/beds/${editingBed.id}`, payload);
+      } else {
+        await api.post('/api/beds', payload);
+      }
+
+      await fetchBeds();
+      setIsBedDialogOpen(false);
+      setEditingBed(null);
+    } catch (error: any) {
+      console.error('Error saving bed:', error);
+      alert(error.response?.data?.error || 'Failed to save bed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteBed = async (bedId: string) => {
+    if (!confirm('Are you sure you want to delete this bed?')) return;
+
+    try {
+      await api.delete(`/api/beds/${bedId}`);
+      await fetchBeds();
+    } catch (error: any) {
+      console.error('Error deleting bed:', error);
+      alert(error.response?.data?.error || 'Failed to delete bed');
+    }
+  };
+
+  // Ward CRUD operations
+  const openWardDialog = (ward?: Ward) => {
+    if (ward) {
+      setEditingWard(ward);
+      setWardFormData({
+        name: ward.name,
+        type: ward.type,
+        floor: ward.floor || '',
+        building: ward.building || '',
+        totalBeds: ward.totalBeds,
+        tariffPerDay: ward.tariffPerDay?.toString() || ''
+      });
+    } else {
+      setEditingWard(null);
+      setWardFormData({
+        name: '',
+        type: 'general',
+        floor: '',
+        building: '',
+        totalBeds: 0,
+        tariffPerDay: ''
+      });
+    }
+    setIsWardDialogOpen(true);
+  };
+
+  const handleSaveWard = async () => {
+    setLoading(true);
+    try {
+      const payload = {
+        name: wardFormData.name,
+        type: wardFormData.type,
+        floor: wardFormData.floor || null,
+        building: wardFormData.building || null,
+        totalBeds: wardFormData.totalBeds,
+        tariffPerDay: wardFormData.tariffPerDay ? parseFloat(wardFormData.tariffPerDay) : 0
+      };
+
+      if (editingWard) {
+        await api.put(`/api/wards/${editingWard.id}`, payload);
+      } else {
+        await api.post('/api/wards', payload);
+      }
+
+      await fetchWards();
+      await fetchBeds();
+      setIsWardDialogOpen(false);
+      setEditingWard(null);
+    } catch (error: any) {
+      console.error('Error saving ward:', error);
+      alert(error.response?.data?.error || 'Failed to save ward');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteWard = async (wardId: string) => {
+    if (!confirm('Are you sure you want to delete this ward? All beds must be reassigned first.')) return;
+
+    try {
+      await api.delete(`/api/wards/${wardId}`);
+      await fetchWards();
+    } catch (error: any) {
+      console.error('Error deleting ward:', error);
+      alert(error.response?.data?.error || 'Failed to delete ward');
+    }
+  };
+
   const filteredAdmissions = admissions.filter(adm =>
     adm.patientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
     adm.patientMRN.toLowerCase().includes(searchTerm.toLowerCase()) ||
     adm.ward.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const availableBeds = beds.filter(bed => bed.status === 'available');
+  const availableBeds = beds.filter(bed => bed.status === 'vacant' || bed.status === 'available');
   const occupiedBeds = beds.filter(bed => bed.status === 'occupied');
   const activeAdmissions = admissions.filter(adm => adm.status === 'active');
 
@@ -230,7 +418,7 @@ export default function Inpatient() {
                   <SelectContent>
                     {availableBeds.map((bed) => (
                       <SelectItem key={bed.id} value={bed.id}>
-                        {bed.ward.name} - {bed.bedNumber} ({bed.bedType})
+                        {bed.ward?.name || 'Unassigned'} - {bed.bedNumber} ({bed.bedType || bed.category})
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -463,6 +651,343 @@ export default function Inpatient() {
             </Button>
             <Button onClick={handleDischarge} disabled={loading || !dischargeFormData.dischargeSummary}>
               {loading ? 'Discharging...' : 'Confirm Discharge'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bed & Ward Management Card */}
+      <Card>
+        <CardHeader>
+          <div className="flex justify-between items-center">
+            <div className="flex items-center gap-2">
+              <Settings className="w-5 h-5" />
+              <CardTitle>Bed & Ward Management</CardTitle>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => openWardDialog()}>
+                <Building2 className="w-4 h-4 mr-2" />
+                Add Ward
+              </Button>
+              <Button onClick={() => openBedDialog()}>
+                <Plus className="w-4 h-4 mr-2" />
+                Add Bed
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <Tabs defaultValue="beds">
+            <TabsList>
+              <TabsTrigger value="beds">Beds ({beds.length})</TabsTrigger>
+              <TabsTrigger value="wards">Wards ({wards.length})</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="beds">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Bed Number</TableHead>
+                    <TableHead>Ward</TableHead>
+                    <TableHead>Category</TableHead>
+                    <TableHead>Floor</TableHead>
+                    <TableHead>Daily Rate</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {beds.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center py-8 text-slate-500">
+                        No beds configured. Add your first bed to get started.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    beds.map((bed) => (
+                      <TableRow key={bed.id}>
+                        <TableCell className="font-medium">{bed.bedNumber}</TableCell>
+                        <TableCell>{bed.ward?.name || 'Unassigned'}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{bed.category || bed.bedType}</Badge>
+                        </TableCell>
+                        <TableCell>{bed.floor || bed.ward?.floor || '-'}</TableCell>
+                        <TableCell>
+                          {bed.dailyRate ? `₹${bed.dailyRate}` : (bed.ward?.tariffPerDay ? `₹${bed.ward.tariffPerDay}` : '-')}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={bed.status === 'vacant' ? 'default' : bed.status === 'occupied' ? 'destructive' : 'secondary'}>
+                            {bed.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex gap-1">
+                            <Button size="sm" variant="ghost" onClick={() => openBedDialog(bed)}>
+                              <Edit className="w-4 h-4" />
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={() => handleDeleteBed(bed.id)} disabled={bed.status === 'occupied'}>
+                              <Trash2 className="w-4 h-4 text-red-500" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </TabsContent>
+
+            <TabsContent value="wards">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Ward Name</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Building</TableHead>
+                    <TableHead>Floor</TableHead>
+                    <TableHead>Beds (Occupied/Total)</TableHead>
+                    <TableHead>Tariff/Day</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {wards.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={8} className="text-center py-8 text-slate-500">
+                        No wards configured. Add your first ward to get started.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    wards.map((ward) => (
+                      <TableRow key={ward.id}>
+                        <TableCell className="font-medium">{ward.name}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{ward.type}</Badge>
+                        </TableCell>
+                        <TableCell>{ward.building || '-'}</TableCell>
+                        <TableCell>{ward.floor || '-'}</TableCell>
+                        <TableCell>
+                          <span className="text-orange-600">{ward.occupiedBeds || 0}</span>
+                          {' / '}
+                          <span className="text-green-600">{ward.actualTotalBeds || ward.totalBeds}</span>
+                        </TableCell>
+                        <TableCell>₹{ward.tariffPerDay}</TableCell>
+                        <TableCell>
+                          <Badge variant={ward.isActive ? 'default' : 'secondary'}>
+                            {ward.isActive ? 'Active' : 'Inactive'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex gap-1">
+                            <Button size="sm" variant="ghost" onClick={() => openWardDialog(ward)}>
+                              <Edit className="w-4 h-4" />
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={() => handleDeleteWard(ward.id)}>
+                              <Trash2 className="w-4 h-4 text-red-500" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </TabsContent>
+          </Tabs>
+        </CardContent>
+      </Card>
+
+      {/* Bed Dialog */}
+      <Dialog open={isBedDialogOpen} onOpenChange={setIsBedDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editingBed ? 'Edit Bed' : 'Add New Bed'}</DialogTitle>
+            <DialogDescription>
+              {editingBed ? 'Update bed details' : 'Add a new bed to the hospital'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="bedNumber">Bed Number *</Label>
+                <Input
+                  id="bedNumber"
+                  value={bedFormData.bedNumber}
+                  onChange={(e) => setBedFormData(prev => ({ ...prev, bedNumber: e.target.value }))}
+                  placeholder="e.g., B-101"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="wardId">Ward</Label>
+                <Select value={bedFormData.wardId} onValueChange={(value) => setBedFormData(prev => ({ ...prev, wardId: value }))}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select ward" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">No Ward</SelectItem>
+                    {wards.map((ward) => (
+                      <SelectItem key={ward.id} value={ward.id}>{ward.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="category">Category</Label>
+                <Select value={bedFormData.category} onValueChange={(value) => setBedFormData(prev => ({ ...prev, category: value }))}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="general">General</SelectItem>
+                    <SelectItem value="semi-private">Semi-Private</SelectItem>
+                    <SelectItem value="private">Private</SelectItem>
+                    <SelectItem value="deluxe">Deluxe</SelectItem>
+                    <SelectItem value="icu">ICU</SelectItem>
+                    <SelectItem value="nicu">NICU</SelectItem>
+                    <SelectItem value="isolation">Isolation</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="status">Status</Label>
+                <Select value={bedFormData.status} onValueChange={(value) => setBedFormData(prev => ({ ...prev, status: value }))}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="vacant">Vacant</SelectItem>
+                    <SelectItem value="occupied">Occupied</SelectItem>
+                    <SelectItem value="maintenance">Maintenance</SelectItem>
+                    <SelectItem value="reserved">Reserved</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="floor">Floor</Label>
+                <Input
+                  id="floor"
+                  value={bedFormData.floor}
+                  onChange={(e) => setBedFormData(prev => ({ ...prev, floor: e.target.value }))}
+                  placeholder="e.g., 2nd Floor"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="dailyRate">Daily Rate (₹)</Label>
+                <Input
+                  id="dailyRate"
+                  type="number"
+                  value={bedFormData.dailyRate}
+                  onChange={(e) => setBedFormData(prev => ({ ...prev, dailyRate: e.target.value }))}
+                  placeholder="Override ward tariff"
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsBedDialogOpen(false)} disabled={loading}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveBed} disabled={loading || !bedFormData.bedNumber}>
+              {loading ? 'Saving...' : (editingBed ? 'Update Bed' : 'Add Bed')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Ward Dialog */}
+      <Dialog open={isWardDialogOpen} onOpenChange={setIsWardDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editingWard ? 'Edit Ward' : 'Add New Ward'}</DialogTitle>
+            <DialogDescription>
+              {editingWard ? 'Update ward details' : 'Add a new ward to the hospital'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="wardName">Ward Name *</Label>
+                <Input
+                  id="wardName"
+                  value={wardFormData.name}
+                  onChange={(e) => setWardFormData(prev => ({ ...prev, name: e.target.value }))}
+                  placeholder="e.g., General Ward A"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="wardType">Type *</Label>
+                <Select value={wardFormData.type} onValueChange={(value) => setWardFormData(prev => ({ ...prev, type: value }))}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="general">General</SelectItem>
+                    <SelectItem value="semi-private">Semi-Private</SelectItem>
+                    <SelectItem value="private">Private</SelectItem>
+                    <SelectItem value="icu">ICU</SelectItem>
+                    <SelectItem value="nicu">NICU</SelectItem>
+                    <SelectItem value="maternity">Maternity</SelectItem>
+                    <SelectItem value="pediatric">Pediatric</SelectItem>
+                    <SelectItem value="surgical">Surgical</SelectItem>
+                    <SelectItem value="emergency">Emergency</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="building">Building</Label>
+                <Input
+                  id="building"
+                  value={wardFormData.building}
+                  onChange={(e) => setWardFormData(prev => ({ ...prev, building: e.target.value }))}
+                  placeholder="e.g., Main Building"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="wardFloor">Floor</Label>
+                <Input
+                  id="wardFloor"
+                  value={wardFormData.floor}
+                  onChange={(e) => setWardFormData(prev => ({ ...prev, floor: e.target.value }))}
+                  placeholder="e.g., Ground Floor"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="totalBeds">Total Beds Capacity</Label>
+                <Input
+                  id="totalBeds"
+                  type="number"
+                  value={wardFormData.totalBeds}
+                  onChange={(e) => setWardFormData(prev => ({ ...prev, totalBeds: parseInt(e.target.value) || 0 }))}
+                  placeholder="0"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="tariffPerDay">Tariff Per Day (₹) *</Label>
+                <Input
+                  id="tariffPerDay"
+                  type="number"
+                  value={wardFormData.tariffPerDay}
+                  onChange={(e) => setWardFormData(prev => ({ ...prev, tariffPerDay: e.target.value }))}
+                  placeholder="e.g., 1500"
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsWardDialogOpen(false)} disabled={loading}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveWard} disabled={loading || !wardFormData.name || !wardFormData.type}>
+              {loading ? 'Saving...' : (editingWard ? 'Update Ward' : 'Add Ward')}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -3235,20 +3235,6 @@ app.get('/api/packages', authenticateToken, async (req: any, res: Response) => {
   }
 });
 
-// Wards
-app.get('/api/wards', authenticateToken, async (req: any, res: Response) => {
-  try {
-    const wards = await prisma.ward.findMany({
-      where: { isActive: true },
-      orderBy: { name: 'asc' },
-    });
-    res.json(wards);
-  } catch (error) {
-    logger.error('Get wards error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
 // ===========================
 // APPOINTMENT APIs
 // ===========================
@@ -4935,12 +4921,227 @@ app.get('/api/beds', authenticateToken, async (req: any, res: Response) => {
 
     const beds = await prisma.bed.findMany({
       where,
+      include: {
+        ward: true,
+      },
       orderBy: { bedNumber: 'asc' },
     });
 
-    res.json(beds);
+    // Transform to include bedType from category
+    const transformedBeds = beds.map(bed => ({
+      ...bed,
+      bedType: bed.category,
+    }));
+
+    res.json(transformedBeds);
   } catch (error) {
     logger.error('Get beds error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Create new bed
+app.post('/api/beds', authenticateToken, requirePermission('beds:create'), async (req: any, res: Response) => {
+  try {
+    const { bedNumber, wardId, category, floor, dailyRate } = req.body;
+
+    if (!bedNumber) {
+      return res.status(400).json({ error: 'Bed number is required' });
+    }
+
+    const bed = await prisma.bed.create({
+      data: {
+        branchId: req.user.branchId,
+        bedNumber,
+        wardId: wardId || null,
+        category: category || 'general',
+        floor: floor || null,
+        dailyRate: dailyRate ? parseFloat(dailyRate) : null,
+        status: 'vacant',
+      },
+      include: { ward: true },
+    });
+
+    res.status(201).json(bed);
+  } catch (error: any) {
+    if (error.code === 'P2002') {
+      return res.status(400).json({ error: 'Bed number already exists in this branch' });
+    }
+    logger.error('Create bed error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update bed
+app.put('/api/beds/:id', authenticateToken, requirePermission('beds:edit'), async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { bedNumber, wardId, category, floor, dailyRate, status } = req.body;
+
+    const bed = await prisma.bed.update({
+      where: { id },
+      data: {
+        bedNumber,
+        wardId: wardId || null,
+        category,
+        floor: floor || null,
+        dailyRate: dailyRate ? parseFloat(dailyRate) : null,
+        status,
+      },
+      include: { ward: true },
+    });
+
+    res.json(bed);
+  } catch (error: any) {
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: 'Bed not found' });
+    }
+    logger.error('Update bed error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete bed
+app.delete('/api/beds/:id', authenticateToken, requirePermission('beds:delete'), async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    // Check if bed is currently occupied
+    const bed = await prisma.bed.findUnique({ where: { id } });
+    if (bed?.status === 'occupied') {
+      return res.status(400).json({ error: 'Cannot delete an occupied bed' });
+    }
+
+    await prisma.bed.delete({ where: { id } });
+    res.json({ message: 'Bed deleted successfully' });
+  } catch (error: any) {
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: 'Bed not found' });
+    }
+    logger.error('Delete bed error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ===========================
+// WARD MANAGEMENT APIs
+// ===========================
+
+// Get all wards
+app.get('/api/wards', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const wards = await prisma.ward.findMany({
+      where: {
+        OR: [
+          { branchId: req.user.branchId },
+          { branchId: null },
+        ],
+      },
+      include: {
+        beds: {
+          select: {
+            id: true,
+            bedNumber: true,
+            status: true,
+            category: true,
+          },
+        },
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    // Add bed counts
+    const wardsWithCounts = wards.map(ward => ({
+      ...ward,
+      occupiedBeds: ward.beds.filter(b => b.status === 'occupied').length,
+      vacantBeds: ward.beds.filter(b => b.status === 'vacant').length,
+      actualTotalBeds: ward.beds.length,
+    }));
+
+    res.json(wardsWithCounts);
+  } catch (error) {
+    logger.error('Get wards error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Create ward
+app.post('/api/wards', authenticateToken, requirePermission('wards:create'), async (req: any, res: Response) => {
+  try {
+    const { name, type, floor, building, totalBeds, tariffPerDay } = req.body;
+
+    if (!name || !type) {
+      return res.status(400).json({ error: 'Name and type are required' });
+    }
+
+    const ward = await prisma.ward.create({
+      data: {
+        tenantId: req.user.tenantId,
+        branchId: req.user.branchId,
+        name,
+        type,
+        floor: floor || null,
+        building: building || null,
+        totalBeds: totalBeds || 0,
+        tariffPerDay: tariffPerDay ? parseFloat(tariffPerDay) : 0,
+        isActive: true,
+      },
+    });
+
+    res.status(201).json(ward);
+  } catch (error) {
+    logger.error('Create ward error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update ward
+app.put('/api/wards/:id', authenticateToken, requirePermission('wards:edit'), async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { name, type, floor, building, totalBeds, tariffPerDay, isActive } = req.body;
+
+    const ward = await prisma.ward.update({
+      where: { id },
+      data: {
+        name,
+        type,
+        floor: floor || null,
+        building: building || null,
+        totalBeds,
+        tariffPerDay: tariffPerDay ? parseFloat(tariffPerDay) : undefined,
+        isActive,
+      },
+    });
+
+    res.json(ward);
+  } catch (error: any) {
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: 'Ward not found' });
+    }
+    logger.error('Update ward error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete ward
+app.delete('/api/wards/:id', authenticateToken, requirePermission('wards:delete'), async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    // Check if ward has beds
+    const bedsCount = await prisma.bed.count({ where: { wardId: id } });
+    if (bedsCount > 0) {
+      return res.status(400).json({ error: 'Cannot delete ward with assigned beds. Please reassign or delete beds first.' });
+    }
+
+    await prisma.ward.delete({ where: { id } });
+    res.json({ message: 'Ward deleted successfully' });
+  } catch (error: any) {
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: 'Ward not found' });
+    }
+    logger.error('Delete ward error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
