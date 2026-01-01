@@ -1707,18 +1707,14 @@ app.post('/api/invoices', authenticateToken, validateBody(createInvoiceSchema), 
 
     const invoice = await prisma.invoice.create({
       data: {
-        tenantId: req.user.tenantId,
-        branchId: req.user.branchId,
         patientId,
         encounterId: encounterId || null,
-        admissionId: admissionId || null,
         type: admissionId ? 'IP' : 'OP',
         items: itemsWithTotals,
         subtotal,
         discount: discountAmount,
         total,
         balance,
-        notes: notes || null,
         status: 'draft',
       },
       include: {
