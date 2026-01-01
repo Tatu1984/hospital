@@ -13,6 +13,7 @@ import {
   Search, Calendar, RefreshCw, Printer, Save, X, Clock, User,
   ChevronLeft, ChevronRight, Camera, Upload
 } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import api from '../services/api';
 
 // Interfaces
@@ -148,7 +149,9 @@ const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export default function OPDManagement() {
-  const [activeTab, setActiveTab] = useState('registration');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabFromUrl = searchParams.get('tab') || 'registration';
+  const [activeTab, setActiveTab] = useState(tabFromUrl);
   const [loading, setLoading] = useState(false);
 
   // Patient Registration State
@@ -188,7 +191,7 @@ export default function OPDManagement() {
   const [doctorTab, setDoctorTab] = useState<'department' | 'doctor'>('department');
 
   // Patient Search State
-  const [searchParams, setSearchParams] = useState({
+  const [patientSearchFilter, setPatientSearchFilter] = useState({
     mrn: '',
     name: '',
     city: '',
@@ -232,14 +235,23 @@ export default function OPDManagement() {
   });
   const [collectionReport, setCollectionReport] = useState<CollectionReport[]>([]);
 
+  // Sync activeTab with URL params
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab && tab !== activeTab) {
+      setActiveTab(tab);
+    }
+  }, [searchParams]);
+
   useEffect(() => {
     fetchDepartments();
     fetchDoctors();
     fetchServices();
 
-    // Listen for tab change events from sidebar
+    // Listen for tab change events from sidebar (backup mechanism)
     const handleTabChange = (e: CustomEvent) => {
       setActiveTab(e.detail);
+      setSearchParams({ tab: e.detail });
     };
     window.addEventListener('setOpdTab', handleTabChange as EventListener);
     return () => {
@@ -388,10 +400,10 @@ export default function OPDManagement() {
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      if (searchParams.mrn) params.append('mrn', searchParams.mrn);
-      if (searchParams.name) params.append('name', searchParams.name);
-      if (searchParams.city) params.append('city', searchParams.city);
-      if (searchParams.mobile) params.append('contact', searchParams.mobile);
+      if (patientSearchFilter.mrn) params.append('mrn', patientSearchFilter.mrn);
+      if (patientSearchFilter.name) params.append('name', patientSearchFilter.name);
+      if (patientSearchFilter.city) params.append('city', patientSearchFilter.city);
+      if (patientSearchFilter.mobile) params.append('contact', patientSearchFilter.mobile);
 
       const response = await api.get(`/api/patients?${params.toString()}`);
       setSearchResults(response.data || []);
@@ -403,7 +415,7 @@ export default function OPDManagement() {
   };
 
   const handleResetSearch = () => {
-    setSearchParams({ mrn: '', name: '', city: '', mobile: '' });
+    setPatientSearchFilter({ mrn: '', name: '', city: '', mobile: '' });
     setSearchResults([]);
   };
 
@@ -1141,21 +1153,21 @@ export default function OPDManagement() {
                     <Label>UHID</Label>
                     <Input
                       placeholder="UHID"
-                      value={searchParams.mrn}
-                      onChange={(e) => setSearchParams(prev => ({ ...prev, mrn: e.target.value }))}
+                      value={patientSearchFilter.mrn}
+                      onChange={(e) => setPatientSearchFilter(prev => ({ ...prev, mrn: e.target.value }))}
                     />
                   </div>
                   <div className="space-y-2">
                     <Label>Patient Name</Label>
                     <Input
                       placeholder="Patient Name"
-                      value={searchParams.name}
-                      onChange={(e) => setSearchParams(prev => ({ ...prev, name: e.target.value }))}
+                      value={patientSearchFilter.name}
+                      onChange={(e) => setPatientSearchFilter(prev => ({ ...prev, name: e.target.value }))}
                     />
                   </div>
                   <div className="space-y-2">
                     <Label>City</Label>
-                    <Select value={searchParams.city} onValueChange={(v) => setSearchParams(prev => ({ ...prev, city: v }))}>
+                    <Select value={patientSearchFilter.city} onValueChange={(v) => setPatientSearchFilter(prev => ({ ...prev, city: v }))}>
                       <SelectTrigger>
                         <SelectValue placeholder="City" />
                       </SelectTrigger>
@@ -1170,8 +1182,8 @@ export default function OPDManagement() {
                     <Label>Mobile No.</Label>
                     <Input
                       placeholder="Mobile Number"
-                      value={searchParams.mobile}
-                      onChange={(e) => setSearchParams(prev => ({ ...prev, mobile: e.target.value }))}
+                      value={patientSearchFilter.mobile}
+                      onChange={(e) => setPatientSearchFilter(prev => ({ ...prev, mobile: e.target.value }))}
                     />
                   </div>
                 </div>

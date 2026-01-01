@@ -221,16 +221,7 @@ const MainLayout = () => {
                                     return (
                                       <button
                                         key={subItem.path}
-                                        onClick={() => {
-                                          if (subItem.path.includes('?tab=')) {
-                                            const tab = subItem.path.split('tab=')[1];
-                                            navigate('/opd');
-                                            // Set tab via URL or state
-                                            window.dispatchEvent(new CustomEvent('setOpdTab', { detail: tab }));
-                                          } else {
-                                            navigate(subItem.path);
-                                          }
-                                        }}
+                                        onClick={() => navigate(subItem.path)}
                                         className={`w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-all duration-200 ${
                                           isSubActive
                                             ? 'bg-blue-100 text-blue-700 font-medium'

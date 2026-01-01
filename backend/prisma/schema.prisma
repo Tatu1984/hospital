@@ -2172,3 +2172,110 @@ model BedReservation {
   @@index([reservedFrom, reservedUntil])
   @@map("bed_reservations")
 }
+
+// ===========================
+// OPD SERVICES & BILLING
+// ===========================
+
+model Service {
+  id           String   @id @default(uuid())
+  tenantId     String
+  branchId     String
+  code         String
+  name         String
+  category     String   // consultation, procedure, lab, radiology, package, misc
+  department   String?
+  price        Decimal  @db.Decimal(10, 2)
+  description  String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  tariffs      Tariff[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId, branchId])
+  @@index([category])
+  @@index([isActive])
+  @@map("services")
+}
+
+model Tariff {
+  id            String   @id @default(uuid())
+  tenantId      String
+  branchId      String
+  serviceId     String
+  payerType     String   // cash, insurance, corporate, government
+  payerName     String?  // specific payer name (e.g., insurance company)
+  price         Decimal  @db.Decimal(10, 2)
+  effectiveFrom DateTime @default(now())
+  effectiveTo   DateTime?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  service       Service  @relation(fields: [serviceId], references: [id])
+
+  @@index([tenantId, branchId])
+  @@index([serviceId])
+  @@index([payerType])
+  @@index([isActive])
+  @@map("tariffs")
+}
+
+model Refund {
+  id            String   @id @default(uuid())
+  tenantId      String
+  branchId      String
+  refundNumber  String
+  invoiceId     String
+  patientId     String
+  amount        Decimal  @db.Decimal(10, 2)
+  reason        String?
+  remarks       String?
+  items         Json?    // list of item IDs being refunded
+  paymentMode   String   @default("cash") // cash, bank_transfer, original_method
+  reference     String?
+  status        String   @default("pending") // pending, approved, processed, rejected
+  approvedBy    String?
+  approvedAt    DateTime?
+  processedBy   String?
+  processedAt   DateTime?
+  createdBy     String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([tenantId, refundNumber])
+  @@index([tenantId, branchId])
+  @@index([invoiceId])
+  @@index([patientId])
+  @@index([status])
+  @@map("refunds")
+}
+
+model Doctor {
+  id              String   @id @default(uuid())
+  tenantId        String
+  branchId        String
+  userId          String?  // Link to User if they have system login
+  employeeId      String   @unique
+  name            String
+  email           String?
+  phone           String?
+  specialty       String
+  department      String
+  qualification   String?
+  registrationNo  String?  // Medical council registration
+  consultationFee Decimal? @db.Decimal(10, 2)
+  schedule        Json?    // {monday: {from: "09:00", to: "17:00"}, ...}
+  availableSlots  Int      @default(20)
+  photo           String?
+  bio             String?
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([tenantId, branchId])
+  @@index([department])
+  @@index([specialty])
+  @@index([isActive])
+  @@map("doctors")
+}

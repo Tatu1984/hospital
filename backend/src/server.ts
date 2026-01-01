@@ -1107,7 +1107,27 @@ app.get('/api/users', authenticateToken, requirePermission('users:view'), async 
 app.get('/api/doctors', authenticateToken, async (req: any, res: Response) => {
   // No specific permission required - doctors list is commonly needed
   try {
-    const doctors = await prisma.user.findMany({
+    // First try to get from Doctor model (dedicated doctors table)
+    const doctorTableDoctors = await prisma.doctor.findMany({
+      where: {
+        tenantId: req.user.tenantId,
+        isActive: true,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        department: true,
+        specialty: true,
+        consultationFee: true,
+        availableSlots: true,
+        schedule: true,
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    // Also get from users table (legacy support)
+    const userDoctors = await prisma.user.findMany({
       where: {
         tenantId: req.user.tenantId,
         isActive: true,
@@ -1122,7 +1142,34 @@ app.get('/api/doctors', authenticateToken, async (req: any, res: Response) => {
       orderBy: { name: 'asc' },
     });
 
-    res.json(doctors);
+    // Merge both sources, preferring Doctor table entries
+    const doctorIds = new Set(doctorTableDoctors.map(d => d.id));
+    const mergedDoctors = [
+      ...doctorTableDoctors.map(d => ({
+        id: d.id,
+        name: d.name,
+        email: d.email,
+        department: d.department,
+        specialty: d.specialty,
+        departmentIds: d.department ? [d.department] : [],
+        consultationFee: d.consultationFee,
+        availableSlots: d.availableSlots,
+        schedule: d.schedule,
+      })),
+      ...userDoctors.filter(u => !doctorIds.has(u.id)).map(u => ({
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        departmentIds: u.departmentIds,
+        department: u.departmentIds?.[0] || null,
+        specialty: null,
+        consultationFee: null,
+        availableSlots: 20,
+        schedule: null,
+      })),
+    ];
+
+    res.json(mergedDoctors);
   } catch (error) {
     logger.error('Get doctors error:', error);
     res.status(500).json({
@@ -1818,6 +1865,551 @@ app.get('/api/invoices', authenticateToken, async (req: any, res: Response) => {
   } catch (error) {
     logger.error('Get invoices error:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ============================================================================
+// OPD SERVICES, TARIFFS & REFUNDS
+// ============================================================================
+
+// Get all services
+app.get('/api/services', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { category, department, search, active } = req.query;
+
+    const where: any = {
+      tenantId: req.user.tenantId,
+    };
+
+    if (category) where.category = category;
+    if (department) where.department = department;
+    if (active !== undefined) where.isActive = active === 'true';
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { code: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    const services = await prisma.service.findMany({
+      where,
+      orderBy: [{ category: 'asc' }, { name: 'asc' }],
+    });
+
+    res.json(services);
+  } catch (error) {
+    logger.error('Get services error:', error);
+    res.status(500).json({ error: 'Failed to fetch services' });
+  }
+});
+
+// Create a service
+app.post('/api/services', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { code, name, category, department, price, description } = req.body;
+
+    if (!code || !name || !category || price === undefined) {
+      return res.status(400).json({ error: 'Code, name, category and price are required' });
+    }
+
+    const service = await prisma.service.create({
+      data: {
+        tenantId: req.user.tenantId,
+        branchId: req.user.branchId,
+        code,
+        name,
+        category,
+        department,
+        price: parseFloat(price),
+        description,
+      },
+    });
+
+    res.status(201).json(service);
+  } catch (error: any) {
+    logger.error('Create service error:', error);
+    if (error.code === 'P2002') {
+      return res.status(409).json({ error: 'Service code already exists' });
+    }
+    res.status(500).json({ error: 'Failed to create service' });
+  }
+});
+
+// Update a service
+app.put('/api/services/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { name, category, department, price, description, isActive } = req.body;
+
+    const service = await prisma.service.update({
+      where: { id },
+      data: {
+        ...(name && { name }),
+        ...(category && { category }),
+        ...(department !== undefined && { department }),
+        ...(price !== undefined && { price: parseFloat(price) }),
+        ...(description !== undefined && { description }),
+        ...(isActive !== undefined && { isActive }),
+      },
+    });
+
+    res.json(service);
+  } catch (error) {
+    logger.error('Update service error:', error);
+    res.status(500).json({ error: 'Failed to update service' });
+  }
+});
+
+// Get tariffs
+app.get('/api/tariffs', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { payer, department, service: serviceName } = req.query;
+
+    const where: any = {
+      tenantId: req.user.tenantId,
+      isActive: true,
+    };
+
+    if (payer) where.payerType = payer;
+
+    // Build service filter
+    const serviceWhere: any = {};
+    if (department) serviceWhere.department = department;
+    if (serviceName) {
+      serviceWhere.name = { contains: serviceName, mode: 'insensitive' };
+    }
+
+    const tariffs = await prisma.tariff.findMany({
+      where: {
+        ...where,
+        service: Object.keys(serviceWhere).length > 0 ? serviceWhere : undefined,
+      },
+      include: {
+        service: {
+          select: {
+            name: true,
+            code: true,
+            category: true,
+            department: true,
+          },
+        },
+      },
+      orderBy: { service: { name: 'asc' } },
+    });
+
+    // Transform to frontend format
+    const result = tariffs.map(t => ({
+      id: t.id,
+      serviceName: t.service.name,
+      serviceCode: t.service.code,
+      department: t.service.department || '',
+      payerName: t.payerName || t.payerType,
+      price: parseFloat(t.price.toString()),
+      effectiveFrom: t.effectiveFrom.toISOString().split('T')[0],
+    }));
+
+    res.json(result);
+  } catch (error) {
+    logger.error('Get tariffs error:', error);
+    res.status(500).json({ error: 'Failed to fetch tariffs' });
+  }
+});
+
+// Create tariff
+app.post('/api/tariffs', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { serviceId, payerType, payerName, price, effectiveFrom } = req.body;
+
+    if (!serviceId || !payerType || price === undefined) {
+      return res.status(400).json({ error: 'serviceId, payerType and price are required' });
+    }
+
+    const tariff = await prisma.tariff.create({
+      data: {
+        tenantId: req.user.tenantId,
+        branchId: req.user.branchId,
+        serviceId,
+        payerType,
+        payerName,
+        price: parseFloat(price),
+        effectiveFrom: effectiveFrom ? new Date(effectiveFrom) : new Date(),
+      },
+    });
+
+    res.status(201).json(tariff);
+  } catch (error) {
+    logger.error('Create tariff error:', error);
+    res.status(500).json({ error: 'Failed to create tariff' });
+  }
+});
+
+// Process refund
+app.post('/api/refunds', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { billId, invoiceId, amount, remarks, items, reason, paymentMode } = req.body;
+
+    const actualInvoiceId = invoiceId || billId;
+
+    if (!actualInvoiceId || !amount || amount <= 0) {
+      return res.status(400).json({ error: 'Invoice ID and valid amount are required' });
+    }
+
+    // Get invoice to verify
+    const invoice = await prisma.invoice.findUnique({
+      where: { id: actualInvoiceId },
+      include: { patient: true },
+    });
+
+    if (!invoice) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+
+    // Check refund amount doesn't exceed paid amount
+    const paidAmount = parseFloat(invoice.paid.toString());
+    if (amount > paidAmount) {
+      return res.status(400).json({ error: 'Refund amount cannot exceed paid amount' });
+    }
+
+    // Generate refund number
+    const refundCount = await prisma.refund.count({
+      where: { tenantId: req.user.tenantId },
+    });
+    const refundNumber = `REF-${Date.now()}-${String(refundCount + 1).padStart(4, '0')}`;
+
+    const refund = await prisma.refund.create({
+      data: {
+        tenantId: req.user.tenantId,
+        branchId: req.user.branchId,
+        refundNumber,
+        invoiceId: actualInvoiceId,
+        patientId: invoice.patientId,
+        amount: parseFloat(amount.toString()),
+        reason,
+        remarks,
+        items: items || null,
+        paymentMode: paymentMode || 'cash',
+        status: 'processed',
+        processedBy: req.user.userId,
+        processedAt: new Date(),
+        createdBy: req.user.userId,
+      },
+    });
+
+    // Update invoice paid amount
+    await prisma.invoice.update({
+      where: { id: actualInvoiceId },
+      data: {
+        paid: { decrement: parseFloat(amount.toString()) },
+        balance: { increment: parseFloat(amount.toString()) },
+        status: 'refunded',
+      },
+    });
+
+    res.status(201).json({
+      ...refund,
+      message: 'Refund processed successfully',
+    });
+  } catch (error: any) {
+    logger.error('Process refund error:', error);
+    res.status(500).json({ error: 'Failed to process refund', details: error?.message });
+  }
+});
+
+// Get refunds
+app.get('/api/refunds', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { invoiceId, patientId, status, fromDate, toDate } = req.query;
+
+    const where: any = {
+      tenantId: req.user.tenantId,
+    };
+
+    if (invoiceId) where.invoiceId = invoiceId;
+    if (patientId) where.patientId = patientId;
+    if (status) where.status = status;
+    if (fromDate || toDate) {
+      where.createdAt = {};
+      if (fromDate) where.createdAt.gte = new Date(fromDate as string);
+      if (toDate) where.createdAt.lte = new Date(toDate as string);
+    }
+
+    const refunds = await prisma.refund.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json(refunds);
+  } catch (error) {
+    logger.error('Get refunds error:', error);
+    res.status(500).json({ error: 'Failed to fetch refunds' });
+  }
+});
+
+// Daily Collection Report
+app.get('/api/reports/collection', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { fromDate, toDate, company } = req.query;
+
+    if (!fromDate || !toDate) {
+      return res.status(400).json({ error: 'fromDate and toDate are required' });
+    }
+
+    const startDate = new Date(fromDate as string);
+    startDate.setHours(0, 0, 0, 0);
+    const endDate = new Date(toDate as string);
+    endDate.setHours(23, 59, 59, 999);
+
+    // Get all payments in date range
+    const payments = await prisma.payment.findMany({
+      where: {
+        paidAt: {
+          gte: startDate,
+          lte: endDate,
+        },
+        invoice: {
+          patient: {
+            tenantId: req.user.tenantId,
+          },
+        },
+      },
+      include: {
+        invoice: {
+          select: {
+            type: true,
+          },
+        },
+      },
+    });
+
+    // Get refunds in date range
+    const refunds = await prisma.refund.findMany({
+      where: {
+        tenantId: req.user.tenantId,
+        createdAt: {
+          gte: startDate,
+          lte: endDate,
+        },
+        status: 'processed',
+      },
+    });
+
+    // Group by date
+    const reportMap = new Map<string, any>();
+
+    payments.forEach(payment => {
+      const dateStr = payment.paidAt.toISOString().split('T')[0];
+      if (!reportMap.has(dateStr)) {
+        reportMap.set(dateStr, {
+          date: dateStr,
+          totalBills: 0,
+          totalAmount: 0,
+          cashAmount: 0,
+          cardAmount: 0,
+          insuranceAmount: 0,
+          refundAmount: 0,
+          netCollection: 0,
+        });
+      }
+
+      const report = reportMap.get(dateStr);
+      const amount = parseFloat(payment.amount.toString());
+      report.totalBills += 1;
+      report.totalAmount += amount;
+
+      if (payment.mode === 'cash') {
+        report.cashAmount += amount;
+      } else if (payment.mode === 'card') {
+        report.cardAmount += amount;
+      } else if (payment.mode === 'insurance') {
+        report.insuranceAmount += amount;
+      } else {
+        // UPI, netbanking, etc. go to card
+        report.cardAmount += amount;
+      }
+    });
+
+    refunds.forEach(refund => {
+      const dateStr = refund.createdAt.toISOString().split('T')[0];
+      if (!reportMap.has(dateStr)) {
+        reportMap.set(dateStr, {
+          date: dateStr,
+          totalBills: 0,
+          totalAmount: 0,
+          cashAmount: 0,
+          cardAmount: 0,
+          insuranceAmount: 0,
+          refundAmount: 0,
+          netCollection: 0,
+        });
+      }
+
+      const report = reportMap.get(dateStr);
+      report.refundAmount += parseFloat(refund.amount.toString());
+    });
+
+    // Calculate net collection
+    const result = Array.from(reportMap.values()).map(r => ({
+      ...r,
+      netCollection: r.totalAmount - r.refundAmount,
+    }));
+
+    // Sort by date
+    result.sort((a, b) => a.date.localeCompare(b.date));
+
+    res.json(result);
+  } catch (error) {
+    logger.error('Get collection report error:', error);
+    res.status(500).json({ error: 'Failed to generate collection report' });
+  }
+});
+
+// ============================================================================
+// DOCTOR MANAGEMENT
+// ============================================================================
+
+// Get doctors (extended endpoint with more details)
+app.get('/api/doctors-management', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { department, specialty, search, active } = req.query;
+
+    const where: any = {
+      tenantId: req.user.tenantId,
+    };
+
+    if (department) where.department = department;
+    if (specialty) where.specialty = specialty;
+    if (active !== undefined) where.isActive = active === 'true';
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+        { employeeId: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    const doctors = await prisma.doctor.findMany({
+      where,
+      orderBy: { name: 'asc' },
+    });
+
+    res.json(doctors);
+  } catch (error) {
+    logger.error('Get doctors management error:', error);
+    res.status(500).json({ error: 'Failed to fetch doctors' });
+  }
+});
+
+// Create doctor
+app.post('/api/doctors-management', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const {
+      employeeId,
+      name,
+      email,
+      phone,
+      specialty,
+      department,
+      qualification,
+      registrationNo,
+      consultationFee,
+      schedule,
+      availableSlots,
+      bio,
+    } = req.body;
+
+    if (!employeeId || !name || !specialty || !department) {
+      return res.status(400).json({
+        error: 'employeeId, name, specialty and department are required'
+      });
+    }
+
+    const doctor = await prisma.doctor.create({
+      data: {
+        tenantId: req.user.tenantId,
+        branchId: req.user.branchId,
+        employeeId,
+        name,
+        email,
+        phone,
+        specialty,
+        department,
+        qualification,
+        registrationNo,
+        consultationFee: consultationFee ? parseFloat(consultationFee) : null,
+        schedule: schedule || null,
+        availableSlots: availableSlots || 20,
+        bio,
+      },
+    });
+
+    res.status(201).json(doctor);
+  } catch (error: any) {
+    logger.error('Create doctor error:', error);
+    if (error.code === 'P2002') {
+      return res.status(409).json({ error: 'Doctor with this employee ID already exists' });
+    }
+    res.status(500).json({ error: 'Failed to create doctor' });
+  }
+});
+
+// Update doctor
+app.put('/api/doctors-management/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const {
+      name,
+      email,
+      phone,
+      specialty,
+      department,
+      qualification,
+      registrationNo,
+      consultationFee,
+      schedule,
+      availableSlots,
+      bio,
+      isActive,
+    } = req.body;
+
+    const doctor = await prisma.doctor.update({
+      where: { id },
+      data: {
+        ...(name && { name }),
+        ...(email !== undefined && { email }),
+        ...(phone !== undefined && { phone }),
+        ...(specialty && { specialty }),
+        ...(department && { department }),
+        ...(qualification !== undefined && { qualification }),
+        ...(registrationNo !== undefined && { registrationNo }),
+        ...(consultationFee !== undefined && { consultationFee: consultationFee ? parseFloat(consultationFee) : null }),
+        ...(schedule !== undefined && { schedule }),
+        ...(availableSlots !== undefined && { availableSlots }),
+        ...(bio !== undefined && { bio }),
+        ...(isActive !== undefined && { isActive }),
+      },
+    });
+
+    res.json(doctor);
+  } catch (error) {
+    logger.error('Update doctor error:', error);
+    res.status(500).json({ error: 'Failed to update doctor' });
+  }
+});
+
+// Delete doctor (soft delete)
+app.delete('/api/doctors-management/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    await prisma.doctor.update({
+      where: { id },
+      data: { isActive: false },
+    });
+
+    res.json({ message: 'Doctor deactivated successfully' });
+  } catch (error) {
+    logger.error('Delete doctor error:', error);
+    res.status(500).json({ error: 'Failed to delete doctor' });
   }
 });
 
