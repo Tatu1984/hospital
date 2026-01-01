@@ -393,17 +393,50 @@ app.post('/api/auth/debug-login', async (req: Request, res: Response) => {
     const hasJwtSecret = !!process.env.JWT_SECRET;
     steps.push(`4. JWT_SECRET: ${hasJwtSecret ? 'present' : 'MISSING'}`);
 
-    steps.push('5. Attempting Prisma query');
+    steps.push('5. Attempting Prisma query with include');
     const user = await prisma.user.findUnique({
       where: { username: username || '' },
-      select: { id: true, username: true, isActive: true, passwordHash: true }
+      include: {
+        tenant: true,
+        branch: true,
+      }
     });
     steps.push(`6. User found: ${user ? 'yes' : 'no'}`);
+
+    if (!user) {
+      steps.push('7. Testing auditLogger.securityEvent');
+      try {
+        auditLogger.securityEvent('DEBUG_LOGIN_FAILED', { username, reason: 'test', ip: req.ip });
+        steps.push('8. auditLogger.securityEvent: OK');
+      } catch (e: any) {
+        steps.push(`8. auditLogger.securityEvent FAILED: ${e.message}`);
+      }
+    }
 
     if (user && password) {
       steps.push('7. Checking password');
       const valid = await bcrypt.compare(password, user.passwordHash);
       steps.push(`8. Password valid: ${valid}`);
+
+      if (valid) {
+        steps.push('9. Creating JWT token');
+        try {
+          const token = jwt.sign(
+            {
+              userId: user.id,
+              username: user.username,
+              tenantId: user.tenantId,
+              branchId: user.branchId,
+              roleIds: user.roleIds,
+            },
+            process.env.JWT_SECRET!,
+            { expiresIn: '24h' }
+          );
+          steps.push('10. JWT token created successfully');
+        } catch (e: any) {
+          steps.push(`10. JWT token FAILED: ${e.message}`);
+        }
+      }
     }
 
     res.json({ success: true, steps });
