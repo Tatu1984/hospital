@@ -2,12 +2,17 @@
   "framework": "vite",
   "rewrites": [
     {
-      "source": "/api/(.*)",
-      "destination": "https://hospital-backend-tau.vercel.app/api/$1"
+      "source": "/api/:path*",
+      "destination": "https://hospital-backend-tau.vercel.app/api/:path*"
+    }
+  ],
+  "routes": [
+    {
+      "handle": "filesystem"
     },
     {
-      "source": "/((?!assets|favicon|.*\\..*).*)",
-      "destination": "/index.html"
+      "src": "/(.*)",
+      "dest": "/index.html"
     }
   ],
   "headers": [

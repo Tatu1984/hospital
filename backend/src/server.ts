@@ -1686,21 +1686,39 @@ app.get('/api/opd-notes/:encounterId', authenticateToken, async (req: any, res: 
 // Invoice routes
 app.post('/api/invoices', authenticateToken, validateBody(createInvoiceSchema), async (req: any, res: Response) => {
   try {
-    const { patientId, encounterId, type, items } = req.body;
+    const { patientId, encounterId, admissionId, items, discountPercent = 0, notes } = (req as any).validatedBody || req.body;
 
-    const subtotal = items.reduce((sum: number, item: any) => sum + parseFloat(item.amount), 0);
-    const total = subtotal;
+    // Calculate totals from items (quantity * unitPrice - discount + tax)
+    const itemsWithTotals = items.map((item: any) => {
+      const lineTotal = item.quantity * item.unitPrice;
+      const discountAmount = lineTotal * (item.discount || 0) / 100;
+      const taxableAmount = lineTotal - discountAmount;
+      const taxAmount = taxableAmount * (item.taxRate || 0) / 100;
+      return {
+        ...item,
+        lineTotal: taxableAmount + taxAmount
+      };
+    });
+
+    const subtotal = itemsWithTotals.reduce((sum: number, item: any) => sum + item.lineTotal, 0);
+    const discountAmount = subtotal * discountPercent / 100;
+    const total = subtotal - discountAmount;
     const balance = total;
 
     const invoice = await prisma.invoice.create({
       data: {
+        tenantId: req.user.tenantId,
+        branchId: req.user.branchId,
         patientId,
-        encounterId,
-        type: type || 'OP',
-        items,
+        encounterId: encounterId || null,
+        admissionId: admissionId || null,
+        type: admissionId ? 'IP' : 'OP',
+        items: itemsWithTotals,
         subtotal,
+        discount: discountAmount,
         total,
         balance,
+        notes: notes || null,
         status: 'draft',
       },
       include: {
@@ -1709,9 +1727,9 @@ app.post('/api/invoices', authenticateToken, validateBody(createInvoiceSchema), 
     });
 
     res.status(201).json(invoice);
-  } catch (error) {
-    logger.error('Create invoice error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+  } catch (error: any) {
+    logger.error('Create invoice error:', { message: error?.message, code: error?.code });
+    res.status(500).json({ error: 'Failed to create invoice', details: error?.message });
   }
 });
 
