@@ -61,6 +61,7 @@ const MainLayout = () => {
       title: 'Clinical',
       items: [
         { path: '/opd', icon: Stethoscope, label: 'OPD' },
+        { path: '/opd-management', icon: ClipboardList, label: 'OPD Management' },
         { path: '/inpatient', icon: Bed, label: 'IPD / Ward' },
         { path: '/emergency', icon: AlertCircle, label: 'Emergency' },
         { path: '/icu', icon: Heart, label: 'ICU' },

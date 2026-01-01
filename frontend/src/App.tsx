@@ -11,6 +11,7 @@ import MainLayout from './components/MainLayout';
 import PatientRegistration from './pages/PatientRegistration';
 import Appointment from './pages/Appointment';
 import OPD from './pages/OPD';
+import OPDManagement from './pages/OPDManagement';
 import Laboratory from './pages/Laboratory';
 import Radiology from './pages/Radiology';
 import Inpatient from './pages/Inpatient';
@@ -123,6 +124,7 @@ const AppRoutes = () => {
         <Route path="patients" element={<RoleProtectedRoute path="patients"><PatientRegistration /></RoleProtectedRoute>} />
         <Route path="appointment" element={<RoleProtectedRoute path="appointment"><Appointment /></RoleProtectedRoute>} />
         <Route path="opd" element={<RoleProtectedRoute path="opd"><OPD /></RoleProtectedRoute>} />
+        <Route path="opd-management" element={<RoleProtectedRoute path="opd-management"><OPDManagement /></RoleProtectedRoute>} />
         <Route path="health-checkup" element={<RoleProtectedRoute path="health-checkup"><HealthCheckup /></RoleProtectedRoute>} />
 
         {/* Diagnostics */}

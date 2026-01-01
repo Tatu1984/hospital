@@ -8,8 +8,23 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { AlertCircle, Pill, Heart, Plus } from 'lucide-react';
+import { AlertCircle, Pill, Heart, Plus, Users, Building2, RefreshCw, UserCog } from 'lucide-react';
 import api from '../services/api';
+
+interface Ward {
+  id: string;
+  name: string;
+  type: string;
+  floor?: string;
+  building?: string;
+}
+
+interface Nurse {
+  id: string;
+  name: string;
+  employeeId?: string;
+  department?: string;
+}
 
 interface Patient {
   id: string;
@@ -75,12 +90,26 @@ export default function NurseStation() {
   const [vitals, setVitals] = useState<VitalSign[]>([]);
   const [roster, setRoster] = useState<DutyRoster[]>([]);
   const [handoverNotes, setHandoverNotes] = useState<HandoverNote[]>([]);
+  const [wards, setWards] = useState<Ward[]>([]);
+  const [nurses, setNurses] = useState<Nurse[]>([]);
 
   const [isVitalsDialogOpen, setIsVitalsDialogOpen] = useState(false);
   const [isRosterDialogOpen, setIsRosterDialogOpen] = useState(false);
   const [isHandoverDialogOpen, setIsHandoverDialogOpen] = useState(false);
+  const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+  const [selectedShift, setSelectedShift] = useState<string>('all');
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Quick assign nurse form
+  const [assignFormData, setAssignFormData] = useState({
+    nurseId: '',
+    nurseName: '',
+    ward: '',
+    shift: 'morning' as const,
+    date: new Date().toISOString().split('T')[0]
+  });
 
   const [vitalsFormData, setVitalsFormData] = useState({
     patientId: '',
@@ -111,12 +140,52 @@ export default function NurseStation() {
   });
 
   useEffect(() => {
-    fetchPatients();
-    fetchMedications();
-    fetchVitals();
-    fetchRoster();
-    fetchHandoverNotes();
+    fetchAllData();
   }, []);
+
+  const fetchAllData = async () => {
+    setRefreshing(true);
+    await Promise.all([
+      fetchPatients(),
+      fetchMedications(),
+      fetchVitals(),
+      fetchRoster(),
+      fetchHandoverNotes(),
+      fetchWards(),
+      fetchNurses()
+    ]);
+    setRefreshing(false);
+  };
+
+  const fetchWards = async () => {
+    try {
+      const response = await api.get('/api/wards');
+      setWards(response.data);
+    } catch (error) {
+      console.error('Error fetching wards:', error);
+    }
+  };
+
+  const fetchNurses = async () => {
+    try {
+      // Fetch employees with NURSE role
+      const response = await api.get('/api/employees?role=NURSE');
+      setNurses(response.data.map((emp: any) => ({
+        id: emp.id,
+        name: emp.name,
+        employeeId: emp.employeeId,
+        department: emp.department
+      })));
+    } catch (error) {
+      console.error('Error fetching nurses:', error);
+      // Fallback: Use unique nurse names from roster
+      const uniqueNurses = [...new Set(roster.map(r => r.nurseName))].map((name, idx) => ({
+        id: `nurse-${idx}`,
+        name: name
+      }));
+      setNurses(uniqueNurses);
+    }
+  };
 
   const fetchPatients = async () => {
     try {
@@ -302,6 +371,64 @@ export default function NurseStation() {
     setIsVitalsDialogOpen(true);
   };
 
+  const handleQuickAssign = async () => {
+    setLoading(true);
+    try {
+      await api.post('/api/nursing/roster', {
+        ...assignFormData,
+        startTime: assignFormData.shift === 'morning' ? '06:00' : assignFormData.shift === 'evening' ? '14:00' : '22:00',
+        endTime: assignFormData.shift === 'morning' ? '14:00' : assignFormData.shift === 'evening' ? '22:00' : '06:00'
+      });
+      await fetchRoster();
+      setIsAssignDialogOpen(false);
+      setAssignFormData({
+        nurseId: '',
+        nurseName: '',
+        ward: '',
+        shift: 'morning',
+        date: new Date().toISOString().split('T')[0]
+      });
+      alert('Nurse assigned successfully!');
+    } catch (error) {
+      console.error('Error assigning nurse:', error);
+      alert('Failed to assign nurse');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Get ward allocation summary
+  const getWardAllocation = () => {
+    const today = new Date().toISOString().split('T')[0];
+    const todayRoster = roster.filter(r => r.date === today);
+
+    // Group by ward and shift
+    const wardMap = new Map<string, { morning: string[], evening: string[], night: string[] }>();
+
+    // Initialize with all known wards
+    wards.forEach(ward => {
+      wardMap.set(ward.name, { morning: [], evening: [], night: [] });
+    });
+
+    todayRoster.forEach(entry => {
+      const wardName = entry.ward || 'Unassigned';
+      if (!wardMap.has(wardName)) {
+        wardMap.set(wardName, { morning: [], evening: [], night: [] });
+      }
+      const allocation = wardMap.get(wardName)!;
+      if (entry.shift === 'morning') allocation.morning.push(entry.nurseName);
+      else if (entry.shift === 'evening') allocation.evening.push(entry.nurseName);
+      else allocation.night.push(entry.nurseName);
+    });
+
+    return Array.from(wardMap.entries()).map(([ward, shifts]) => ({
+      ward,
+      ...shifts
+    }));
+  };
+
+  const wardAllocation = getWardAllocation();
+
   const stats = {
     totalPatients: patients.length,
     medicationsDue: medications.filter(m => m.status === 'pending').length,
@@ -322,6 +449,108 @@ export default function NurseStation() {
         <div>
           <h1 className="text-3xl font-bold text-slate-900">Nurse Station</h1>
           <p className="text-slate-600">Patient care, medication administration, and duty management</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={fetchAllData} disabled={refreshing}>
+            <RefreshCw className={`w-4 h-4 mr-1 ${refreshing ? 'animate-spin' : ''}`} />
+            {refreshing ? 'Refreshing...' : 'Refresh'}
+          </Button>
+          <Dialog open={isAssignDialogOpen} onOpenChange={setIsAssignDialogOpen}>
+            <DialogTrigger asChild>
+              <Button>
+                <UserCog className="w-4 h-4 mr-1" />
+                Quick Assign
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Quick Assign Nurse</DialogTitle>
+                <DialogDescription>Quickly assign a nurse to a ward for today</DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-4 py-4">
+                <div className="space-y-2">
+                  <Label>Nurse *</Label>
+                  <Select
+                    value={assignFormData.nurseId}
+                    onValueChange={(value) => {
+                      const nurse = nurses.find(n => n.id === value);
+                      setAssignFormData(prev => ({
+                        ...prev,
+                        nurseId: value,
+                        nurseName: nurse?.name || ''
+                      }));
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select nurse" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {nurses.map(nurse => (
+                        <SelectItem key={nurse.id} value={nurse.id}>
+                          {nurse.name} {nurse.employeeId ? `(${nurse.employeeId})` : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Ward *</Label>
+                  <Select
+                    value={assignFormData.ward}
+                    onValueChange={(value) => setAssignFormData(prev => ({ ...prev, ward: value }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select ward" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {wards.map(ward => (
+                        <SelectItem key={ward.id} value={ward.name}>
+                          {ward.name} ({ward.type})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Shift *</Label>
+                    <Select
+                      value={assignFormData.shift}
+                      onValueChange={(value: any) => setAssignFormData(prev => ({ ...prev, shift: value }))}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="morning">Morning (6 AM - 2 PM)</SelectItem>
+                        <SelectItem value="evening">Evening (2 PM - 10 PM)</SelectItem>
+                        <SelectItem value="night">Night (10 PM - 6 AM)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Date</Label>
+                    <Input
+                      type="date"
+                      value={assignFormData.date}
+                      onChange={(e) => setAssignFormData(prev => ({ ...prev, date: e.target.value }))}
+                    />
+                  </div>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setIsAssignDialogOpen(false)} disabled={loading}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleQuickAssign}
+                  disabled={loading || !assignFormData.nurseId || !assignFormData.ward}
+                >
+                  {loading ? 'Assigning...' : 'Assign Nurse'}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
 
@@ -360,14 +589,169 @@ export default function NurseStation() {
         </Card>
       </div>
 
-      <Tabs defaultValue="medications" className="w-full">
-        <TabsList className="grid w-full grid-cols-5">
+      <Tabs defaultValue="allocation" className="w-full">
+        <TabsList className="grid w-full grid-cols-6">
+          <TabsTrigger value="allocation">Ward Allocation</TabsTrigger>
           <TabsTrigger value="medications">Medications</TabsTrigger>
           <TabsTrigger value="vitals">Vitals</TabsTrigger>
           <TabsTrigger value="patients">Patients</TabsTrigger>
           <TabsTrigger value="roster">Duty Roster</TabsTrigger>
           <TabsTrigger value="handover">Handover Notes</TabsTrigger>
         </TabsList>
+
+        {/* Ward Allocation Tab */}
+        <TabsContent value="allocation">
+          <Card>
+            <CardHeader>
+              <div className="flex justify-between items-center">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Building2 className="w-5 h-5" />
+                    Ward Allocation Overview
+                  </CardTitle>
+                  <CardDescription>Today's nurse assignments by ward and shift</CardDescription>
+                </div>
+                <div className="flex gap-2">
+                  <Select value={selectedShift} onValueChange={setSelectedShift}>
+                    <SelectTrigger className="w-40">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Shifts</SelectItem>
+                      <SelectItem value="morning">Morning Shift</SelectItem>
+                      <SelectItem value="evening">Evening Shift</SelectItem>
+                      <SelectItem value="night">Night Shift</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {wardAllocation.length === 0 ? (
+                <div className="text-center py-12 text-slate-500">
+                  <Users className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                  <p>No ward allocations found for today</p>
+                  <p className="text-sm mt-2">Use the "Quick Assign" button to assign nurses to wards</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {wardAllocation.map(allocation => (
+                    <Card key={allocation.ward} className="border-2">
+                      <CardHeader className="pb-2 bg-slate-50">
+                        <CardTitle className="text-lg flex items-center gap-2">
+                          <Building2 className="w-4 h-4" />
+                          {allocation.ward}
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="pt-4 space-y-3">
+                        {(selectedShift === 'all' || selectedShift === 'morning') && (
+                          <div>
+                            <div className="flex items-center gap-2 text-sm font-semibold text-amber-700 mb-1">
+                              <Badge variant="outline" className="bg-amber-50">Morning</Badge>
+                              <span className="text-xs text-slate-500">(6 AM - 2 PM)</span>
+                            </div>
+                            {allocation.morning.length > 0 ? (
+                              <div className="flex flex-wrap gap-1">
+                                {allocation.morning.map((nurse, idx) => (
+                                  <Badge key={idx} variant="secondary" className="bg-amber-100">
+                                    {nurse}
+                                  </Badge>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-xs text-slate-400 italic">No nurse assigned</p>
+                            )}
+                          </div>
+                        )}
+                        {(selectedShift === 'all' || selectedShift === 'evening') && (
+                          <div>
+                            <div className="flex items-center gap-2 text-sm font-semibold text-blue-700 mb-1">
+                              <Badge variant="outline" className="bg-blue-50">Evening</Badge>
+                              <span className="text-xs text-slate-500">(2 PM - 10 PM)</span>
+                            </div>
+                            {allocation.evening.length > 0 ? (
+                              <div className="flex flex-wrap gap-1">
+                                {allocation.evening.map((nurse, idx) => (
+                                  <Badge key={idx} variant="secondary" className="bg-blue-100">
+                                    {nurse}
+                                  </Badge>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-xs text-slate-400 italic">No nurse assigned</p>
+                            )}
+                          </div>
+                        )}
+                        {(selectedShift === 'all' || selectedShift === 'night') && (
+                          <div>
+                            <div className="flex items-center gap-2 text-sm font-semibold text-purple-700 mb-1">
+                              <Badge variant="outline" className="bg-purple-50">Night</Badge>
+                              <span className="text-xs text-slate-500">(10 PM - 6 AM)</span>
+                            </div>
+                            {allocation.night.length > 0 ? (
+                              <div className="flex flex-wrap gap-1">
+                                {allocation.night.map((nurse, idx) => (
+                                  <Badge key={idx} variant="secondary" className="bg-purple-100">
+                                    {nurse}
+                                  </Badge>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-xs text-slate-400 italic">No nurse assigned</p>
+                            )}
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+
+              {/* Summary Table */}
+              <div className="mt-6">
+                <h3 className="text-lg font-semibold mb-3">Allocation Summary</h3>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Ward</TableHead>
+                      <TableHead className="text-center">Morning</TableHead>
+                      <TableHead className="text-center">Evening</TableHead>
+                      <TableHead className="text-center">Night</TableHead>
+                      <TableHead className="text-center">Total</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {wardAllocation.map(allocation => (
+                      <TableRow key={allocation.ward}>
+                        <TableCell className="font-medium">{allocation.ward}</TableCell>
+                        <TableCell className="text-center">
+                          <Badge variant={allocation.morning.length > 0 ? 'default' : 'outline'}>
+                            {allocation.morning.length}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Badge variant={allocation.evening.length > 0 ? 'default' : 'outline'}>
+                            {allocation.evening.length}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Badge variant={allocation.night.length > 0 ? 'default' : 'outline'}>
+                            {allocation.night.length}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Badge variant="secondary">
+                            {allocation.morning.length + allocation.evening.length + allocation.night.length}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         {/* Medications Tab */}
         <TabsContent value="medications">
