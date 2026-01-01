@@ -54,6 +54,7 @@ import { reminderService } from './services/reminder';
 
 // Import Redis service
 import redisService from './services/redis';
+import { otpService } from './services/otpService';
 
 // Import IPD charge capture service
 import { ipdChargeCaptureService } from './services/ipdChargeCapture';
@@ -11269,75 +11270,98 @@ app.get('/api/biometric/today', authenticateToken, requirePermission('hr:view'),
 // PATIENT PORTAL APIs
 // ============================================
 
-// Store for OTP sessions (in production, use Redis)
-const otpSessions: Map<string, { patientId: string; otp: string; expiresAt: Date }> = new Map();
-
-// Patient Portal - Request OTP
-app.post('/api/patient-portal/request-otp', async (req: Request, res: Response) => {
+// Patient Portal - Request OTP (with rate limiting and sandbox support)
+app.post('/api/patient-portal/request-otp', authRateLimiter, async (req: Request, res: Response) => {
   try {
     const { mrn, phone, dob } = req.body;
     if (!dob) return res.status(400).json({ error: 'Date of birth is required' });
+    if (!mrn && !phone) return res.status(400).json({ error: 'MRN or phone number is required' });
 
+    // Find patient
     let patient;
+    const identifier = mrn || phone;
     if (mrn) {
       patient = await prisma.patient.findFirst({ where: { mrn } });
     } else if (phone) {
       patient = await prisma.patient.findFirst({ where: { contact: phone } });
     }
 
-    if (!patient) return res.status(404).json({ message: 'Patient not found. Please check your details.' });
+    // Always return same message to prevent enumeration attacks
+    if (!patient) {
+      return res.json({ sessionId: 'invalid', message: 'If the details are correct, an OTP will be sent.' });
+    }
 
+    // Verify DOB
     const patientDob = patient.dob ? new Date(patient.dob).toISOString().split('T')[0] : null;
     const inputDob = new Date(dob).toISOString().split('T')[0];
-    if (patientDob !== inputDob) return res.status(401).json({ message: 'Date of birth does not match our records.' });
+    if (patientDob !== inputDob) {
+      return res.json({ sessionId: 'invalid', message: 'If the details are correct, an OTP will be sent.' });
+    }
 
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const crypto = require('crypto');
-    const sessionId = crypto.randomUUID();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    // Generate OTP using secure service
+    const result = await otpService.generateOTP(patient.id, identifier);
 
-    otpSessions.set(sessionId, { patientId: patient.id, otp, expiresAt });
-
-    try {
-      const { notificationService } = require('./services/notification');
-      if (patient.contact) {
-        await notificationService.send({
-          type: 'PASSWORD_RESET',
-          recipientPhone: patient.contact,
-          recipientEmail: patient.email || undefined,
-          message: `Your OTP for Patient Portal login is: ${otp}. Valid for 10 minutes.`,
-          data: { otp, hospitalName: 'Hospital ERP' },
-        });
+    // Send OTP via notification service (if configured)
+    if (result.otp) {
+      try {
+        const { notificationService } = await import('./services/notification');
+        if (patient.contact) {
+          await notificationService.send({
+            type: 'PASSWORD_RESET',
+            recipientPhone: patient.contact,
+            recipientEmail: patient.email || undefined,
+            message: `Your OTP for Patient Portal login is: ${result.otp}. Valid for 10 minutes.`,
+            data: { otp: result.otp, hospitalName: 'Hospital ERP' },
+          });
+        }
+      } catch (e) {
+        logger.warn('OTP notification failed (sandbox mode may be active):', e);
       }
-    } catch (e) { logger.info('OTP notification error:', e); }
+    }
 
-    console.log(`Patient Portal OTP for ${patient.mrn}: ${otp}`);
-    res.json({ sessionId, message: 'OTP sent successfully', ...(process.env.NODE_ENV === 'development' ? { otp } : {}) });
-  } catch (error) {
+    // Return response (OTP only included in sandbox mode)
+    res.json({
+      sessionId: result.sessionId,
+      message: result.message,
+      ...(result.otp ? { otp: result.otp } : {}), // Only in sandbox mode
+    });
+  } catch (error: any) {
+    if (error.message?.includes('Too many OTP requests')) {
+      return res.status(429).json({ error: error.message });
+    }
     logger.error('Request OTP error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
 // Patient Portal - Verify OTP
-app.post('/api/patient-portal/verify-otp', async (req: Request, res: Response) => {
+app.post('/api/patient-portal/verify-otp', authRateLimiter, async (req: Request, res: Response) => {
   try {
     const { sessionId, otp } = req.body;
     if (!sessionId || !otp) return res.status(400).json({ error: 'Session ID and OTP are required' });
 
-    const session = otpSessions.get(sessionId);
-    if (!session) return res.status(401).json({ message: 'Session expired. Please request a new OTP.' });
-    if (new Date() > session.expiresAt) { otpSessions.delete(sessionId); return res.status(401).json({ message: 'OTP expired.' }); }
-    if (session.otp !== otp) return res.status(401).json({ message: 'Invalid OTP. Please try again.' });
+    // Verify using secure service
+    const result = await otpService.verifyOTP(sessionId, otp);
 
-    otpSessions.delete(sessionId);
+    if (!result.valid) {
+      return res.status(401).json({ message: result.message });
+    }
+
+    // Get patient details
     const patient = await prisma.patient.findUnique({
-      where: { id: session.patientId },
+      where: { id: result.patientId },
       select: { id: true, mrn: true, name: true, dob: true, gender: true, contact: true, email: true, bloodGroup: true },
     });
+
     if (!patient) return res.status(404).json({ message: 'Patient not found' });
 
-    const token = jwt.sign({ patientId: patient.id, mrn: patient.mrn, type: 'patient-portal' }, process.env.JWT_SECRET!, { expiresIn: '24h' });
+    // Generate JWT token
+    const token = jwt.sign(
+      { patientId: patient.id, mrn: patient.mrn, type: 'patient-portal' },
+      process.env.JWT_SECRET!,
+      { expiresIn: '24h' }
+    );
+
     res.json({ token, patient });
   } catch (error) {
     logger.error('Verify OTP error:', error);
