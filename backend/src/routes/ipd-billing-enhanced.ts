@@ -5,6 +5,7 @@
 
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
+import { logger } from '../utils/logger';
 
 const prisma = new PrismaClient();
 
@@ -46,7 +47,7 @@ export const getIPDAdmissions = async (req: any, res: Response) => {
       invoiceStatus: adm.encounter?.invoices?.[0]?.status || null,
     })));
   } catch (error) {
-    console.error('Get IPD admissions error:', error);
+    logger.error('Get IPD admissions error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({ error: 'Internal server error' });
   }
 };
@@ -374,7 +375,7 @@ export const getIPDCharges = async (req: any, res: Response) => {
       }
     });
   } catch (error) {
-    console.error('Get IPD charges error:', error);
+    logger.error('Get IPD charges error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({ error: 'Internal server error' });
   }
 };
@@ -448,7 +449,7 @@ export const getIPDBillingSummary = async (req: any, res: Response) => {
 
     res.json(summary);
   } catch (error) {
-    console.error('Get IPD billing summary error:', error);
+    logger.error('Get IPD billing summary error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({ error: 'Internal server error' });
   }
 };
@@ -494,7 +495,7 @@ export const generateIPDBill = async (req: any, res: Response) => {
     });
 
   } catch (error) {
-    console.error('Generate IPD bill error:', error);
+    logger.error('Generate IPD bill error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({ error: 'Internal server error' });
   }
 };

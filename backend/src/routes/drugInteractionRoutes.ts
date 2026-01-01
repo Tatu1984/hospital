@@ -10,6 +10,7 @@
 
 import { Router, Response } from 'express';
 import { prisma } from '../lib/db';
+import { logger } from '../utils/logger';
 import { checkDrugInteractions, checkAllergyConflicts, getDrugInteractions } from '../services/drugInteraction';
 
 const router = Router();
@@ -70,7 +71,7 @@ router.post('/drugs/check-interactions', async (req: any, res: Response) => {
         : 'No significant interactions detected'
     });
   } catch (error) {
-    console.error('Check drug interactions error:', error);
+    logger.error('Check drug interactions error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({
       success: false,
       error: 'Failed to check drug interactions',
@@ -144,7 +145,7 @@ router.get('/drugs/:id/interactions', async (req: any, res: Response) => {
       }
     });
   } catch (error) {
-    console.error('Get drug interactions error:', error);
+    logger.error('Get drug interactions error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({
       success: false,
       error: 'Failed to get drug interactions',
@@ -218,7 +219,7 @@ router.post('/drugs/check-allergy', async (req: any, res: Response) => {
         : 'No allergy conflicts detected'
     });
   } catch (error) {
-    console.error('Check allergy conflicts error:', error);
+    logger.error('Check allergy conflicts error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({
       success: false,
       error: 'Failed to check allergy conflicts',
@@ -290,7 +291,7 @@ router.get('/patients/:patientId/allergies', async (req: any, res: Response) => 
       count: allergies.length
     });
   } catch (error) {
-    console.error('Get patient allergies error:', error);
+    logger.error('Get patient allergies error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({
       success: false,
       error: 'Failed to get patient allergies',
@@ -404,7 +405,7 @@ router.post('/patients/:patientId/allergies', async (req: any, res: Response) =>
       });
     }
   } catch (error) {
-    console.error('Create patient allergy error:', error);
+    logger.error('Create patient allergy error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({
       success: false,
       error: 'Failed to create allergy record',
@@ -445,7 +446,7 @@ router.delete('/patients/:patientId/allergies/:allergyId', async (req: any, res:
       message: 'Allergy record deactivated successfully'
     });
   } catch (error) {
-    console.error('Delete patient allergy error:', error);
+    logger.error('Delete patient allergy error', { error: error instanceof Error ? error.message : error });
     res.status(500).json({
       success: false,
       error: 'Failed to deactivate allergy record',

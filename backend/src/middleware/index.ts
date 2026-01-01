@@ -39,6 +39,8 @@ export {
   sanitizeRequest,
   requestSizeLimiter,
   apiSecurityHeaders,
+  requestIdMiddleware,
+  sanitizeErrorResponse,
 } from './security';
 
 export {

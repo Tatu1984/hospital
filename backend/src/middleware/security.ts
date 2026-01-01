@@ -181,3 +181,50 @@ export const apiSecurityHeaders = (req: Request, res: Response, next: NextFuncti
   res.setHeader('Expires', '0');
   next();
 };
+
+// Request ID middleware for tracing
+export const requestIdMiddleware = (req: Request, res: Response, next: NextFunction) => {
+  const requestId = req.headers['x-request-id'] as string ||
+                    `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+  // Attach to request for use in handlers
+  (req as any).requestId = requestId;
+
+  // Set in response header for client correlation
+  res.setHeader('X-Request-ID', requestId);
+
+  // Add to logger context for this request
+  (req as any).logContext = { requestId };
+
+  next();
+};
+
+// Sanitize error responses - don't expose internal details
+export const sanitizeErrorResponse = (error: any): { message: string; code?: string } => {
+  // In production, don't expose stack traces or internal error details
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  if (isProduction) {
+    // Map common errors to safe messages
+    if (error.code === 'P2002') {
+      return { message: 'A record with this value already exists', code: 'DUPLICATE_ENTRY' };
+    }
+    if (error.code === 'P2025') {
+      return { message: 'Record not found', code: 'NOT_FOUND' };
+    }
+    if (error.name === 'JsonWebTokenError') {
+      return { message: 'Invalid authentication token', code: 'INVALID_TOKEN' };
+    }
+    if (error.name === 'TokenExpiredError') {
+      return { message: 'Authentication token has expired', code: 'TOKEN_EXPIRED' };
+    }
+    // Generic error for unknown types
+    return { message: 'An error occurred. Please try again.', code: 'INTERNAL_ERROR' };
+  }
+
+  // In development, return more details
+  return {
+    message: error.message || 'An error occurred',
+    code: error.code || 'ERROR'
+  };
+};

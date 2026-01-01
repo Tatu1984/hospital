@@ -6,6 +6,7 @@
  */
 
 import { PrismaClient } from '@prisma/client';
+import { logger } from '../utils/logger';
 
 const prisma = new PrismaClient();
 
@@ -67,13 +68,13 @@ export async function createLabOrderBilling(
     if (admissionId) {
       // For IPD patients, just mark the order with admissionId
       // Don't create invoice yet - will be created at discharge
-      console.log(`Lab order ${orderId} added to IPD charges for admission ${admissionId}`);
+      logger.info('Lab order added to IPD charges', { orderId, admissionId });
     } else {
       // For OPD patients, create or update draft invoice
       await createOrUpdateDraftInvoice(patientId, encounterId, orderId, tests, 'lab');
     }
   } catch (error) {
-    console.error('Error creating lab order billing:', error);
+    logger.error('Error creating lab order billing', { error: error instanceof Error ? error.message : error });
     throw error;
   }
 }
@@ -117,13 +118,13 @@ export async function createRadiologyOrderBilling(
     if (admissionId) {
       // For IPD patients, just mark the order with admissionId
       // Don't create invoice yet - will be created at discharge
-      console.log(`Radiology order ${orderId} added to IPD charges for admission ${admissionId}`);
+      logger.info('Radiology order added to IPD charges', { orderId, admissionId });
     } else {
       // For OPD patients, create or update draft invoice
       await createOrUpdateDraftInvoice(patientId, encounterId, orderId, tests, 'radiology');
     }
   } catch (error) {
-    console.error('Error creating radiology order billing:', error);
+    logger.error('Error creating radiology order billing', { error: error instanceof Error ? error.message : error });
     throw error;
   }
 }
@@ -187,7 +188,7 @@ async function createOrUpdateDraftInvoice(
       }
     });
 
-    console.log(`Updated draft invoice ${existingDraftInvoice.id} with ${orderType} order ${orderId}`);
+    logger.info('Updated draft invoice', { invoiceId: existingDraftInvoice.id, orderType, orderId });
   } else {
     // Create new draft invoice
     const invoice = await prisma.invoice.create({
@@ -215,7 +216,7 @@ async function createOrUpdateDraftInvoice(
       }
     });
 
-    console.log(`Created new draft invoice ${invoice.id} for ${orderType} order ${orderId}`);
+    logger.info('Created new draft invoice', { invoiceId: invoice.id, orderType, orderId });
   }
 }
 

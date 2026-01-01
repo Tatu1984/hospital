@@ -9,10 +9,22 @@ export const configError = missingVars.length > 0
   ? `Missing required environment variables: ${missingVars.join(', ')}. Please add them to your Vercel project settings.`
   : null;
 
+// Validate JWT_SECRET strength in production
+const jwtSecret = process.env.JWT_SECRET || '';
+const isWeakSecret = jwtSecret.length < 32 || jwtSecret === 'your-super-secure-jwt-secret-key-min-32-chars';
+export const secretWarning = isWeakSecret && process.env.NODE_ENV === 'production'
+  ? 'WARNING: JWT_SECRET is too weak for production. Use at least 32 random characters.'
+  : null;
+
 // Only crash in non-serverless environments
 if (missingVars.length > 0 && !process.env.VERCEL) {
-  console.error(configError);
+  process.stderr.write(configError + '\n');
   process.exit(1);
+}
+
+// Warn about weak secrets (don't crash, but log)
+if (secretWarning && !process.env.VERCEL) {
+  process.stderr.write(secretWarning + '\n');
 }
 
 export const config = {

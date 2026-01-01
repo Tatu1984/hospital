@@ -11468,14 +11468,12 @@ if (!isVercel) {
   app.listen(PORT, () => {
     logger.info(`Hospital ERP Backend running on http://localhost:${PORT}`);
     logger.info(`API Health: http://localhost:${PORT}/api/health`);
-    console.log(`Hospital ERP Backend running on http://localhost:${PORT}`);
-    console.log(`API Health: http://localhost:${PORT}/api/health`);
 
     // Start appointment reminder service (checks every 15 minutes)
     // Note: In serverless, use Vercel Cron Jobs instead
     if (process.env.ENABLE_REMINDERS !== 'false') {
       reminderService.start(15);
-      console.log(`Appointment reminder service started`);
+      logger.info('Appointment reminder service started');
     }
   });
 
