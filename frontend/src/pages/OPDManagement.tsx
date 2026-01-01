@@ -12,8 +12,9 @@ import { Checkbox } from '@/components/ui/checkbox';
 import {
   UserPlus, Search, Receipt, CreditCard, FileText, Calendar,
   DollarSign, RefreshCw, Printer, Save, X, Clock, User,
-  ChevronLeft, ChevronRight, Camera, Upload
+  ChevronLeft, ChevronRight, Camera, Upload, Stethoscope
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
 
 // Interfaces
@@ -149,6 +150,7 @@ const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export default function OPDManagement() {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('registration');
   const [loading, setLoading] = useState(false);
 
@@ -241,11 +243,11 @@ export default function OPDManagement() {
 
   const fetchDepartments = async () => {
     try {
-      const response = await api.get('/api/departments');
+      const response = await api.get('/api/master/departments');
       setDepartments(response.data || []);
     } catch (error) {
       console.error('Error fetching departments:', error);
-      // Mock data
+      // Fallback mock data
       setDepartments([
         { id: '1', name: 'General Medicine' },
         { id: '2', name: 'Cardiology' },
@@ -573,6 +575,15 @@ export default function OPDManagement() {
             </CardHeader>
             <CardContent className="p-0">
               <nav className="flex flex-col">
+                {/* OPD Consultation - Link to separate page */}
+                <button
+                  onClick={() => navigate('/opd-consultation')}
+                  className="flex items-center gap-2 px-4 py-3 text-left text-sm border-b hover:bg-slate-50 text-slate-700 bg-blue-50"
+                >
+                  <Stethoscope className="w-4 h-4" />
+                  OPD Consultation
+                </button>
+
                 {[
                   { id: 'registration', label: 'Patient Registration', icon: UserPlus },
                   { id: 'assign-doctor', label: 'Assign Doctor', icon: Calendar },

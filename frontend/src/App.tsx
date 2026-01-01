@@ -123,8 +123,8 @@ const AppRoutes = () => {
         {/* Core Clinical Modules */}
         <Route path="patients" element={<RoleProtectedRoute path="patients"><PatientRegistration /></RoleProtectedRoute>} />
         <Route path="appointment" element={<RoleProtectedRoute path="appointment"><Appointment /></RoleProtectedRoute>} />
-        <Route path="opd" element={<RoleProtectedRoute path="opd"><OPD /></RoleProtectedRoute>} />
-        <Route path="opd-management" element={<RoleProtectedRoute path="opd-management"><OPDManagement /></RoleProtectedRoute>} />
+        <Route path="opd" element={<RoleProtectedRoute path="opd"><OPDManagement /></RoleProtectedRoute>} />
+        <Route path="opd-consultation" element={<RoleProtectedRoute path="opd-consultation"><OPD /></RoleProtectedRoute>} />
         <Route path="health-checkup" element={<RoleProtectedRoute path="health-checkup"><HealthCheckup /></RoleProtectedRoute>} />
 
         {/* Diagnostics */}
