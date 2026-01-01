@@ -52,6 +52,15 @@ import path from 'path';
 // Import reminder service
 import { reminderService } from './services/reminder';
 
+// Import Redis service
+import redisService from './services/redis';
+
+// Import IPD charge capture service
+import { ipdChargeCaptureService } from './services/ipdChargeCapture';
+
+// Import patient deduplication service
+import { findPotentialDuplicates, mergePatients, getDuplicateStats } from './services/patientDeduplication';
+
 // Import validators
 import {
   loginSchema,
@@ -96,6 +105,12 @@ import {
   labTestMasterSchema,
   procedureMasterSchema,
   wardMasterSchema,
+  createAnesthesiaRecordSchema,
+  updateAnesthesiaRecordSchema,
+  addVitalsEntrySchema,
+  addAnesthesiaComplicationSchema,
+  reportSurgeryComplicationSchema,
+  addSurgeryImplantSchema,
   validateBody,
   validateQuery,
   validateParams,
@@ -103,6 +118,45 @@ import {
 
 // Import route permissions
 import { checkRoutePermission, ROUTE_PERMISSIONS } from './routes';
+
+// Import pharmacy routes
+import pharmacyRoutes from './routes/pharmacy';
+
+// Import insurance routes
+import insuranceRoutes from './routes/insurance';
+
+// Import OPD workflow routes
+import opdWorkflowRoutes from './routes/opd-workflow';
+
+// Import anesthesia routes
+import anesthesiaRoutes from './routes/anesthesia';
+
+// Import bed management routes
+import bedRoutes from './routes/beds';
+
+// Import reports routes
+import reportsRoutes from './routes/reports';
+
+// Import barcode routes
+import barcodeRoutes from './routes/barcode';
+
+// Import drug interaction routes
+import drugInteractionRoutes from './routes/drugInteractionRoutes';
+
+// Import nursing care plan routes
+import nursingCarePlanRoutes from './routes/nursingCarePlan';
+
+// Import shift management routes
+import shiftsRoutes from './routes/shifts';
+
+// Import radiology/PACS routes
+import radiologyRoutes from './routes/radiology';
+
+// Import inventory routes
+import inventoryRoutes from './routes/inventory';
+
+// Import billing routes
+import billingRoutes from './routes/billing';
 
 // Import logger
 import { logger, auditLogger } from './utils/logger';
@@ -118,8 +172,14 @@ const PORT = process.env.PORT || 4000;
 
 // CORS MUST be the FIRST middleware (before everything else)
 // This is critical for Vercel serverless functions
+const corsOrigins = process.env.CORS_ORIGIN
+  ? process.env.CORS_ORIGIN.split(',').map(o => o.trim())
+  : ['http://localhost:5173', 'http://localhost:3000']; // Default for development
+
 app.use(cors({
-  origin: true, // Allow all origins in serverless - use CORS_ORIGIN env for production
+  origin: process.env.NODE_ENV === 'production'
+    ? corsOrigins  // Restrict to specific origins in production
+    : true,        // Allow all in development for convenience
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
@@ -385,37 +445,234 @@ app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (r
       },
     });
   } catch (error) {
-    console.error('Login error:', error);
+    logger.error('Login error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// Password reset - request reset token
+app.post('/api/auth/forgot-password', authRateLimiter, async (req: Request, res: Response) => {
+  try {
+    const { email } = req.body;
+
+    if (!email || typeof email !== 'string') {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    // Find user by email
+    const user = await prisma.user.findUnique({
+      where: { email: email.toLowerCase().trim() },
+    });
+
+    // Always return success to prevent email enumeration
+    if (!user || !user.isActive) {
+      return res.json({
+        message: 'If an account exists with this email, a password reset link has been sent.',
+      });
+    }
+
+    // Generate secure reset token
+    const crypto = require('crypto');
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const resetTokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
+    const resetExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+    // Save hashed token to database
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordResetToken: resetTokenHash,
+        passwordResetExpires: resetExpires,
+      },
+    });
+
+    // Build reset URL
+    const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/reset-password?token=${resetToken}`;
+
+    // Send email (if notification service is configured)
+    try {
+      const { notificationService } = await import('./services/notification');
+      await notificationService.send({
+        type: 'PASSWORD_RESET',
+        recipientEmail: user.email,
+        message: `You requested a password reset. Click the link below to reset your password:\n\n${resetUrl}\n\nThis link expires in 1 hour.\n\nIf you did not request this, please ignore this email.`,
+        data: { resetUrl, userName: user.name },
+      });
+    } catch (emailError) {
+      logger.error('Failed to send password reset email:', emailError);
+      // Continue even if email fails - token is saved
+    }
+
+    auditLogger.securityEvent('PASSWORD_RESET_REQUESTED', { userId: user.id, email: user.email, ip: req.ip });
+
+    res.json({
+      message: 'If an account exists with this email, a password reset link has been sent.',
+    });
+  } catch (error) {
+    logger.error('Forgot password error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Password reset - reset password with token
+app.post('/api/auth/reset-password', authRateLimiter, async (req: Request, res: Response) => {
+  try {
+    const { token, password } = req.body;
+
+    if (!token || typeof token !== 'string') {
+      return res.status(400).json({ error: 'Reset token is required' });
+    }
+
+    if (!password || typeof password !== 'string' || password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    }
+
+    // Hash the provided token to compare with stored hash
+    const crypto = require('crypto');
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+    // Find user with valid reset token
+    const user = await prisma.user.findFirst({
+      where: {
+        passwordResetToken: tokenHash,
+        passwordResetExpires: { gt: new Date() },
+        isActive: true,
+      },
+    });
+
+    if (!user) {
+      auditLogger.securityEvent('PASSWORD_RESET_FAILED', { reason: 'invalid_or_expired_token', ip: req.ip });
+      return res.status(400).json({ error: 'Invalid or expired reset token' });
+    }
+
+    // Hash new password
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    // Update password and clear reset token
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash,
+        passwordResetToken: null,
+        passwordResetExpires: null,
+      },
+    });
+
+    auditLogger.securityEvent('PASSWORD_RESET_SUCCESS', { userId: user.id, email: user.email, ip: req.ip });
+
+    res.json({ message: 'Password has been reset successfully' });
+  } catch (error) {
+    logger.error('Reset password error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ============================================
+// PHARMACY MODULE ROUTES
+// ============================================
+app.use('/api/pharmacy', authenticateToken, pharmacyRoutes);
+
+// ============================================
+// INSURANCE MODULE ROUTES
+// ============================================
+app.use('/api/insurance', authenticateToken, insuranceRoutes);
+
+// ============================================
+// OPD WORKFLOW ROUTES
+// ============================================
+app.use('/api', opdWorkflowRoutes);
+
+// ============================================
+// ANESTHESIA & SURGERY MANAGEMENT ROUTES
+// ============================================
+app.use('/api', anesthesiaRoutes);
+
+// ============================================
+// BED MANAGEMENT ROUTES
+// ============================================
+app.use('/api/beds', authenticateToken, bedRoutes);
+
+// ============================================
+// REPORTS ROUTES
+// ============================================
+app.use('/api/reports', authenticateToken, reportsRoutes);
+
+// ============================================
+// BARCODE MANAGEMENT ROUTES
+// ============================================
+app.use('/api/barcodes', authenticateToken, barcodeRoutes);
+
+// ============================================
+// DRUG INTERACTION ROUTES
+// ============================================
+app.use('/api', authenticateToken, drugInteractionRoutes);
+
+// ============================================
+// NURSING CARE PLAN ROUTES
+// ============================================
+app.use('/api/nursing', authenticateToken, nursingCarePlanRoutes);
+
+// ============================================
+// SHIFT MANAGEMENT ROUTES
+// ============================================
+app.use('/api/shifts', authenticateToken, shiftsRoutes);
+
+// ============================================
+// RADIOLOGY/PACS ROUTES
+// ============================================
+app.use('/api/radiology', authenticateToken, radiologyRoutes);
+
+// ============================================
+// INVENTORY MANAGEMENT ROUTES
+// ============================================
+app.use('/api/inventory', authenticateToken, inventoryRoutes);
+
+// ============================================
+// BILLING ROUTES
+// ============================================
+app.use('/api/billing', authenticateToken, billingRoutes);
 
 // Patient routes - with validation and RBAC
 app.get('/api/patients', authenticateToken, requirePermission('patients:view'), validateQuery(searchSchema), async (req: any, res: Response) => {
   try {
     const { search, limit = 50, page = 1 } = (req as any).validatedQuery || req.query;
 
-    const where: any = {
+    // Generate cache key based on query parameters
+    const cacheKey = redisService.generateKey('patients', {
       tenantId: req.user.tenantId,
-    };
-
-    if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { mrn: { contains: search, mode: 'insensitive' } },
-        { contact: { contains: search, mode: 'insensitive' } },
-      ];
-    }
-
-    const patients = await prisma.patient.findMany({
-      where,
-      take: parseInt(limit as string),
-      skip: (parseInt(page as string) - 1) * parseInt(limit as string),
-      orderBy: { createdAt: 'desc' },
-      include: {
-        branch: { select: { name: true } },
-      },
+      search: search || '',
+      limit,
+      page,
     });
+
+    // Try to get from cache first, or fetch from database
+    const patients = await redisService.cacheWrapper(
+      cacheKey,
+      300, // 5 minutes TTL
+      async () => {
+        const where: any = {
+          tenantId: req.user.tenantId,
+        };
+
+        if (search) {
+          where.OR = [
+            { name: { contains: search, mode: 'insensitive' } },
+            { mrn: { contains: search, mode: 'insensitive' } },
+            { contact: { contains: search, mode: 'insensitive' } },
+          ];
+        }
+
+        return await prisma.patient.findMany({
+          where,
+          take: parseInt(limit as string),
+          skip: (parseInt(page as string) - 1) * parseInt(limit as string),
+          orderBy: { createdAt: 'desc' },
+          include: {
+            branch: { select: { name: true } },
+          },
+        });
+      }
+    );
 
     res.json(patients);
   } catch (error) {
@@ -429,7 +686,35 @@ app.get('/api/patients', authenticateToken, requirePermission('patients:view'), 
 
 app.post('/api/patients', authenticateToken, requirePermission('patients:create'), validateBody(createPatientSchema), async (req: any, res: Response) => {
   try {
-    const { name, dob, gender, contact, email, address, bloodGroup, allergies, referralSourceId } = (req as any).validatedBody || req.body;
+    const { name, dob, gender, contact, email, address, bloodGroup, allergies, referralSourceId, forceCreate } = (req as any).validatedBody || req.body;
+
+    // Check for potential duplicates before creating (unless forceCreate is true)
+    if (!forceCreate) {
+      const potentialDuplicates = await findPotentialDuplicates(
+        { name, dob, gender, contact, email, address },
+        req.user.tenantId,
+        req.user.branchId
+      );
+
+      // If high-confidence duplicates found, return them for confirmation
+      if (potentialDuplicates.length > 0 && potentialDuplicates[0].score >= 70) {
+        return res.status(409).json({
+          error: 'POTENTIAL_DUPLICATE',
+          message: 'Potential duplicate patients found. Please review or use forceCreate option.',
+          duplicates: potentialDuplicates.map(d => ({
+            id: d.patient.id,
+            mrn: d.patient.mrn,
+            name: d.patient.name,
+            dob: d.patient.dob,
+            contact: d.patient.contact,
+            email: d.patient.email,
+            address: d.patient.address,
+            score: d.score,
+            matchReasons: d.matchReasons,
+          })),
+        });
+      }
+    }
 
     // Generate MRN
     const lastPatient = await prisma.patient.findFirst({
@@ -466,9 +751,12 @@ app.post('/api/patients', authenticateToken, requirePermission('patients:create'
       },
     });
 
+    // Invalidate patients cache for this tenant
+    await redisService.deletePattern(`patients:*tenantId:${req.user.tenantId}*`);
+
     res.status(201).json(patient);
   } catch (error) {
-    console.error('Create patient error:', error);
+    logger.error('Create patient error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -507,6 +795,273 @@ app.get('/api/patients/:id', authenticateToken, requirePermission('patients:view
     res.status(500).json({
       error: 'INTERNAL_ERROR',
       message: 'Failed to fetch patient',
+    });
+  }
+});
+
+// Patient deduplication endpoints
+
+/**
+ * @swagger
+ * /api/patients/check-duplicates:
+ *   post:
+ *     summary: Check for duplicate patients before registration
+ *     tags: [Patients]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - name
+ *             properties:
+ *               name:
+ *                 type: string
+ *               dob:
+ *                 type: string
+ *                 format: date
+ *               contact:
+ *                 type: string
+ *               email:
+ *                 type: string
+ *               address:
+ *                 type: string
+ *               gender:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Potential duplicates found or no duplicates
+ */
+app.post('/api/patients/check-duplicates', authenticateToken, requirePermission('patients:view'), async (req: any, res: Response) => {
+  try {
+    const { name, dob, gender, contact, email, address } = req.body;
+
+    if (!name) {
+      return res.status(400).json({
+        error: 'VALIDATION_ERROR',
+        message: 'Name is required',
+      });
+    }
+
+    const potentialDuplicates = await findPotentialDuplicates(
+      { name, dob, gender, contact, email, address },
+      req.user.tenantId,
+      req.user.branchId
+    );
+
+    res.json({
+      hasDuplicates: potentialDuplicates.length > 0,
+      count: potentialDuplicates.length,
+      duplicates: potentialDuplicates.map(d => ({
+        id: d.patient.id,
+        mrn: d.patient.mrn,
+        name: d.patient.name,
+        dob: d.patient.dob,
+        contact: d.patient.contact,
+        email: d.patient.email,
+        address: d.patient.address,
+        gender: d.patient.gender,
+        score: d.score,
+        matchReasons: d.matchReasons,
+        confidenceLevel: d.score >= 85 ? 'high' : d.score >= 70 ? 'medium' : 'low',
+      })),
+    });
+  } catch (error) {
+    logger.error('Check duplicates error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to check for duplicates',
+    });
+  }
+});
+
+/**
+ * @swagger
+ * /api/patients/{id}/potential-duplicates:
+ *   get:
+ *     summary: Find potential duplicates for an existing patient
+ *     tags: [Patients]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Patient ID
+ *     responses:
+ *       200:
+ *         description: Potential duplicates found
+ *       404:
+ *         description: Patient not found
+ */
+app.get('/api/patients/:id/potential-duplicates', authenticateToken, requirePermission('patients:view'), async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    // Get the patient first
+    const patient = await prisma.patient.findFirst({
+      where: {
+        id,
+        tenantId: req.user.tenantId,
+      },
+    });
+
+    if (!patient) {
+      return res.status(404).json({
+        error: 'NOT_FOUND',
+        message: 'Patient not found',
+      });
+    }
+
+    // Find potential duplicates
+    const potentialDuplicates = await findPotentialDuplicates(
+      {
+        name: patient.name,
+        dob: patient.dob,
+        contact: patient.contact,
+        email: patient.email,
+        address: patient.address,
+        gender: patient.gender,
+      },
+      req.user.tenantId,
+      patient.branchId,
+      id // Exclude this patient from results
+    );
+
+    // Get statistics
+    const stats = await getDuplicateStats(id, req.user.tenantId);
+
+    res.json({
+      patient: {
+        id: patient.id,
+        mrn: patient.mrn,
+        name: patient.name,
+        dob: patient.dob,
+        contact: patient.contact,
+        email: patient.email,
+      },
+      stats,
+      duplicates: potentialDuplicates.map(d => ({
+        id: d.patient.id,
+        mrn: d.patient.mrn,
+        name: d.patient.name,
+        dob: d.patient.dob,
+        contact: d.patient.contact,
+        email: d.patient.email,
+        address: d.patient.address,
+        gender: d.patient.gender,
+        bloodGroup: d.patient.bloodGroup,
+        createdAt: d.patient.createdAt,
+        score: d.score,
+        matchReasons: d.matchReasons,
+        confidenceLevel: d.score >= 85 ? 'high' : d.score >= 70 ? 'medium' : 'low',
+      })),
+    });
+  } catch (error) {
+    logger.error('Get potential duplicates error:', error);
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to find potential duplicates',
+    });
+  }
+});
+
+/**
+ * @swagger
+ * /api/patients/merge:
+ *   post:
+ *     summary: Merge two patient records (admin only)
+ *     tags: [Patients]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - primaryId
+ *               - duplicateId
+ *             properties:
+ *               primaryId:
+ *                 type: string
+ *                 description: ID of the patient to keep
+ *               duplicateId:
+ *                 type: string
+ *                 description: ID of the patient to merge and delete
+ *     responses:
+ *       200:
+ *         description: Patients merged successfully
+ *       400:
+ *         description: Invalid request
+ *       403:
+ *         description: Insufficient permissions
+ */
+app.post('/api/patients/merge', authenticateToken, requirePermission('patients:edit'), async (req: any, res: Response) => {
+  try {
+    const { primaryId, duplicateId } = req.body;
+
+    // Validate input
+    if (!primaryId || !duplicateId) {
+      return res.status(400).json({
+        error: 'VALIDATION_ERROR',
+        message: 'Both primaryId and duplicateId are required',
+      });
+    }
+
+    if (primaryId === duplicateId) {
+      return res.status(400).json({
+        error: 'VALIDATION_ERROR',
+        message: 'Cannot merge a patient with itself',
+      });
+    }
+
+    // Perform merge
+    const result = await mergePatients(primaryId, duplicateId, req.user.tenantId);
+
+    // Invalidate patients cache for this tenant
+    await redisService.deletePattern(`patients:*tenantId:${req.user.tenantId}*`);
+
+    res.json({
+      success: true,
+      message: 'Patients merged successfully',
+      primaryPatient: {
+        id: result.primaryPatient.id,
+        mrn: result.primaryPatient.mrn,
+        name: result.primaryPatient.name,
+        dob: result.primaryPatient.dob,
+        contact: result.primaryPatient.contact,
+        email: result.primaryPatient.email,
+      },
+      mergedData: result.mergedData,
+    });
+  } catch (error: any) {
+    logger.error('Merge patients error:', error);
+
+    // Handle specific error cases
+    if (error.message === 'One or both patients not found') {
+      return res.status(404).json({
+        error: 'NOT_FOUND',
+        message: error.message,
+      });
+    }
+
+    if (error.message === 'Unauthorized: Patients do not belong to this tenant') {
+      return res.status(403).json({
+        error: 'FORBIDDEN',
+        message: error.message,
+      });
+    }
+
+    res.status(500).json({
+      error: 'INTERNAL_ERROR',
+      message: 'Failed to merge patients',
     });
   }
 });
@@ -590,7 +1145,7 @@ app.get('/api/export/patients', authenticateToken, requirePermission('patients:v
     res.setHeader('Content-Disposition', `attachment; filename=patients_${Date.now()}.xlsx`);
     res.send(buffer);
   } catch (error) {
-    console.error('Export patients error:', error);
+    logger.error('Export patients error:', error);
     res.status(500).json({ error: 'Export failed' });
   }
 });
@@ -619,7 +1174,7 @@ app.get('/api/export/appointments', authenticateToken, requirePermission('appoin
     res.setHeader('Content-Disposition', `attachment; filename=appointments_${Date.now()}.xlsx`);
     res.send(buffer);
   } catch (error) {
-    console.error('Export appointments error:', error);
+    logger.error('Export appointments error:', error);
     res.status(500).json({ error: 'Export failed' });
   }
 });
@@ -646,7 +1201,7 @@ app.get('/api/export/invoices', authenticateToken, requirePermission('billing:vi
     res.setHeader('Content-Disposition', `attachment; filename=invoices_${Date.now()}.xlsx`);
     res.send(buffer);
   } catch (error) {
-    console.error('Export invoices error:', error);
+    logger.error('Export invoices error:', error);
     res.status(500).json({ error: 'Export failed' });
   }
 });
@@ -672,7 +1227,7 @@ app.get('/api/export/payments', authenticateToken, requirePermission('billing:vi
     res.setHeader('Content-Disposition', `attachment; filename=collections_${Date.now()}.xlsx`);
     res.send(buffer);
   } catch (error) {
-    console.error('Export payments error:', error);
+    logger.error('Export payments error:', error);
     res.status(500).json({ error: 'Export failed' });
   }
 });
@@ -701,7 +1256,7 @@ app.get('/api/export/lab-orders', authenticateToken, requirePermission('lab:view
     res.setHeader('Content-Disposition', `attachment; filename=lab_orders_${Date.now()}.xlsx`);
     res.send(buffer);
   } catch (error) {
-    console.error('Export lab orders error:', error);
+    logger.error('Export lab orders error:', error);
     res.status(500).json({ error: 'Export failed' });
   }
 });
@@ -719,7 +1274,7 @@ app.get('/api/export/employees', authenticateToken, requirePermission('hr:view')
     res.setHeader('Content-Disposition', `attachment; filename=employees_${Date.now()}.xlsx`);
     res.send(buffer);
   } catch (error) {
-    console.error('Export employees error:', error);
+    logger.error('Export employees error:', error);
     res.status(500).json({ error: 'Export failed' });
   }
 });
@@ -750,7 +1305,7 @@ app.get('/api/export/admissions', authenticateToken, requirePermission('ipd:view
     res.setHeader('Content-Disposition', `attachment; filename=admissions_${Date.now()}.xlsx`);
     res.send(buffer);
   } catch (error) {
-    console.error('Export admissions error:', error);
+    logger.error('Export admissions error:', error);
     res.status(500).json({ error: 'Export failed' });
   }
 });
@@ -805,7 +1360,7 @@ app.get('/api/pdf/invoice/:id', authenticateToken, requirePermission('billing:vi
     res.setHeader('Content-Disposition', `attachment; filename=invoice_${invoice.id.slice(0, 8)}.pdf`);
     res.send(pdfBuffer);
   } catch (error) {
-    console.error('Generate invoice PDF error:', error);
+    logger.error('Generate invoice PDF error:', error);
     res.status(500).json({ error: 'Failed to generate PDF' });
   }
 });
@@ -846,7 +1401,7 @@ app.get('/api/pdf/receipt/:id', authenticateToken, requirePermission('billing:vi
     res.setHeader('Content-Disposition', `attachment; filename=receipt_${payment.id.slice(0, 8)}.pdf`);
     res.send(pdfBuffer);
   } catch (error) {
-    console.error('Generate receipt PDF error:', error);
+    logger.error('Generate receipt PDF error:', error);
     res.status(500).json({ error: 'Failed to generate PDF' });
   }
 });
@@ -898,7 +1453,7 @@ app.get('/api/pdf/lab-report/:id', authenticateToken, requirePermission('lab:vie
     res.setHeader('Content-Disposition', `attachment; filename=lab_report_${result.id.slice(0, 8)}.pdf`);
     res.send(pdfBuffer);
   } catch (error) {
-    console.error('Generate lab report PDF error:', error);
+    logger.error('Generate lab report PDF error:', error);
     res.status(500).json({ error: 'Failed to generate PDF' });
   }
 });
@@ -950,7 +1505,7 @@ app.get('/api/pdf/discharge/:id', authenticateToken, requirePermission('ipd:view
     res.setHeader('Content-Disposition', `attachment; filename=discharge_${admission.id.slice(0, 8)}.pdf`);
     res.send(pdfBuffer);
   } catch (error) {
-    console.error('Generate discharge PDF error:', error);
+    logger.error('Generate discharge PDF error:', error);
     res.status(500).json({ error: 'Failed to generate PDF' });
   }
 });
@@ -958,26 +1513,58 @@ app.get('/api/pdf/discharge/:id', authenticateToken, requirePermission('ipd:view
 // Encounter routes
 app.post('/api/encounters', authenticateToken, requirePermission('encounters:create'), validateBody(createEncounterSchema), async (req: any, res: Response) => {
   try {
-    const { patientId, type, chiefComplaint } = (req as any).validatedBody || req.body;
+    const { patientId, type, chiefComplaint, appointmentId, tokenNumber, doctorId } = (req as any).validatedBody || req.body;
+
+    // If appointmentId provided, check if encounter already exists for this appointment
+    if (appointmentId) {
+      const existingEncounter = await prisma.encounter.findFirst({
+        where: { appointmentId },
+        include: { patient: true, doctor: { select: { name: true } } }
+      });
+      if (existingEncounter) {
+        return res.json(existingEncounter);
+      }
+    }
+
+    // Get appointment details if appointmentId is provided
+    let appointmentDetails: any = null;
+    if (appointmentId) {
+      appointmentDetails = await prisma.appointment.findUnique({
+        where: { id: appointmentId },
+        select: { patientId: true, doctorId: true, reason: true, department: true }
+      });
+    }
 
     const encounter = await prisma.encounter.create({
       data: {
-        patientId,
+        patientId: patientId || appointmentDetails?.patientId,
         branchId: req.user.branchId,
         type: type || 'OP',
-        doctorId: req.user.userId,
-        chiefComplaint,
+        doctorId: doctorId || appointmentDetails?.doctorId || req.user.userId,
+        chiefComplaint: chiefComplaint || appointmentDetails?.reason,
+        appointmentId: appointmentId || null,
+        tokenNumber: tokenNumber || null,
+        startTime: new Date(),
         status: 'active',
       },
       include: {
         patient: true,
         doctor: { select: { name: true } },
+        appointment: { select: { id: true, appointmentDate: true, appointmentTime: true } }
       },
     });
 
+    // Update appointment status to 'in_progress' if linked
+    if (appointmentId) {
+      await prisma.appointment.update({
+        where: { id: appointmentId },
+        data: { status: 'in_progress' }
+      });
+    }
+
     res.status(201).json(encounter);
   } catch (error) {
-    console.error('Create encounter error:', error);
+    logger.error('Create encounter error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1009,7 +1596,7 @@ app.get('/api/encounters', authenticateToken, async (req: any, res: Response) =>
 
     res.json(encounters);
   } catch (error) {
-    console.error('Get encounters error:', error);
+    logger.error('Get encounters error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1048,8 +1635,10 @@ app.post('/api/opd-notes', authenticateToken, validateBody(opdNoteSchema), async
       await prisma.prescription.create({
         data: {
           opdNoteId: opdNote.id,
+          patientId,
           doctorId: req.user.userId,
           drugs: prescription.drugs,
+          status: 'pending', // Default status for new prescriptions
         },
       });
     }
@@ -1064,7 +1653,7 @@ app.post('/api/opd-notes', authenticateToken, validateBody(opdNoteSchema), async
 
     res.status(201).json(result);
   } catch (error) {
-    console.error('Create OPD note error:', error);
+    logger.error('Create OPD note error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1084,7 +1673,7 @@ app.get('/api/opd-notes/:encounterId', authenticateToken, async (req: any, res: 
 
     res.json(opdNotes);
   } catch (error) {
-    console.error('Get OPD notes error:', error);
+    logger.error('Get OPD notes error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1116,7 +1705,7 @@ app.post('/api/invoices', authenticateToken, validateBody(createInvoiceSchema), 
 
     res.status(201).json(invoice);
   } catch (error) {
-    console.error('Create invoice error:', error);
+    logger.error('Create invoice error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1184,7 +1773,7 @@ app.post('/api/invoices/:id/payment', authenticateToken, validateBody(paymentSch
 
     res.json(payment);
   } catch (error) {
-    console.error('Create payment error:', error);
+    logger.error('Create payment error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1208,7 +1797,7 @@ app.get('/api/invoices', authenticateToken, async (req: any, res: Response) => {
 
     res.json(invoices);
   } catch (error) {
-    console.error('Get invoices error:', error);
+    logger.error('Get invoices error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1228,7 +1817,7 @@ app.get('/api/payments/config', authenticateToken, async (req: any, res: Respons
       currency: 'INR',
     });
   } catch (error) {
-    console.error('Get payment config error:', error);
+    logger.error('Get payment config error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1298,7 +1887,7 @@ app.post('/api/payments/create-order', authenticateToken, async (req: any, res: 
       },
     });
   } catch (error: any) {
-    console.error('Create payment order error:', error);
+    logger.error('Create payment order error:', error);
     res.status(500).json({ error: error.message || 'Failed to create payment order' });
   }
 });
@@ -1410,7 +1999,7 @@ app.post('/api/payments/verify', authenticateToken, async (req: any, res: Respon
           date: new Date().toLocaleDateString('en-IN'),
           hospitalName: 'Hospital ERP',
         },
-      }).catch(err => console.error('Payment notification failed:', err));
+      }).catch(err => logger.error('Payment notification failed:', err));
     }
 
     res.json({
@@ -1424,7 +2013,7 @@ app.post('/api/payments/verify', authenticateToken, async (req: any, res: Respon
       },
     });
   } catch (error: any) {
-    console.error('Verify payment error:', error);
+    logger.error('Verify payment error:', error);
     res.status(500).json({ error: error.message || 'Payment verification failed' });
   }
 });
@@ -1437,7 +2026,7 @@ app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), asy
 
     // Verify webhook signature
     if (!paymentService.verifyWebhookSignature(body, signature)) {
-      console.error('Invalid webhook signature');
+      logger.error('Invalid webhook signature');
       return res.status(400).json({ error: 'Invalid signature' });
     }
 
@@ -1445,7 +2034,7 @@ app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), asy
     const eventType = event.event;
     const payload = event.payload;
 
-    console.log('Razorpay webhook received:', eventType);
+    logger.info('Razorpay webhook received:', eventType);
 
     switch (eventType) {
       case 'payment.captured': {
@@ -1517,7 +2106,7 @@ app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), asy
 
     res.json({ received: true });
   } catch (error) {
-    console.error('Webhook processing error:', error);
+    logger.error('Webhook processing error:', error);
     res.status(500).json({ error: 'Webhook processing failed' });
   }
 });
@@ -1591,7 +2180,7 @@ app.post('/api/payments/:id/refund', authenticateToken, requirePermission('billi
       },
     });
   } catch (error: any) {
-    console.error('Refund error:', error);
+    logger.error('Refund error:', error);
     res.status(500).json({ error: error.message || 'Refund failed' });
   }
 });
@@ -1603,49 +2192,65 @@ app.post('/api/payments/:id/refund', authenticateToken, requirePermission('billi
 // Dashboard stats
 app.get('/api/dashboard/stats', authenticateToken, async (req: any, res: Response) => {
   try {
+    // Generate cache key based on branch and current date
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+    const dateKey = today.toISOString().split('T')[0];
 
-    const [
-      todayPatients,
-      todayEncounters,
-      activeAdmissions,
-      todayRevenue,
-    ] = await Promise.all([
-      prisma.patient.count({
-        where: {
-          branchId: req.user.branchId,
-          createdAt: { gte: today },
-        },
-      }),
-      prisma.encounter.count({
-        where: {
-          branchId: req.user.branchId,
-          visitDate: { gte: today },
-        },
-      }),
-      prisma.admission.count({
-        where: {
-          status: 'active',
-        },
-      }),
-      prisma.invoice.aggregate({
-        where: {
-          createdAt: { gte: today },
-          status: { in: ['final', 'paid'] },
-        },
-        _sum: { total: true },
-      }),
-    ]);
-
-    res.json({
-      todayPatients,
-      todayEncounters,
-      activeAdmissions,
-      todayRevenue: todayRevenue._sum.total || 0,
+    const cacheKey = redisService.generateKey('dashboard:stats', {
+      branchId: req.user.branchId,
+      date: dateKey,
     });
+
+    // Try to get from cache first, or fetch from database
+    const stats = await redisService.cacheWrapper(
+      cacheKey,
+      60, // 1 minute TTL
+      async () => {
+        const [
+          todayPatients,
+          todayEncounters,
+          activeAdmissions,
+          todayRevenue,
+        ] = await Promise.all([
+          prisma.patient.count({
+            where: {
+              branchId: req.user.branchId,
+              createdAt: { gte: today },
+            },
+          }),
+          prisma.encounter.count({
+            where: {
+              branchId: req.user.branchId,
+              visitDate: { gte: today },
+            },
+          }),
+          prisma.admission.count({
+            where: {
+              status: 'active',
+            },
+          }),
+          prisma.invoice.aggregate({
+            where: {
+              createdAt: { gte: today },
+              status: { in: ['final', 'paid'] },
+            },
+            _sum: { total: true },
+          }),
+        ]);
+
+        return {
+          todayPatients,
+          todayEncounters,
+          activeAdmissions,
+          todayRevenue: todayRevenue._sum.total || 0,
+        };
+      }
+    );
+
+    res.json(stats);
   } catch (error) {
-    console.error('Get dashboard stats error:', error);
+    logger.error('Get dashboard stats error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1689,7 +2294,7 @@ app.get('/api/analytics/revenue', authenticateToken, requirePermission('dashboar
       byPaymentMode: Object.entries(byPaymentMode).map(([mode, amount]) => ({ mode, amount })),
     });
   } catch (error) {
-    console.error('Revenue analytics error:', error);
+    logger.error('Revenue analytics error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1733,7 +2338,7 @@ app.get('/api/analytics/patients', authenticateToken, requirePermission('dashboa
       dailyRegistrations: Object.entries(dailyRegistrations).map(([date, count]) => ({ date, count })),
     });
   } catch (error) {
-    console.error('Patient analytics error:', error);
+    logger.error('Patient analytics error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1772,7 +2377,7 @@ app.get('/api/analytics/appointments', authenticateToken, requirePermission('das
       departmentDistribution: departmentDistribution.map(d => ({ department: d.department || 'General', count: d._count.id })),
     });
   } catch (error) {
-    console.error('Appointment analytics error:', error);
+    logger.error('Appointment analytics error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1803,7 +2408,7 @@ app.get('/api/analytics/lab', authenticateToken, requirePermission('dashboard:vi
       statusDistribution: statusDistribution.map(s => ({ status: s.status, count: s._count.id })),
     });
   } catch (error) {
-    console.error('Lab analytics error:', error);
+    logger.error('Lab analytics error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1827,7 +2432,7 @@ app.get('/api/analytics/ipd', authenticateToken, requirePermission('dashboard:vi
       occupancyRate,
     });
   } catch (error) {
-    console.error('IPD analytics error:', error);
+    logger.error('IPD analytics error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1863,7 +2468,7 @@ app.get('/api/referral-sources', authenticateToken, async (req: any, res: Respon
 
     res.json(sources);
   } catch (error) {
-    console.error('Get referral sources error:', error);
+    logger.error('Get referral sources error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1880,7 +2485,7 @@ app.post('/api/referral-sources', authenticateToken, validateBody(referralSource
 
     res.status(201).json(source);
   } catch (error) {
-    console.error('Create referral source error:', error);
+    logger.error('Create referral source error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1896,7 +2501,7 @@ app.put('/api/referral-sources/:id', authenticateToken, async (req: any, res: Re
 
     res.json(source);
   } catch (error) {
-    console.error('Update referral source error:', error);
+    logger.error('Update referral source error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1941,7 +2546,7 @@ app.get('/api/commissions', authenticateToken, async (req: any, res: Response) =
 
     res.json(commissions);
   } catch (error) {
-    console.error('Get commissions error:', error);
+    logger.error('Get commissions error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1962,7 +2567,7 @@ app.post('/api/commissions/:id/approve', authenticateToken, async (req: any, res
 
     res.json(commission);
   } catch (error) {
-    console.error('Approve commission error:', error);
+    logger.error('Approve commission error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2023,7 +2628,7 @@ app.post('/api/commission-payouts', authenticateToken, async (req: any, res: Res
 
     res.status(201).json(payout);
   } catch (error) {
-    console.error('Create commission payout error:', error);
+    logger.error('Create commission payout error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2048,7 +2653,7 @@ app.get('/api/commission-payouts', authenticateToken, async (req: any, res: Resp
 
     res.json(payouts);
   } catch (error) {
-    console.error('Get commission payouts error:', error);
+    logger.error('Get commission payouts error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2080,7 +2685,7 @@ app.get('/api/commissions/summary', authenticateToken, async (req: any, res: Res
 
     res.json(result);
   } catch (error) {
-    console.error('Get commission summary error:', error);
+    logger.error('Get commission summary error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2111,7 +2716,7 @@ app.get('/api/account-heads', authenticateToken, async (req: any, res: Response)
 
     res.json(accounts);
   } catch (error) {
-    console.error('Get account heads error:', error);
+    logger.error('Get account heads error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2128,7 +2733,7 @@ app.post('/api/account-heads', authenticateToken, async (req: any, res: Response
 
     res.status(201).json(account);
   } catch (error) {
-    console.error('Create account head error:', error);
+    logger.error('Create account head error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2157,7 +2762,7 @@ app.get('/api/journal-entries', authenticateToken, async (req: any, res: Respons
 
     res.json(entries);
   } catch (error) {
-    console.error('Get journal entries error:', error);
+    logger.error('Get journal entries error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2212,7 +2817,7 @@ app.post('/api/journal-entries', authenticateToken, validateBody(journalEntrySch
 
     res.status(201).json(entry);
   } catch (error) {
-    console.error('Create journal entry error:', error);
+    logger.error('Create journal entry error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2241,7 +2846,7 @@ app.get('/api/ledger/:accountHeadId', authenticateToken, async (req: any, res: R
 
     res.json(ledger);
   } catch (error) {
-    console.error('Get ledger error:', error);
+    logger.error('Get ledger error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2266,7 +2871,7 @@ app.get('/api/trial-balance', authenticateToken, async (req: any, res: Response)
 
     res.json({ accounts: trialBalance, totalDebit, totalCredit });
   } catch (error) {
-    console.error('Get trial balance error:', error);
+    logger.error('Get trial balance error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2284,7 +2889,7 @@ app.get('/api/doctor-contracts', authenticateToken, async (req: any, res: Respon
 
     res.json(contracts);
   } catch (error) {
-    console.error('Get doctor contracts error:', error);
+    logger.error('Get doctor contracts error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2298,7 +2903,7 @@ app.post('/api/doctor-contracts', authenticateToken, async (req: any, res: Respo
 
     res.status(201).json(contract);
   } catch (error) {
-    console.error('Create doctor contract error:', error);
+    logger.error('Create doctor contract error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2325,7 +2930,7 @@ app.get('/api/doctor-revenues', authenticateToken, async (req: any, res: Respons
 
     res.json(revenues);
   } catch (error) {
-    console.error('Get doctor revenues error:', error);
+    logger.error('Get doctor revenues error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2392,7 +2997,7 @@ app.post('/api/doctor-payouts', authenticateToken, async (req: any, res: Respons
 
     res.status(201).json(payout);
   } catch (error) {
-    console.error('Create doctor payout error:', error);
+    logger.error('Create doctor payout error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2418,7 +3023,7 @@ app.get('/api/doctor-payouts', authenticateToken, async (req: any, res: Response
 
     res.json(payouts);
   } catch (error) {
-    console.error('Get doctor payouts error:', error);
+    logger.error('Get doctor payouts error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2437,13 +3042,44 @@ app.get('/api/drugs', authenticateToken, async (req: any, res: Response) => {
       where.OR = [
         { name: { contains: search, mode: 'insensitive' } },
         { genericName: { contains: search, mode: 'insensitive' } },
+        { code: { contains: search, mode: 'insensitive' } },
       ];
     }
 
-    const drugs = await prisma.drug.findMany({ where, orderBy: { name: 'asc' } });
-    res.json(drugs);
+    const drugs = await prisma.drug.findMany({
+      where,
+      orderBy: { name: 'asc' },
+      include: {
+        stocks: {
+          select: {
+            id: true,
+            batchNumber: true,
+            expiryDate: true,
+            quantity: true,
+          },
+        },
+      },
+    });
+
+    res.json(drugs.map(drug => ({
+      id: drug.id,
+      name: drug.name,
+      genericName: drug.genericName,
+      form: drug.form,
+      dosageForm: drug.form,
+      strength: drug.strength,
+      category: drug.category,
+      isNarcotic: drug.isNarcotic,
+      price: Number(drug.price),
+      unitPrice: Number(drug.price),
+      isActive: drug.isActive,
+      code: drug.code,
+      reorderLevel: drug.reorderLevel,
+      stockQuantity: drug.stockQuantity,
+      stocks: drug.stocks,
+    })));
   } catch (error) {
-    console.error('Get drugs error:', error);
+    logger.error('Get drugs error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2451,9 +3087,13 @@ app.get('/api/drugs', authenticateToken, async (req: any, res: Response) => {
 app.post('/api/drugs', authenticateToken, validateBody(drugMasterSchema), async (req: any, res: Response) => {
   try {
     const drug = await prisma.drug.create({ data: req.body });
+
+    // Invalidate drugs cache
+    await redisService.del('master:drugs');
+
     res.status(201).json(drug);
   } catch (error) {
-    console.error('Create drug error:', error);
+    logger.error('Create drug error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2462,9 +3102,13 @@ app.put('/api/drugs/:id', authenticateToken, async (req: any, res: Response) => 
   try {
     const { id } = req.params;
     const drug = await prisma.drug.update({ where: { id }, data: req.body });
+
+    // Invalidate drugs cache
+    await redisService.del('master:drugs');
+
     res.json(drug);
   } catch (error) {
-    console.error('Update drug error:', error);
+    logger.error('Update drug error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2486,7 +3130,7 @@ app.get('/api/lab-tests', authenticateToken, async (req: any, res: Response) => 
     const tests = await prisma.labTestMaster.findMany({ where, orderBy: { name: 'asc' } });
     res.json(tests);
   } catch (error) {
-    console.error('Get lab tests error:', error);
+    logger.error('Get lab tests error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2494,9 +3138,13 @@ app.get('/api/lab-tests', authenticateToken, async (req: any, res: Response) => 
 app.post('/api/lab-tests', authenticateToken, validateBody(labTestMasterSchema), async (req: any, res: Response) => {
   try {
     const test = await prisma.labTestMaster.create({ data: req.body });
+
+    // Invalidate lab tests cache
+    await redisService.del('master:lab-tests');
+
     res.status(201).json(test);
   } catch (error) {
-    console.error('Create lab test error:', error);
+    logger.error('Create lab test error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2518,7 +3166,7 @@ app.get('/api/radiology-tests', authenticateToken, async (req: any, res: Respons
     const tests = await prisma.radiologyTestMaster.findMany({ where, orderBy: { name: 'asc' } });
     res.json(tests);
   } catch (error) {
-    console.error('Get radiology tests error:', error);
+    logger.error('Get radiology tests error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2528,7 +3176,7 @@ app.post('/api/radiology-tests', authenticateToken, async (req: any, res: Respon
     const test = await prisma.radiologyTestMaster.create({ data: req.body });
     res.status(201).json(test);
   } catch (error) {
-    console.error('Create radiology test error:', error);
+    logger.error('Create radiology test error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2549,7 +3197,7 @@ app.get('/api/procedures', authenticateToken, async (req: any, res: Response) =>
     const procedures = await prisma.procedureMaster.findMany({ where, orderBy: { name: 'asc' } });
     res.json(procedures);
   } catch (error) {
-    console.error('Get procedures error:', error);
+    logger.error('Get procedures error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2563,7 +3211,7 @@ app.get('/api/packages', authenticateToken, async (req: any, res: Response) => {
     });
     res.json(packages);
   } catch (error) {
-    console.error('Get packages error:', error);
+    logger.error('Get packages error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2577,7 +3225,7 @@ app.get('/api/wards', authenticateToken, async (req: any, res: Response) => {
     });
     res.json(wards);
   } catch (error) {
-    console.error('Get wards error:', error);
+    logger.error('Get wards error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2589,30 +3237,47 @@ app.get('/api/wards', authenticateToken, async (req: any, res: Response) => {
 app.get('/api/appointments', authenticateToken, async (req: any, res: Response) => {
   try {
     const { date, patientId, doctorId, status } = req.query;
-    const where: any = { tenantId: req.user.tenantId };
 
-    if (date) {
-      const startDate = new Date(date as string);
-      const endDate = new Date(startDate);
-      endDate.setDate(endDate.getDate() + 1);
-      where.appointmentDate = { gte: startDate, lt: endDate };
-    }
-    if (patientId) where.patientId = patientId;
-    if (doctorId) where.doctorId = doctorId;
-    if (status) where.status = status;
-
-    const appointments = await prisma.appointment.findMany({
-      where,
-      include: {
-        patient: { select: { id: true, name: true, mrn: true, contact: true } },
-        doctor: { select: { id: true, name: true } },
-      },
-      orderBy: [{ appointmentDate: 'asc' }, { appointmentTime: 'asc' }],
+    // Generate cache key based on query parameters
+    const cacheKey = redisService.generateKey('appointments', {
+      tenantId: req.user.tenantId,
+      date: date || '',
+      patientId: patientId || '',
+      doctorId: doctorId || '',
+      status: status || '',
     });
+
+    // Try to get from cache first, or fetch from database
+    const appointments = await redisService.cacheWrapper(
+      cacheKey,
+      120, // 2 minutes TTL
+      async () => {
+        const where: any = { tenantId: req.user.tenantId };
+
+        if (date) {
+          const startDate = new Date(date as string);
+          const endDate = new Date(startDate);
+          endDate.setDate(endDate.getDate() + 1);
+          where.appointmentDate = { gte: startDate, lt: endDate };
+        }
+        if (patientId) where.patientId = patientId;
+        if (doctorId) where.doctorId = doctorId;
+        if (status) where.status = status;
+
+        return await prisma.appointment.findMany({
+          where,
+          include: {
+            patient: { select: { id: true, name: true, mrn: true, contact: true } },
+            doctor: { select: { id: true, name: true } },
+          },
+          orderBy: [{ appointmentDate: 'asc' }, { appointmentTime: 'asc' }],
+        });
+      }
+    );
 
     res.json(appointments);
   } catch (error) {
-    console.error('Get appointments error:', error);
+    logger.error('Get appointments error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2645,6 +3310,9 @@ app.post('/api/appointments', authenticateToken, validateBody(createAppointmentS
       },
     });
 
+    // Invalidate appointments cache for this tenant
+    await redisService.deletePattern(`appointments:*tenantId:${req.user.tenantId}*`);
+
     // Send appointment confirmation notification (async - don't wait)
     if (appointment.patient.contact || appointment.patient.email) {
       notificationService.send({
@@ -2663,12 +3331,12 @@ app.post('/api/appointments', authenticateToken, validateBody(createAppointmentS
           hospitalAddress: 'Hospital Address',
           contactNumber: '+91-XXXXXXXXXX',
         },
-      }).catch(err => console.error('Notification failed:', err));
+      }).catch(err => logger.error('Notification failed:', err));
     }
 
     res.status(201).json(appointment);
   } catch (error) {
-    console.error('Create appointment error:', error);
+    logger.error('Create appointment error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2695,9 +3363,12 @@ app.put('/api/appointments/:id', authenticateToken, validateBody(updateAppointme
       },
     });
 
+    // Invalidate appointments cache for this tenant
+    await redisService.deletePattern(`appointments:*tenantId:${req.user.tenantId}*`);
+
     res.json(appointment);
   } catch (error) {
-    console.error('Update appointment error:', error);
+    logger.error('Update appointment error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2710,30 +3381,31 @@ app.delete('/api/appointments/:id', authenticateToken, async (req: any, res: Res
 
     res.json({ message: 'Appointment deleted successfully' });
   } catch (error) {
-    console.error('Delete appointment error:', error);
+    logger.error('Delete appointment error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-app.post('/api/appointments/:id/check-in', authenticateToken, async (req: any, res: Response) => {
-  try {
-    const { id } = req.params;
-
-    const appointment = await prisma.appointment.update({
-      where: { id },
-      data: { status: 'checked-in' },
-      include: {
-        patient: { select: { id: true, name: true, mrn: true, contact: true } },
-        doctor: { select: { id: true, name: true } },
-      },
-    });
-
-    res.json(appointment);
-  } catch (error) {
-    console.error('Check-in appointment error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+// DEPRECATED: Old check-in endpoint (replaced by OPD workflow routes)
+// app.post('/api/appointments/:id/check-in', authenticateToken, async (req: any, res: Response) => {
+//   try {
+//     const { id } = req.params;
+//
+//     const appointment = await prisma.appointment.update({
+//       where: { id },
+//       data: { status: 'checked-in' },
+//       include: {
+//         patient: { select: { id: true, name: true, mrn: true, contact: true } },
+//         doctor: { select: { id: true, name: true } },
+//       },
+//     });
+//
+//     res.json(appointment);
+//   } catch (error) {
+//     logger.error('Check-in appointment error:', error);
+//     res.status(500).json({ error: 'Internal server error' });
+//   }
+// });
 
 app.post('/api/appointments/:id/cancel', authenticateToken, async (req: any, res: Response) => {
   try {
@@ -2748,9 +3420,318 @@ app.post('/api/appointments/:id/cancel', authenticateToken, async (req: any, res
       },
     });
 
+    // Invalidate appointments cache for this tenant
+    await redisService.deletePattern(`appointments:*tenantId:${req.user.tenantId}*`);
+
     res.json(appointment);
   } catch (error) {
-    console.error('Cancel appointment error:', error);
+    logger.error('Cancel appointment error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ============================================
+// APPOINTMENT AVAILABILITY & CONFLICT CHECKING
+// ============================================
+
+// Get doctor availability for a specific date
+app.get('/api/appointments/availability', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { doctorId, date } = req.query;
+
+    if (!doctorId || !date) {
+      return res.status(400).json({ error: 'Doctor ID and date are required' });
+    }
+
+    const requestedDate = new Date(date as string);
+    requestedDate.setHours(0, 0, 0, 0);
+    const nextDay = new Date(requestedDate);
+    nextDay.setDate(nextDay.getDate() + 1);
+
+    // Get doctor's info (doctors are User records with doctorContract for fee info)
+    const doctor = await prisma.user.findUnique({
+      where: { id: doctorId as string },
+      select: {
+        id: true,
+        name: true,
+        departmentIds: true,
+      },
+    });
+
+    if (!doctor) {
+      return res.status(404).json({ error: 'Doctor not found' });
+    }
+
+    // Get consultation fee from doctor contract if available
+    const doctorContract = await prisma.doctorContract.findUnique({
+      where: { doctorId: doctorId as string },
+      select: { consultationFeeShare: true },
+    });
+    const consultationFee = doctorContract?.consultationFeeShare || 500;
+
+    // Get existing appointments for this doctor on the date
+    const existingAppointments = await prisma.appointment.findMany({
+      where: {
+        doctorId: doctorId as string,
+        appointmentDate: { gte: requestedDate, lt: nextDay },
+        status: { notIn: ['cancelled', 'no_show'] },
+      },
+      select: { appointmentTime: true, status: true },
+    });
+
+    // Default time slots (9 AM to 5 PM, 30-minute intervals)
+    const defaultSlots = [
+      '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
+      '12:00', '12:30', '14:00', '14:30', '15:00', '15:30',
+      '16:00', '16:30', '17:00'
+    ];
+
+    // Use default slots - can be customized based on schedule settings
+    let availableSlots = defaultSlots;
+
+    // Mark booked slots
+    const bookedTimes = existingAppointments.map(apt => apt.appointmentTime);
+    const slots = availableSlots.map(time => ({
+      time,
+      isAvailable: !bookedTimes.includes(time),
+      status: bookedTimes.includes(time) ? 'booked' : 'available',
+    }));
+
+    res.json({
+      doctorId: doctor.id,
+      doctorName: doctor.name,
+      department: doctor.departmentIds?.[0] || 'General',
+      consultationFee: Number(consultationFee),
+      date: requestedDate.toISOString().split('T')[0],
+      isAvailable: slots.some(s => s.isAvailable),
+      totalSlots: slots.length,
+      availableSlots: slots.filter(s => s.isAvailable).length,
+      bookedSlots: slots.filter(s => !s.isAvailable).length,
+      slots,
+    });
+  } catch (error) {
+    logger.error('Get appointment availability error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Check for appointment conflicts before booking
+app.post('/api/appointments/check-conflict', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { doctorId, patientId, date, time } = req.body;
+
+    if (!doctorId || !date || !time) {
+      return res.status(400).json({ error: 'Doctor ID, date, and time are required' });
+    }
+
+    const requestedDate = new Date(date);
+    requestedDate.setHours(0, 0, 0, 0);
+    const nextDay = new Date(requestedDate);
+    nextDay.setDate(nextDay.getDate() + 1);
+
+    const conflicts: any[] = [];
+
+    // Check if doctor already has an appointment at this time
+    const doctorConflict = await prisma.appointment.findFirst({
+      where: {
+        doctorId,
+        appointmentDate: { gte: requestedDate, lt: nextDay },
+        appointmentTime: time,
+        status: { notIn: ['cancelled', 'no_show'] },
+      },
+      include: {
+        patient: { select: { name: true, mrn: true } },
+      },
+    });
+
+    if (doctorConflict) {
+      conflicts.push({
+        type: 'doctor_busy',
+        message: `Doctor already has an appointment at ${time} with ${doctorConflict.patient.name} (${doctorConflict.patient.mrn})`,
+        existingAppointment: {
+          id: doctorConflict.id,
+          patientName: doctorConflict.patient.name,
+          time: doctorConflict.appointmentTime,
+        },
+      });
+    }
+
+    // Check if patient already has an appointment at this time (with any doctor)
+    if (patientId) {
+      const patientConflict = await prisma.appointment.findFirst({
+        where: {
+          patientId,
+          appointmentDate: { gte: requestedDate, lt: nextDay },
+          appointmentTime: time,
+          status: { notIn: ['cancelled', 'no_show'] },
+        },
+        include: {
+          doctor: { select: { name: true } },
+        },
+      });
+
+      if (patientConflict) {
+        conflicts.push({
+          type: 'patient_busy',
+          message: `Patient already has an appointment at ${time} with Dr. ${patientConflict.doctor?.name || 'Unknown'}`,
+          existingAppointment: {
+            id: patientConflict.id,
+            doctorName: patientConflict.doctor?.name,
+            time: patientConflict.appointmentTime,
+          },
+        });
+      }
+
+      // Check if patient already has an appointment with this doctor on the same day
+      const duplicateAppointment = await prisma.appointment.findFirst({
+        where: {
+          patientId,
+          doctorId,
+          appointmentDate: { gte: requestedDate, lt: nextDay },
+          status: { notIn: ['cancelled', 'no_show'] },
+        },
+      });
+
+      if (duplicateAppointment) {
+        conflicts.push({
+          type: 'duplicate_appointment',
+          message: `Patient already has an appointment with this doctor on the same day at ${duplicateAppointment.appointmentTime}`,
+          existingAppointment: {
+            id: duplicateAppointment.id,
+            time: duplicateAppointment.appointmentTime,
+          },
+        });
+      }
+    }
+
+    res.json({
+      hasConflicts: conflicts.length > 0,
+      conflicts,
+      canProceed: conflicts.length === 0,
+      message: conflicts.length === 0 ? 'No conflicts found. Appointment can be booked.' : 'Conflicts detected. Please resolve before booking.',
+    });
+  } catch (error) {
+    logger.error('Check appointment conflict error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get all available doctors on a specific date
+app.get('/api/appointments/available-doctors', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { date, department, time } = req.query;
+
+    if (!date) {
+      return res.status(400).json({ error: 'Date is required' });
+    }
+
+    const requestedDate = new Date(date as string);
+    requestedDate.setHours(0, 0, 0, 0);
+    const nextDay = new Date(requestedDate);
+    nextDay.setDate(nextDay.getDate() + 1);
+
+    // Get all active users who have appointments (doctors)
+    const whereDoctor: any = {
+      isActive: true,
+      tenantId: req.user.tenantId,
+      roleIds: { has: 'DOCTOR' }, // Users with DOCTOR role
+    };
+    if (department) whereDoctor.departmentIds = { has: department };
+
+    const doctors = await prisma.user.findMany({
+      where: whereDoctor,
+      select: {
+        id: true,
+        name: true,
+        departmentIds: true,
+      },
+    });
+
+    // Get all appointments for the date
+    const appointments = await prisma.appointment.findMany({
+      where: {
+        doctorId: { in: doctors.map((d: { id: string }) => d.id) },
+        appointmentDate: { gte: requestedDate, lt: nextDay },
+        status: { notIn: ['cancelled', 'no_show'] },
+      },
+      select: { doctorId: true, appointmentTime: true },
+    });
+
+    // Calculate availability for each doctor
+    const availableDoctors = doctors.map((doctor: { id: string; name: string; departmentIds: string[] }) => {
+      const doctorAppointments = appointments.filter(a => a.doctorId === doctor.id);
+      const bookedTimes = doctorAppointments.map(a => a.appointmentTime);
+
+      // Default time slots
+      const defaultSlots = [
+        '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
+        '12:00', '12:30', '14:00', '14:30', '15:00', '15:30',
+        '16:00', '16:30', '17:00'
+      ];
+
+      const availableSlots = defaultSlots.filter(slot => !bookedTimes.includes(slot));
+
+      // If specific time is requested, check if doctor is available at that time
+      const isAvailableAtRequestedTime = time ? !bookedTimes.includes(time as string) : true;
+
+      return {
+        id: doctor.id,
+        name: doctor.name,
+        department: doctor.departmentIds?.[0] || 'General',
+        consultationFee: 500, // Default fee
+        totalSlots: defaultSlots.length,
+        availableSlots: availableSlots.length,
+        isAvailable: availableSlots.length > 0,
+        isAvailableAtRequestedTime,
+        nextAvailableSlot: availableSlots[0] || null,
+      };
+    }).filter((d: { isAvailable: boolean }) => d.isAvailable);
+
+    res.json({
+      date: requestedDate.toISOString().split('T')[0],
+      department: department || 'All',
+      totalDoctors: doctors.length,
+      availableDoctors: availableDoctors.length,
+      doctors: availableDoctors,
+    });
+  } catch (error) {
+    logger.error('Get available doctors error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Send manual reminder for an appointment
+app.post('/api/appointments/:id/send-reminder', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    // Import reminder service dynamically
+    const { reminderService } = await import('./services/reminder');
+
+    const result = await reminderService.sendManualReminder(id, req.user.tenantId);
+
+    if (result.success) {
+      res.json({ message: result.message });
+    } else {
+      res.status(400).json({ error: result.message });
+    }
+  } catch (error) {
+    logger.error('Send reminder error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get reminder status for an appointment
+app.get('/api/appointments/:id/reminder-status', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const { reminderService } = await import('./services/reminder');
+    const status = await reminderService.getReminderStatus(id);
+
+    res.json(status);
+  } catch (error) {
+    logger.error('Get reminder status error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2759,48 +3740,49 @@ app.post('/api/appointments/:id/cancel', authenticateToken, async (req: any, res
 // QUEUE MANAGEMENT APIs
 // ============================================
 
+// DEPRECATED: Old OPD queue endpoint (replaced by OPD workflow routes /api/opd/queue)
 // Get OPD queue for a department/doctor
-app.get('/api/queue/opd', authenticateToken, async (req: any, res: Response) => {
-  try {
-    const { department, doctorId } = req.query;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const where: any = {
-      tenantId: req.user.tenantId,
-      appointmentDate: { gte: today },
-      status: { in: ['confirmed', 'checked_in', 'in_progress'] },
-    };
-
-    if (department) where.department = department;
-    if (doctorId) where.doctorId = doctorId;
-
-    const appointments = await prisma.appointment.findMany({
-      where,
-      include: {
-        patient: { select: { id: true, name: true, mrn: true, contact: true } },
-        doctor: { select: { name: true } },
-      },
-      orderBy: [
-        { status: 'asc' }, // checked_in first
-        { appointmentTime: 'asc' },
-      ],
-    });
-
-    // Calculate queue position and estimated wait time
-    const queue = appointments.map((apt, index) => ({
-      ...apt,
-      queuePosition: index + 1,
-      tokenNumber: `${(apt.department || 'GEN').slice(0, 3).toUpperCase()}-${String(index + 1).padStart(3, '0')}`,
-      estimatedWaitMinutes: index * 15, // Assume 15 min per patient
-    }));
-
-    res.json(queue);
-  } catch (error) {
-    console.error('Get OPD queue error:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+// app.get('/api/queue/opd', authenticateToken, async (req: any, res: Response) => {
+//   try {
+//     const { department, doctorId } = req.query;
+//     const today = new Date();
+//     today.setHours(0, 0, 0, 0);
+//
+//     const where: any = {
+//       tenantId: req.user.tenantId,
+//       appointmentDate: { gte: today },
+//       status: { in: ['confirmed', 'checked_in', 'in_progress'] },
+//     };
+//
+//     if (department) where.department = department;
+//     if (doctorId) where.doctorId = doctorId;
+//
+//     const appointments = await prisma.appointment.findMany({
+//       where,
+//       include: {
+//         patient: { select: { id: true, name: true, mrn: true, contact: true } },
+//         doctor: { select: { name: true } },
+//       },
+//       orderBy: [
+//         { status: 'asc' }, // checked_in first
+//         { appointmentTime: 'asc' },
+//       ],
+//     });
+//
+//     // Calculate queue position and estimated wait time
+//     const queue = appointments.map((apt, index) => ({
+//       ...apt,
+//       queuePosition: index + 1,
+//       tokenNumber: `${(apt.department || 'GEN').slice(0, 3).toUpperCase()}-${String(index + 1).padStart(3, '0')}`,
+//       estimatedWaitMinutes: index * 15, // Assume 15 min per patient
+//     }));
+//
+//     res.json(queue);
+//   } catch (error) {
+//     logger.error('Get OPD queue error:', error);
+//     res.status(500).json({ error: 'Internal server error' });
+//   }
+// });
 
 // Check-in patient for appointment
 app.post('/api/queue/check-in/:appointmentId', authenticateToken, async (req: any, res: Response) => {
@@ -2832,7 +3814,7 @@ app.post('/api/queue/check-in/:appointmentId', authenticateToken, async (req: an
 
     res.json({ message: 'Patient checked in successfully', appointment: updated });
   } catch (error) {
-    console.error('Check-in error:', error);
+    logger.error('Check-in error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2852,21 +3834,29 @@ app.post('/api/queue/call-next/:appointmentId', authenticateToken, async (req: a
 
     res.json({ message: 'Patient called', appointment });
   } catch (error) {
-    console.error('Call next error:', error);
+    logger.error('Call next error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Get queue display (public display screen)
+// Get queue display (public display screen - requires tenantId for isolation)
 app.get('/api/queue/display/:department', async (req: Request, res: Response) => {
   try {
     const { department } = req.params;
+    const { tenantId } = req.query;
+
+    // Require tenantId for tenant isolation on public displays
+    if (!tenantId || typeof tenantId !== 'string') {
+      return res.status(400).json({ error: 'tenantId query parameter is required' });
+    }
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
     const appointments = await prisma.appointment.findMany({
       where: {
         department,
+        tenantId, // Tenant isolation
         appointmentDate: { gte: today },
         status: { in: ['checked_in', 'in_progress'] },
       },
@@ -2891,7 +3881,7 @@ app.get('/api/queue/display/:department', async (req: Request, res: Response) =>
 
     res.json(display);
   } catch (error) {
-    console.error('Get queue display error:', error);
+    logger.error('Get queue display error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2925,7 +3915,7 @@ app.get('/api/queue/lab', authenticateToken, async (req: any, res: Response) => 
 
     res.json(queue);
   } catch (error) {
-    console.error('Get lab queue error:', error);
+    logger.error('Get lab queue error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2962,7 +3952,7 @@ app.get('/api/queue/pharmacy', authenticateToken, async (req: any, res: Response
 
     res.json(queue);
   } catch (error) {
-    console.error('Get pharmacy queue error:', error);
+    logger.error('Get pharmacy queue error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3009,7 +3999,7 @@ app.post('/api/documents/patient/:patientId', authenticateToken, requirePermissi
 
     res.status(201).json(document);
   } catch (error) {
-    console.error('Document upload error:', error);
+    logger.error('Document upload error:', error);
     res.status(500).json({ error: 'Failed to upload document' });
   }
 });
@@ -3019,6 +4009,15 @@ app.get('/api/documents/patient/:patientId', authenticateToken, requirePermissio
   try {
     const { patientId } = req.params;
     const { category } = req.query;
+
+    // Verify patient belongs to user's tenant (IDOR protection)
+    const patient = await prisma.patient.findFirst({
+      where: { id: patientId, tenantId: req.user.tenantId },
+    });
+
+    if (!patient) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
 
     const where: any = { patientId, isDeleted: false };
     if (category) where.category = category;
@@ -3030,7 +4029,7 @@ app.get('/api/documents/patient/:patientId', authenticateToken, requirePermissio
 
     res.json(documents);
   } catch (error) {
-    console.error('Get documents error:', error);
+    logger.error('Get documents error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3063,7 +4062,7 @@ app.get('/api/documents/:id/download', authenticateToken, async (req: any, res: 
     res.setHeader('Content-Disposition', `inline; filename="${document.originalName}"`);
     res.sendFile(path.resolve(filePath));
   } catch (error) {
-    console.error('Download document error:', error);
+    logger.error('Download document error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3094,7 +4093,7 @@ app.delete('/api/documents/:id', authenticateToken, requirePermission('patients:
 
     res.json({ message: 'Document deleted successfully' });
   } catch (error) {
-    console.error('Delete document error:', error);
+    logger.error('Delete document error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3115,7 +4114,7 @@ app.get('/api/reminders/appointment/:appointmentId', authenticateToken, async (r
     const status = await reminderService.getReminderStatus(appointmentId);
     res.json(status);
   } catch (error) {
-    console.error('Get reminder status error:', error);
+    logger.error('Get reminder status error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3132,7 +4131,7 @@ app.post('/api/reminders/appointment/:appointmentId/send', authenticateToken, re
 
     res.json({ message: result.message });
   } catch (error) {
-    console.error('Send manual reminder error:', error);
+    logger.error('Send manual reminder error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3150,7 +4149,7 @@ app.get('/api/reminders/stats', authenticateToken, requireRole('ADMIN', 'FRONT_O
 
     res.json(stats);
   } catch (error) {
-    console.error('Get reminder stats error:', error);
+    logger.error('Get reminder stats error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3204,7 +4203,7 @@ app.get('/api/reminders/pending', authenticateToken, requireRole('ADMIN', 'FRONT
 
     res.json(result);
   } catch (error) {
-    console.error('Get pending reminders error:', error);
+    logger.error('Get pending reminders error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3215,12 +4214,25 @@ app.get('/api/reminders/pending', authenticateToken, requireRole('ADMIN', 'FRONT
 
 app.post('/api/lab-orders', authenticateToken, validateBody(createLabOrderSchema), async (req: any, res: Response) => {
   try {
-    const { patientId, encounterId, tests } = req.body;
+    const { patientId, encounterId, tests, admissionId } = req.body;
+
+    // Check if patient is admitted (IPD)
+    let activeAdmissionId = admissionId || null;
+    if (!activeAdmissionId && encounterId) {
+      const encounter = await prisma.encounter.findUnique({
+        where: { id: encounterId },
+        include: { admission: true }
+      });
+      if (encounter?.admission && encounter.admission.status === 'active') {
+        activeAdmissionId = encounter.admission.id;
+      }
+    }
 
     const order = await prisma.order.create({
       data: {
         patientId,
         encounterId,
+        admissionId: activeAdmissionId,
         orderType: 'lab',
         orderedBy: req.user.userId,
         priority: req.body.priority || 'routine',
@@ -3229,9 +4241,22 @@ app.post('/api/lab-orders', authenticateToken, validateBody(createLabOrderSchema
       },
     });
 
-    res.status(201).json(order);
+    // Auto-create billing for the lab order
+    const testIds = tests.map((t: any) => t.testId);
+    const { createLabOrderBilling } = await import('./services/billing');
+    await createLabOrderBilling(order.id, patientId, encounterId, activeAdmissionId, testIds);
+
+    // Fetch the updated order with billing info
+    const updatedOrder = await prisma.order.findUnique({
+      where: { id: order.id },
+      include: {
+        patient: { select: { name: true, mrn: true } }
+      }
+    });
+
+    res.status(201).json(updatedOrder);
   } catch (error) {
-    console.error('Create lab order error:', error);
+    logger.error('Create lab order error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3255,7 +4280,7 @@ app.get('/api/lab-orders', authenticateToken, async (req: any, res: Response) =>
 
     res.json(orders);
   } catch (error) {
-    console.error('Get lab orders error:', error);
+    logger.error('Get lab orders error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3276,7 +4301,7 @@ app.put('/api/lab-orders/:id', authenticateToken, async (req: any, res: Response
 
     res.json(order);
   } catch (error) {
-    console.error('Update lab order error:', error);
+    logger.error('Update lab order error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3301,7 +4326,254 @@ app.post('/api/lab-results', authenticateToken, validateBody(labResultSchema), a
 
     res.status(201).json(result);
   } catch (error) {
-    console.error('Create lab result error:', error);
+    logger.error('Create lab result error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Submit and finalize lab results
+app.post('/api/lab/orders/:id/submit-results', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { results, remarks } = req.body;
+
+    const order = await prisma.order.findUnique({
+      where: { id },
+      include: {
+        patient: true,
+        encounter: {
+          include: {
+            doctor: true,
+          },
+        },
+      },
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    if (order.orderType !== 'lab') {
+      return res.status(400).json({ error: 'Not a lab order' });
+    }
+
+    const criticalAlerts = [];
+    const processedResults = [];
+
+    for (const resultItem of results || []) {
+      const { testName, value, unit, normalRange, isCritical } = resultItem;
+
+      const isOutOfRange = normalRange ? validateResultAgainstRange(value, normalRange) : false;
+      const flaggedAsCritical = isCritical || isOutOfRange;
+
+      processedResults.push({
+        testName,
+        value,
+        unit,
+        normalRange,
+        flag: flaggedAsCritical ? 'critical' : isOutOfRange ? 'abnormal' : 'normal',
+      });
+
+      if (flaggedAsCritical) {
+        const alert = await prisma.criticalAlert.create({
+          data: {
+            orderId: id,
+            patientId: order.patientId,
+            testName,
+            value: String(value),
+            unit: unit || '',
+            normalRange: normalRange || '',
+            status: 'unacknowledged',
+            notifiedDoctorId: order.orderedBy,
+          },
+        });
+
+        criticalAlerts.push(alert);
+
+        try {
+          const doctor = await prisma.user.findUnique({
+            where: { id: order.orderedBy },
+          });
+
+          if (doctor) {
+            // User model doesn't have contact, use empty string - notification uses email
+            await notificationService.sendCriticalValueAlert(
+              '',
+              doctor.email || '',
+              {
+                patientName: order.patient.name,
+                mrn: order.patient.mrn,
+                testName,
+                value: String(value),
+                unit: unit || '',
+                normalRange: normalRange || '',
+                timestamp: new Date().toISOString(),
+                labName: 'Laboratory',
+                hospitalName: 'Hospital',
+              }
+            );
+          }
+        } catch (notifError) {
+          logger.error('Failed to send critical value notification:', notifError);
+        }
+      }
+    }
+
+    const existingResult = await prisma.result.findFirst({
+      where: { orderId: id },
+    });
+
+    const hasCritical = criticalAlerts.length > 0;
+
+    if (existingResult) {
+      await prisma.result.update({
+        where: { id: existingResult.id },
+        data: {
+          resultData: { results: processedResults, remarks },
+          isCritical: hasCritical,
+          verifiedBy: req.user.userId,
+        },
+      });
+    } else {
+      await prisma.result.create({
+        data: {
+          orderId: id,
+          resultData: { results: processedResults, remarks },
+          isCritical: hasCritical,
+          verifiedBy: req.user.userId,
+        },
+      });
+    }
+
+    const updatedOrder = await prisma.order.update({
+      where: { id },
+      data: { status: 'completed' },
+      include: {
+        patient: { select: { name: true, mrn: true } },
+        results: true,
+      },
+    });
+
+    try {
+      await notificationService.sendLabResultReady(
+        order.patient.contact || '',
+        order.patient.email || '',
+        {
+          patientName: order.patient.name,
+          orderId: id.substring(0, 8).toUpperCase(),
+          testNames: processedResults.map((r: any) => r.testName).join(', '),
+          hospitalName: 'Hospital',
+        }
+      );
+    } catch (notifError) {
+      logger.error('Failed to send result ready notification:', notifError);
+    }
+
+    res.json({
+      order: updatedOrder,
+      criticalAlerts: criticalAlerts.length,
+      message: hasCritical
+        ? 'Results submitted with critical values. Physician notified.'
+        : 'Results submitted successfully.',
+    });
+  } catch (error) {
+    logger.error('Submit lab results error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+function validateResultAgainstRange(value: any, normalRange: string): boolean {
+  try {
+    const numValue = parseFloat(String(value));
+    if (isNaN(numValue)) return false;
+
+    const rangeMatch = normalRange.match(/(\d+\.?\d*)\s*-\s*(\d+\.?\d*)/);
+    if (rangeMatch) {
+      const min = parseFloat(rangeMatch[1]);
+      const max = parseFloat(rangeMatch[2]);
+      return numValue < min || numValue > max;
+    }
+
+    const ltMatch = normalRange.match(/<\s*(\d+\.?\d*)/);
+    if (ltMatch) {
+      const threshold = parseFloat(ltMatch[1]);
+      return numValue >= threshold;
+    }
+
+    const gtMatch = normalRange.match(/>\s*(\d+\.?\d*)/);
+    if (gtMatch) {
+      const threshold = parseFloat(gtMatch[1]);
+      return numValue <= threshold;
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+app.get('/api/lab/critical-alerts', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { status, patientId } = req.query;
+    const where: any = {};
+
+    if (status) {
+      where.status = status;
+    } else {
+      where.status = 'unacknowledged';
+    }
+
+    if (patientId) {
+      where.patientId = patientId;
+    }
+
+    const alerts = await prisma.criticalAlert.findMany({
+      where,
+      include: {
+        patient: {
+          select: {
+            id: true,
+            mrn: true,
+            name: true,
+            contact: true,
+          },
+        },
+      },
+      orderBy: { alertedAt: 'desc' },
+    });
+
+    res.json(alerts);
+  } catch (error) {
+    logger.error('Get critical alerts error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/lab/critical-alerts/:id/acknowledge', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const alert = await prisma.criticalAlert.update({
+      where: { id },
+      data: {
+        status: 'acknowledged',
+        acknowledgedAt: new Date(),
+        acknowledgedBy: req.user.userId,
+      },
+      include: {
+        patient: {
+          select: {
+            id: true,
+            mrn: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    res.json(alert);
+  } catch (error) {
+    logger.error('Acknowledge critical alert error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3312,12 +4584,25 @@ app.post('/api/lab-results', authenticateToken, validateBody(labResultSchema), a
 
 app.post('/api/radiology-orders', authenticateToken, validateBody(createRadiologyOrderSchema), async (req: any, res: Response) => {
   try {
-    const { patientId, encounterId, tests } = req.body;
+    const { patientId, encounterId, tests, admissionId } = req.body;
+
+    // Check if patient is admitted (IPD)
+    let activeAdmissionId = admissionId || null;
+    if (!activeAdmissionId && encounterId) {
+      const encounter = await prisma.encounter.findUnique({
+        where: { id: encounterId },
+        include: { admission: true }
+      });
+      if (encounter?.admission && encounter.admission.status === 'active') {
+        activeAdmissionId = encounter.admission.id;
+      }
+    }
 
     const order = await prisma.order.create({
       data: {
         patientId,
         encounterId,
+        admissionId: activeAdmissionId,
         orderType: 'radiology',
         orderedBy: req.user.userId,
         priority: req.body.priority || 'routine',
@@ -3326,9 +4611,22 @@ app.post('/api/radiology-orders', authenticateToken, validateBody(createRadiolog
       },
     });
 
-    res.status(201).json(order);
+    // Auto-create billing for the radiology order
+    const testIds = tests.map((t: any) => t.testId);
+    const { createRadiologyOrderBilling } = await import('./services/billing');
+    await createRadiologyOrderBilling(order.id, patientId, encounterId, activeAdmissionId, testIds);
+
+    // Fetch the updated order with billing info
+    const updatedOrder = await prisma.order.findUnique({
+      where: { id: order.id },
+      include: {
+        patient: { select: { name: true, mrn: true } }
+      }
+    });
+
+    res.status(201).json(updatedOrder);
   } catch (error) {
-    console.error('Create radiology order error:', error);
+    logger.error('Create radiology order error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3349,7 +4647,7 @@ app.put('/api/radiology-orders/:id', authenticateToken, async (req: any, res: Re
 
     res.json(order);
   } catch (error) {
-    console.error('Update radiology order error:', error);
+    logger.error('Update radiology order error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3373,7 +4671,7 @@ app.get('/api/radiology-orders', authenticateToken, async (req: any, res: Respon
 
     res.json(orders);
   } catch (error) {
-    console.error('Get radiology orders error:', error);
+    logger.error('Get radiology orders error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3399,7 +4697,7 @@ app.get('/api/pharmacy/pending-prescriptions', authenticateToken, async (req: an
 
     res.json(prescriptions);
   } catch (error) {
-    console.error('Get pending prescriptions error:', error);
+    logger.error('Get pending prescriptions error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3410,7 +4708,83 @@ app.get('/api/pharmacy/pending-prescriptions', authenticateToken, async (req: an
 
 app.post('/api/admissions', authenticateToken, validateBody(createAdmissionSchema), async (req: any, res: Response) => {
   try {
-    const { encounterId, patientId, bedId, diagnosis } = req.body;
+    const { encounterId, patientId, bedId, diagnosis, patientInsuranceId, preAuthorizationId } = req.body;
+
+    // Import bed management service
+    const { bedManagementService } = require('./services/bedManagement');
+
+    // Check bed availability and conflicts before admission
+    if (bedId) {
+      const availability = await bedManagementService.checkBedAvailability(
+        bedId,
+        new Date()
+      );
+
+      if (!availability.isAvailable) {
+        return res.status(409).json({
+          success: false,
+          error: 'Bed is not available',
+          reason: availability.reason,
+          conflict: availability.conflict
+        });
+      }
+    }
+
+    // Handle insurance verification if provided
+    let insuranceVerified = false;
+    let insuranceVerifiedAt: Date | null = null;
+
+    if (patientInsuranceId) {
+      const insurance = await prisma.patientInsurance.findUnique({
+        where: { id: patientInsuranceId },
+      });
+
+      if (!insurance || !insurance.isActive) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid or inactive insurance policy'
+        });
+      }
+
+      const now = new Date();
+      if (insurance.validFrom > now || insurance.validTill < now) {
+        return res.status(400).json({
+          success: false,
+          error: 'Insurance policy is not valid for current date'
+        });
+      }
+
+      insuranceVerified = true;
+      insuranceVerifiedAt = now;
+    }
+
+    // Verify pre-authorization if provided
+    if (preAuthorizationId) {
+      const preAuth = await prisma.preAuthorization.findUnique({
+        where: { id: preAuthorizationId },
+      });
+
+      if (!preAuth || preAuth.status !== 'approved') {
+        return res.status(400).json({
+          success: false,
+          error: 'Pre-authorization is not approved'
+        });
+      }
+
+      if (preAuth.validTill && preAuth.validTill < new Date()) {
+        return res.status(400).json({
+          success: false,
+          error: 'Pre-authorization has expired'
+        });
+      }
+
+      if (preAuth.patientId !== patientId) {
+        return res.status(400).json({
+          success: false,
+          error: 'Pre-authorization is for a different patient'
+        });
+      }
+    }
 
     const admission = await prisma.admission.create({
       data: {
@@ -3420,6 +4794,10 @@ app.post('/api/admissions', authenticateToken, validateBody(createAdmissionSchem
         admittingDoctorId: req.user.userId,
         diagnosis,
         status: 'active',
+        patientInsuranceId,
+        preAuthorizationId,
+        insuranceVerified,
+        insuranceVerifiedAt,
       },
       include: {
         patient: { select: { name: true, mrn: true } },
@@ -3427,17 +4805,32 @@ app.post('/api/admissions', authenticateToken, validateBody(createAdmissionSchem
       },
     });
 
-    // Update bed status
+    // Update bed status to occupied
     if (bedId) {
       await prisma.bed.update({
         where: { id: bedId },
         data: { status: 'occupied' },
       });
+
+      // Cancel any active reservations for this bed
+      await prisma.bedReservation.updateMany({
+        where: {
+          bedId,
+          status: 'active'
+        },
+        data: {
+          status: 'completed'
+        }
+      });
     }
 
-    res.status(201).json(admission);
+    res.status(201).json({
+      success: true,
+      message: 'Admission created successfully',
+      admission
+    });
   } catch (error) {
-    console.error('Create admission error:', error);
+    logger.error('Create admission error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3479,7 +4872,7 @@ app.get('/api/admissions', authenticateToken, async (req: any, res: Response) =>
       invoiceStatus: adm.encounter?.invoices?.[0]?.status || null,
     })));
   } catch (error) {
-    console.error('Get admissions error:', error);
+    logger.error('Get admissions error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3508,7 +4901,7 @@ app.post('/api/admissions/:id/discharge', authenticateToken, validateBody(discha
 
     res.json(admission);
   } catch (error) {
-    console.error('Discharge patient error:', error);
+    logger.error('Discharge patient error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3528,7 +4921,7 @@ app.get('/api/beds', authenticateToken, async (req: any, res: Response) => {
 
     res.json(beds);
   } catch (error) {
-    console.error('Get beds error:', error);
+    logger.error('Get beds error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3556,7 +4949,7 @@ app.get('/api/emergency/cases', authenticateToken, async (req: any, res: Respons
       waitingTime: Math.floor((Date.now() - c.arrivalTime.getTime()) / 60000) + ' min',
     })));
   } catch (error) {
-    console.error('Get emergency cases error:', error);
+    logger.error('Get emergency cases error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3583,7 +4976,7 @@ app.post('/api/emergency/cases', authenticateToken, validateBody(createEmergency
 
     res.status(201).json(emergencyCase);
   } catch (error) {
-    console.error('Create emergency case error:', error);
+    logger.error('Create emergency case error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3606,7 +4999,7 @@ app.put('/api/emergency/cases/:id', authenticateToken, async (req: any, res: Res
 
     res.json(emergencyCase);
   } catch (error) {
-    console.error('Update emergency case error:', error);
+    logger.error('Update emergency case error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3626,7 +5019,7 @@ app.post('/api/emergency/cases/:id/admit', authenticateToken, async (req: any, r
 
     res.json({ message: 'Patient admitted to IPD', emergencyCase });
   } catch (error) {
-    console.error('Admit emergency case error:', error);
+    logger.error('Admit emergency case error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3646,7 +5039,7 @@ app.post('/api/emergency/cases/:id/discharge', authenticateToken, async (req: an
 
     res.json({ message: 'Patient discharged', emergencyCase });
   } catch (error) {
-    console.error('Discharge emergency case error:', error);
+    logger.error('Discharge emergency case error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3689,7 +5082,7 @@ app.get('/api/icu/beds', authenticateToken, async (req: any, res: Response) => {
       } : null,
     })));
   } catch (error) {
-    console.error('Get ICU beds error:', error);
+    logger.error('Get ICU beds error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3707,7 +5100,7 @@ app.post('/api/icu/beds', authenticateToken, async (req: any, res: Response) => 
 
     res.status(201).json(bed);
   } catch (error) {
-    console.error('Create ICU bed error:', error);
+    logger.error('Create ICU bed error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3734,9 +5127,83 @@ app.post('/api/icu/vitals', authenticateToken, validateBody(icuVitalsSchema), as
       },
     });
 
-    res.status(201).json(vitals);
+    // Check for critical values and create alerts
+    const criticalAlerts: any[] = [];
+    const hr = vitals.heartRate;
+    const sbp = vitals.systolicBP;
+    const dbp = vitals.diastolicBP;
+    const temp = vitals.temperature;
+    const oxygen = vitals.spo2;
+    const rr = vitals.respiratoryRate;
+    const gcsVal = vitals.gcs;
+
+    const createICUAlert = async (testName: string, value: number, unit: string, normalRange: string) => {
+      if (patientId) {
+        const alert = await prisma.criticalAlert.create({
+          data: {
+            orderId: vitals.id,
+            patientId,
+            testName,
+            value: value.toString(),
+            unit,
+            normalRange,
+            status: 'unacknowledged',
+          },
+        });
+        criticalAlerts.push({ testName, value, unit, normalRange, alertId: alert.id });
+      }
+    };
+
+    // Check critical thresholds for ICU vitals (convert Decimal to number for comparison)
+    const tempNum = temp ? Number(temp) : null;
+    if (oxygen !== null && oxygen < 90) await createICUAlert('SpO2', oxygen, '%', '95-100%');
+    if (hr !== null && (hr < 50 || hr > 120)) await createICUAlert('Heart Rate', hr, 'bpm', '60-100 bpm');
+    if (tempNum !== null && (tempNum > 102 || tempNum < 95)) await createICUAlert('Temperature', tempNum, '°F', '97-99°F');
+    if (sbp !== null && (sbp < 90 || sbp > 180)) await createICUAlert('Systolic BP', sbp, 'mmHg', '90-140 mmHg');
+    if (dbp !== null && (dbp < 60 || dbp > 110)) await createICUAlert('Diastolic BP', dbp, 'mmHg', '60-90 mmHg');
+    if (gcsVal !== null && gcsVal < 9) await createICUAlert('GCS', gcsVal, '', '15 (normal)');
+    if (rr !== null && (rr < 10 || rr > 30)) await createICUAlert('Respiratory Rate', rr, '/min', '12-20/min');
+
+    // Send doctor notification for critical alerts - try to get doctor from admission
+    if (criticalAlerts.length > 0 && patientId) {
+      const patient = await prisma.patient.findUnique({ where: { id: patientId }, select: { name: true, mrn: true } });
+      // Get ICU bed with admission to find attending doctor
+      const icuBed = await prisma.iCUBed.findUnique({ where: { id: icuBedId }, select: { admissionId: true } });
+      if (icuBed?.admissionId) {
+        const admission = await prisma.admission.findUnique({
+          where: { id: icuBed.admissionId },
+          select: { admittingDoctorId: true }
+        });
+        if (admission?.admittingDoctorId) {
+          const doctor = await prisma.user.findUnique({
+            where: { id: admission.admittingDoctorId },
+            select: { email: true }
+          });
+          if (doctor?.email) {
+            notificationService.sendCriticalValueAlert('', doctor.email, {
+              patientName: patient?.name || 'Unknown',
+              mrn: patient?.mrn || 'Unknown',
+              testName: criticalAlerts.map(a => a.testName).join(', '),
+              value: criticalAlerts.map(a => `${a.value}`).join(', '),
+              unit: criticalAlerts.map(a => a.unit).join(', '),
+              normalRange: criticalAlerts.map(a => a.normalRange).join(', '),
+              timestamp: new Date().toISOString(),
+              labName: 'ICU',
+              hospitalName: 'Hospital ERP',
+            }).catch(err => logger.error('ICU critical alert notification failed:', err));
+          }
+        }
+      }
+    }
+
+    res.status(201).json({
+      ...vitals,
+      criticalAlerts: criticalAlerts.length > 0 ? criticalAlerts : undefined,
+      hasCriticalValues: criticalAlerts.length > 0,
+      message: criticalAlerts.length > 0 ? `Vitals recorded. ${criticalAlerts.length} critical alert(s).` : 'Vitals recorded',
+    });
   } catch (error) {
-    console.error('Record vitals error:', error);
+    logger.error('Record vitals error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3758,7 +5225,7 @@ app.post('/api/icu/ventilator', authenticateToken, async (req: any, res: Respons
 
     res.status(201).json({ message: 'Ventilator settings updated', vitals });
   } catch (error) {
-    console.error('Update ventilator error:', error);
+    logger.error('Update ventilator error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3790,7 +5257,7 @@ app.get('/api/surgeries', authenticateToken, async (req: any, res: Response) => 
       duration: s.estimatedDuration,
     })));
   } catch (error) {
-    console.error('Get surgeries error:', error);
+    logger.error('Get surgeries error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3820,7 +5287,7 @@ app.post('/api/surgeries', authenticateToken, validateBody(scheduleSurgerySchema
 
     res.status(201).json(surgery);
   } catch (error) {
-    console.error('Schedule surgery error:', error);
+    logger.error('Schedule surgery error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3839,7 +5306,7 @@ app.get('/api/ot-rooms', authenticateToken, async (req: any, res: Response) => {
 
     res.json(rooms);
   } catch (error) {
-    console.error('Get OT rooms error:', error);
+    logger.error('Get OT rooms error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3859,7 +5326,7 @@ app.post('/api/ot-rooms', authenticateToken, async (req: any, res: Response) => 
 
     res.status(201).json(room);
   } catch (error) {
-    console.error('Create OT room error:', error);
+    logger.error('Create OT room error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3886,7 +5353,7 @@ app.post('/api/surgeries/:id/start', authenticateToken, async (req: any, res: Re
 
     res.json({ message: 'Surgery started', surgery });
   } catch (error) {
-    console.error('Start surgery error:', error);
+    logger.error('Start surgery error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3916,7 +5383,7 @@ app.post('/api/surgeries/:id/complete', authenticateToken, async (req: any, res:
 
     res.json({ message: 'Surgery completed', surgery });
   } catch (error) {
-    console.error('Complete surgery error:', error);
+    logger.error('Complete surgery error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3936,7 +5403,106 @@ app.post('/api/surgeries/:id/cancel', authenticateToken, async (req: any, res: R
 
     res.json({ message: 'Surgery cancelled', surgery });
   } catch (error) {
-    console.error('Cancel surgery error:', error);
+    logger.error('Cancel surgery error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/surgeries/:id/postpone', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { scheduledDate, scheduledTime, reason } = req.body;
+
+    const surgery = await prisma.surgery.update({
+      where: { id },
+      data: {
+        status: 'scheduled',
+        scheduledDate: new Date(scheduledDate),
+        scheduledTime,
+        postOpNotes: reason ? `Postponed: ${reason}` : undefined,
+      },
+    });
+
+    res.json({ message: 'Surgery postponed', surgery });
+  } catch (error) {
+    logger.error('Postpone surgery error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/surgeries/:id/checklist', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    // Standard pre-operative checklist items
+    const checklistItems = [
+      { id: '1', item: 'Patient identity verified', completed: false },
+      { id: '2', item: 'Consent form signed', completed: false },
+      { id: '3', item: 'NPO status confirmed (fasting)', completed: false },
+      { id: '4', item: 'Pre-operative tests completed', completed: false },
+      { id: '5', item: 'Allergies documented', completed: false },
+      { id: '6', item: 'IV line established', completed: false },
+      { id: '7', item: 'Surgical site marked', completed: false },
+      { id: '8', item: 'Anesthesia assessment done', completed: false },
+      { id: '9', item: 'Blood products available (if needed)', completed: false },
+      { id: '10', item: 'Equipment and instruments checked', completed: false },
+    ];
+
+    const surgery = await prisma.surgery.findUnique({
+      where: { id },
+    });
+
+    if (!surgery) {
+      return res.status(404).json({ error: 'Surgery not found' });
+    }
+
+    res.json({
+      surgeryId: id,
+      completed: surgery.preOpChecklist,
+      items: checklistItems,
+    });
+  } catch (error) {
+    logger.error('Get checklist error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/surgeries/:id/checklist', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { completed } = req.body;
+
+    const surgery = await prisma.surgery.update({
+      where: { id },
+      data: {
+        preOpChecklist: completed,
+      },
+    });
+
+    res.json({ message: 'Checklist updated', surgery });
+  } catch (error) {
+    logger.error('Update checklist error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/surgeries/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { postOpNotes, complications, implants } = req.body;
+
+    const surgery = await prisma.surgery.update({
+      where: { id },
+      data: {
+        postOpNotes,
+        complications,
+        implants,
+      },
+    });
+
+    res.json({ message: 'Surgery updated', surgery });
+  } catch (error) {
+    logger.error('Update surgery error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3989,7 +5555,7 @@ app.get('/api/blood-bank/inventory', authenticateToken, async (req: any, res: Re
 
     res.json(inventoryWithExpiry);
   } catch (error) {
-    console.error('Get blood inventory error:', error);
+    logger.error('Get blood inventory error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4018,7 +5584,7 @@ app.get('/api/blood-bank/donors', authenticateToken, async (req: any, res: Respo
       lastDonation: d.lastDonationAt,
     })));
   } catch (error) {
-    console.error('Get donors error:', error);
+    logger.error('Get donors error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4045,7 +5611,7 @@ app.post('/api/blood-bank/donors', authenticateToken, validateBody(bloodDonorSch
 
     res.status(201).json({ ...donor, status: 'ELIGIBLE' });
   } catch (error) {
-    console.error('Register donor error:', error);
+    logger.error('Register donor error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4069,7 +5635,7 @@ app.get('/api/blood-bank/requests', authenticateToken, async (req: any, res: Res
       crossMatchStatus: r.crossMatchResult ? 'COMPLETED' : 'PENDING',
     })));
   } catch (error) {
-    console.error('Get blood requests error:', error);
+    logger.error('Get blood requests error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4093,7 +5659,7 @@ app.post('/api/blood-bank/requests', authenticateToken, validateBody(bloodReques
 
     res.status(201).json({ ...request, unitsRequired: request.unitsRequested, requestDate: request.requestedAt });
   } catch (error) {
-    console.error('Create blood request error:', error);
+    logger.error('Create blood request error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4115,7 +5681,7 @@ app.post('/api/blood-bank/requests/:id/cross-match', authenticateToken, async (r
 
     res.json({ message: 'Cross-matching completed', request });
   } catch (error) {
-    console.error('Cross-match error:', error);
+    logger.error('Cross-match error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4131,7 +5697,7 @@ app.post('/api/blood-bank/requests/:id/issue', authenticateToken, async (req: an
 
     res.json({ message: 'Blood issued successfully', request });
   } catch (error) {
-    console.error('Issue blood error:', error);
+    logger.error('Issue blood error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4155,7 +5721,7 @@ app.get('/api/hr/employees', authenticateToken, async (req: any, res: Response) 
 
     res.json(employees);
   } catch (error) {
-    console.error('Get employees error:', error);
+    logger.error('Get employees error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4183,7 +5749,7 @@ app.post('/api/hr/employees', authenticateToken, validateBody(createEmployeeSche
 
     res.status(201).json(employee);
   } catch (error) {
-    console.error('Add employee error:', error);
+    logger.error('Add employee error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4211,7 +5777,7 @@ app.get('/api/hr/attendance', authenticateToken, async (req: any, res: Response)
       checkOut: a.checkOut?.toLocaleTimeString(),
     })));
   } catch (error) {
-    console.error('Get attendance error:', error);
+    logger.error('Get attendance error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4243,7 +5809,7 @@ app.post('/api/hr/attendance', authenticateToken, async (req: any, res: Response
 
     res.status(201).json(attendance);
   } catch (error) {
-    console.error('Mark attendance error:', error);
+    logger.error('Mark attendance error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4268,7 +5834,7 @@ app.get('/api/hr/leaves', authenticateToken, async (req: any, res: Response) => 
       appliedDate: l.createdAt,
     })));
   } catch (error) {
-    console.error('Get leaves error:', error);
+    logger.error('Get leaves error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4289,7 +5855,7 @@ app.post('/api/hr/leaves', authenticateToken, validateBody(leaveRequestSchema), 
 
     res.status(201).json(leave);
   } catch (error) {
-    console.error('Apply leave error:', error);
+    logger.error('Apply leave error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4309,7 +5875,7 @@ app.post('/api/hr/leaves/:id/approve', authenticateToken, async (req: any, res: 
 
     res.json({ message: 'Leave approved', leave });
   } catch (error) {
-    console.error('Approve leave error:', error);
+    logger.error('Approve leave error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4331,7 +5897,7 @@ app.post('/api/hr/leaves/:id/reject', authenticateToken, async (req: any, res: R
 
     res.json({ message: 'Leave rejected', leave });
   } catch (error) {
-    console.error('Reject leave error:', error);
+    logger.error('Reject leave error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4377,7 +5943,7 @@ app.get('/api/inventory/items', authenticateToken, async (req: any, res: Respons
       res.json(itemsWithStock);
     }
   } catch (error) {
-    console.error('Get inventory items error:', error);
+    logger.error('Get inventory items error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4402,7 +5968,7 @@ app.post('/api/inventory/items', authenticateToken, async (req: any, res: Respon
 
     res.status(201).json({ ...item, itemCode: item.code, unitPrice: item.price, currentStock: 0 });
   } catch (error) {
-    console.error('Add inventory item error:', error);
+    logger.error('Add inventory item error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4437,7 +6003,7 @@ app.get('/api/inventory/purchase-orders', authenticateToken, async (req: any, re
       })),
     })));
   } catch (error) {
-    console.error('Get purchase orders error:', error);
+    logger.error('Get purchase orders error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4474,7 +6040,7 @@ app.post('/api/inventory/purchase-orders', authenticateToken, validateBody(creat
 
     res.status(201).json(order);
   } catch (error) {
-    console.error('Create purchase order error:', error);
+    logger.error('Create purchase order error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4491,7 +6057,7 @@ app.put('/api/inventory/purchase-orders/:id', authenticateToken, async (req: any
 
     res.json(order);
   } catch (error) {
-    console.error('Update purchase order error:', error);
+    logger.error('Update purchase order error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4518,7 +6084,7 @@ app.get('/api/ambulance/vehicles', authenticateToken, async (req: any, res: Resp
       lastService: v.lastMaintenance,
     })));
   } catch (error) {
-    console.error('Get ambulance vehicles error:', error);
+    logger.error('Get ambulance vehicles error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4538,7 +6104,7 @@ app.post('/api/ambulance/vehicles', authenticateToken, validateBody(ambulanceVeh
 
     res.status(201).json(vehicle);
   } catch (error) {
-    console.error('Add vehicle error:', error);
+    logger.error('Add vehicle error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4562,7 +6128,7 @@ app.get('/api/ambulance/trips', authenticateToken, async (req: any, res: Respons
       assignedVehicle: t.vehicleNumber,
     })));
   } catch (error) {
-    console.error('Get ambulance trips error:', error);
+    logger.error('Get ambulance trips error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4584,7 +6150,7 @@ app.post('/api/ambulance/trips', authenticateToken, validateBody(ambulanceTripSc
 
     res.status(201).json({ ...trip, patientName, patientPhone, requestTime: trip.startTime });
   } catch (error) {
-    console.error('Create trip request error:', error);
+    logger.error('Create trip request error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4616,7 +6182,7 @@ app.post('/api/ambulance/trips/:id/assign', authenticateToken, async (req: any, 
 
     res.json({ message: 'Vehicle assigned to trip', trip });
   } catch (error) {
-    console.error('Assign vehicle error:', error);
+    logger.error('Assign vehicle error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4641,7 +6207,7 @@ app.post('/api/ambulance/trips/:id/complete', authenticateToken, async (req: any
 
     res.json({ message: 'Trip completed', trip });
   } catch (error) {
-    console.error('Complete trip error:', error);
+    logger.error('Complete trip error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4669,7 +6235,7 @@ app.get('/api/housekeeping/tasks', authenticateToken, async (req: any, res: Resp
       scheduledTime: t.scheduledAt?.toLocaleTimeString() || 'Not scheduled',
     })));
   } catch (error) {
-    console.error('Get housekeeping tasks error:', error);
+    logger.error('Get housekeeping tasks error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4691,7 +6257,7 @@ app.post('/api/housekeeping/tasks', authenticateToken, validateBody(housekeeping
 
     res.status(201).json(task);
   } catch (error) {
-    console.error('Create housekeeping task error:', error);
+    logger.error('Create housekeeping task error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4710,7 +6276,7 @@ app.post('/api/housekeeping/tasks/:id/complete', authenticateToken, async (req: 
 
     res.json({ message: 'Task completed', task });
   } catch (error) {
-    console.error('Complete task error:', error);
+    logger.error('Complete task error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4732,7 +6298,7 @@ app.get('/api/housekeeping/laundry', authenticateToken, async (req: any, res: Re
       status: l.status.toUpperCase(),
     })));
   } catch (error) {
-    console.error('Get laundry requests error:', error);
+    logger.error('Get laundry requests error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4769,7 +6335,7 @@ app.get('/api/diet/orders', authenticateToken, async (req: any, res: Response) =
       scheduledTime: o.orderDate.toLocaleTimeString(),
     })));
   } catch (error) {
-    console.error('Get diet orders error:', error);
+    logger.error('Get diet orders error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4791,7 +6357,7 @@ app.post('/api/diet/orders', authenticateToken, validateBody(dietOrderSchema), a
 
     res.status(201).json(order);
   } catch (error) {
-    console.error('Create diet order error:', error);
+    logger.error('Create diet order error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4808,7 +6374,7 @@ app.put('/api/diet/orders/:id', authenticateToken, async (req: any, res: Respons
 
     res.json(order);
   } catch (error) {
-    console.error('Update diet order error:', error);
+    logger.error('Update diet order error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4836,7 +6402,7 @@ app.get('/api/quality/incidents', authenticateToken, async (req: any, res: Respo
 
     res.json(incidents);
   } catch (error) {
-    console.error('Get incidents error:', error);
+    logger.error('Get incidents error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4865,7 +6431,7 @@ app.get('/api/quality/feedbacks', authenticateToken, async (req: any, res: Respo
 
     res.json(feedbacks);
   } catch (error) {
-    console.error('Get feedbacks error:', error);
+    logger.error('Get feedbacks error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4897,7 +6463,7 @@ app.get('/api/reports/dashboard', authenticateToken, async (req: any, res: Respo
 
     res.json(dashboardData);
   } catch (error) {
-    console.error('Get dashboard data error:', error);
+    logger.error('Get dashboard data error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4945,7 +6511,7 @@ app.get('/api/bills', authenticateToken, async (req: any, res: Response) => {
 
     res.json(bills);
   } catch (error) {
-    console.error('Get bills error:', error);
+    logger.error('Get bills error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4976,7 +6542,7 @@ app.get('/api/emergency', authenticateToken, async (req: any, res: Response) => 
       disposition: c.disposition,
     })));
   } catch (error) {
-    console.error('Get emergency error:', error);
+    logger.error('Get emergency error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -4999,7 +6565,7 @@ app.get('/api/ot/rooms', authenticateToken, async (req: any, res: Response) => {
       equipment: room.equipment,
     })));
   } catch (error) {
-    console.error('Get OT rooms error:', error);
+    logger.error('Get OT rooms error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -5029,7 +6595,7 @@ app.get('/api/pharmacy/drugs', authenticateToken, async (req: any, res: Response
       isActive: d.isActive,
     })));
   } catch (error) {
-    console.error('Get pharmacy drugs error:', error);
+    logger.error('Get pharmacy drugs error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -5054,7 +6620,7 @@ app.get('/api/pharmacy/stock', authenticateToken, async (req: any, res: Response
       supplier: 'Generic Supplier',
     })));
   } catch (error) {
-    console.error('Get pharmacy stock error:', error);
+    logger.error('Get pharmacy stock error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -5081,7 +6647,7 @@ app.get('/api/employees', authenticateToken, async (req: any, res: Response) => 
       shift: emp.shift || 'day',
     })));
   } catch (error) {
-    console.error('Get employees error:', error);
+    logger.error('Get employees error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -5113,7 +6679,7 @@ app.get('/api/attendance', authenticateToken, async (req: any, res: Response) =>
       remarks: a.remarks,
     })));
   } catch (error) {
-    console.error('Get attendance error:', error);
+    logger.error('Get attendance error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -5137,7 +6703,7 @@ app.get('/api/ambulances', authenticateToken, async (req: any, res: Response) =>
       lastMaintenance: v.lastMaintenance?.toISOString() || null,
     })));
   } catch (error) {
-    console.error('Get ambulances error:', error);
+    logger.error('Get ambulances error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -5189,7 +6755,7 @@ app.get('/api/nurse/medications', authenticateToken, async (req: any, res: Respo
 
     res.json(medications);
   } catch (error) {
-    console.error('Get nurse medications error:', error);
+    logger.error('Get nurse medications error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -5224,7 +6790,7 @@ app.get('/api/nurse/vitals', authenticateToken, async (req: any, res: Response) 
       recordedBy: v.recordedBy || '',
     })));
   } catch (error) {
-    console.error('Get nurse vitals error:', error);
+    logger.error('Get nurse vitals error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -5252,7 +6818,7 @@ app.get('/api/referral-doctors', authenticateToken, async (req: any, res: Respon
       isActive: s.isActive,
     })));
   } catch (error) {
-    console.error('Get referral doctors error:', error);
+    logger.error('Get referral doctors error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -5279,7 +6845,7 @@ app.get('/api/insurance-companies', authenticateToken, async (req: any, res: Res
       isActive: c.isActive,
     })));
   } catch (error) {
-    console.error('Get insurance companies error:', error);
+    logger.error('Get insurance companies error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -5287,9 +6853,19 @@ app.get('/api/insurance-companies', authenticateToken, async (req: any, res: Res
 // Master data - drugs
 app.get('/api/master/drugs', authenticateToken, async (req: any, res: Response) => {
   try {
-    const drugs = await prisma.drug.findMany({
-      orderBy: { name: 'asc' },
-    });
+    // Generate cache key
+    const cacheKey = 'master:drugs';
+
+    // Try to get from cache first, or fetch from database
+    const drugs = await redisService.cacheWrapper(
+      cacheKey,
+      600, // 10 minutes TTL
+      async () => {
+        return await prisma.drug.findMany({
+          orderBy: { name: 'asc' },
+        });
+      }
+    );
 
     res.json(drugs.map(d => ({
       id: d.id,
@@ -5307,7 +6883,7 @@ app.get('/api/master/drugs', authenticateToken, async (req: any, res: Response) 
       status: d.isActive ? 'active' : 'inactive',
     })));
   } catch (error) {
-    console.error('Get master drugs error:', error);
+    logger.error('Get master drugs error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -5332,7 +6908,7 @@ app.get('/api/master/tests', authenticateToken, async (req: any, res: Response) 
       status: t.isActive ? 'active' : 'inactive',
     })));
   } catch (error) {
-    console.error('Get master tests error:', error);
+    logger.error('Get master tests error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -5344,9 +6920,19 @@ app.get('/api/master/tests', authenticateToken, async (req: any, res: Response) 
 // Master data - lab tests (alias for frontend)
 app.get('/api/master/lab-tests', authenticateToken, async (req: any, res: Response) => {
   try {
-    const tests = await prisma.labTestMaster.findMany({
-      orderBy: { name: 'asc' },
-    });
+    // Generate cache key
+    const cacheKey = 'master:lab-tests';
+
+    // Try to get from cache first, or fetch from database
+    const tests = await redisService.cacheWrapper(
+      cacheKey,
+      600, // 10 minutes TTL
+      async () => {
+        return await prisma.labTestMaster.findMany({
+          orderBy: { name: 'asc' },
+        });
+      }
+    );
 
     res.json(tests.map(t => ({
       id: t.id,
@@ -5362,7 +6948,7 @@ app.get('/api/master/lab-tests', authenticateToken, async (req: any, res: Respon
       status: t.isActive ? 'active' : 'inactive',
     })));
   } catch (error) {
-    console.error('Get master lab tests error:', error);
+    logger.error('Get master lab tests error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -5385,7 +6971,7 @@ app.get('/api/master/radiology-tests', authenticateToken, async (req: any, res: 
       status: t.isActive ? 'active' : 'inactive',
     })));
   } catch (error) {
-    console.error('Get master radiology tests error:', error);
+    logger.error('Get master radiology tests error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -5407,7 +6993,7 @@ app.get('/api/master/procedures', authenticateToken, async (req: any, res: Respo
       status: p.isActive ? 'active' : 'inactive',
     })));
   } catch (error) {
-    console.error('Get master procedures error:', error);
+    logger.error('Get master procedures error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -5429,7 +7015,7 @@ app.get('/api/master/departments', authenticateToken, async (req: any, res: Resp
       status: d.isActive ? 'active' : 'inactive',
     })));
   } catch (error) {
-    console.error('Get master departments error:', error);
+    logger.error('Get master departments error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -5453,7 +7039,7 @@ app.get('/api/master/wards', authenticateToken, async (req: any, res: Response) 
       status: w.isActive ? 'active' : 'inactive',
     })));
   } catch (error) {
-    console.error('Get master wards error:', error);
+    logger.error('Get master wards error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -5475,7 +7061,7 @@ app.get('/api/master/packages', authenticateToken, async (req: any, res: Respons
       status: p.isActive ? 'active' : 'inactive',
     })));
   } catch (error) {
-    console.error('Get master packages error:', error);
+    logger.error('Get master packages error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -5581,9 +7167,16 @@ app.post('/api/master/:type', authenticateToken, async (req: any, res: Response)
         return res.status(400).json({ error: 'Invalid master data type' });
     }
 
+    // Invalidate relevant cache based on type
+    if (type === 'drugs') {
+      await redisService.del('master:drugs');
+    } else if (type === 'lab-tests') {
+      await redisService.del('master:lab-tests');
+    }
+
     res.status(201).json({ id: result.id, message: 'Item created successfully' });
   } catch (error) {
-    console.error('Create master data error:', error);
+    logger.error('Create master data error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -5692,9 +7285,16 @@ app.put('/api/master/:type/:id', authenticateToken, async (req: any, res: Respon
         return res.status(400).json({ error: 'Invalid master data type' });
     }
 
+    // Invalidate relevant cache based on type
+    if (type === 'drugs') {
+      await redisService.del('master:drugs');
+    } else if (type === 'lab-tests') {
+      await redisService.del('master:lab-tests');
+    }
+
     res.json({ id: result.id, message: 'Item updated successfully' });
   } catch (error) {
-    console.error('Update master data error:', error);
+    logger.error('Update master data error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -5732,7 +7332,570 @@ app.delete('/api/master/:type/:id', authenticateToken, async (req: any, res: Res
 
     res.json({ message: 'Item deleted successfully' });
   } catch (error) {
-    console.error('Delete master data error:', error);
+    logger.error('Delete master data error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ===========================
+// MASTER DATA BULK IMPORT/EXPORT
+// ===========================
+
+// Export master data as JSON/CSV
+app.get('/api/master/:type/export', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { type } = req.params;
+    const { format = 'json' } = req.query;
+
+    let data: any[] = [];
+    let filename = '';
+
+    switch (type) {
+      case 'drugs':
+        data = await prisma.drug.findMany({
+          select: {
+            code: true, name: true, genericName: true, category: true, form: true,
+            strength: true, price: true, reorderLevel: true, isActive: true,
+          },
+        });
+        filename = 'drugs';
+        break;
+
+      case 'lab-tests':
+        data = await prisma.labTestMaster.findMany({
+          select: {
+            code: true, name: true, category: true,
+            price: true, tat: true, unit: true, normalRange: true, isActive: true,
+          },
+        });
+        filename = 'lab-tests';
+        break;
+
+      case 'radiology-tests':
+        data = await prisma.radiologyTestMaster.findMany({
+          select: {
+            code: true, name: true, modality: true,
+            price: true, tat: true, isActive: true,
+          },
+        });
+        filename = 'radiology-tests';
+        break;
+
+      case 'procedures':
+        data = await prisma.procedureMaster.findMany({
+          select: {
+            code: true, name: true, category: true,
+            price: true, isActive: true,
+          },
+        });
+        filename = 'procedures';
+        break;
+
+      case 'departments':
+        data = await prisma.department.findMany({
+          where: { branchId: req.user.branchId },
+          select: {
+            name: true, type: true, isActive: true,
+          },
+        });
+        filename = 'departments';
+        break;
+
+      case 'wards':
+        data = await prisma.ward.findMany({
+          select: {
+            name: true, type: true, totalBeds: true,
+            tariffPerDay: true, floor: true,
+          },
+        });
+        filename = 'wards';
+        break;
+
+      case 'packages':
+        data = await prisma.packageMaster.findMany({
+          select: {
+            code: true, name: true, price: true, items: true, isActive: true,
+          },
+        });
+        filename = 'packages';
+        break;
+
+      default:
+        return res.status(400).json({ error: 'Invalid master data type' });
+    }
+
+    if (format === 'csv') {
+      // Convert to CSV
+      if (data.length === 0) {
+        return res.status(404).json({ error: 'No data to export' });
+      }
+
+      const headers = Object.keys(data[0]);
+      const csvRows = [headers.join(',')];
+
+      for (const row of data) {
+        const values = headers.map(header => {
+          const val = row[header];
+          if (val === null || val === undefined) return '';
+          if (typeof val === 'string' && (val.includes(',') || val.includes('"') || val.includes('\n'))) {
+            return `"${val.replace(/"/g, '""')}"`;
+          }
+          return String(val);
+        });
+        csvRows.push(values.join(','));
+      }
+
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename=${filename}-export.csv`);
+      res.send(csvRows.join('\n'));
+    } else {
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Disposition', `attachment; filename=${filename}-export.json`);
+      res.json({
+        exportedAt: new Date().toISOString(),
+        type,
+        count: data.length,
+        data,
+      });
+    }
+  } catch (error) {
+    logger.error('Export master data error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Bulk import master data
+app.post('/api/master/:type/import', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { type } = req.params;
+    const { data, updateExisting = false } = req.body;
+    const branchId = req.user.branchId;
+
+    if (!Array.isArray(data) || data.length === 0) {
+      return res.status(400).json({ error: 'Data array is required' });
+    }
+
+    const results = {
+      total: data.length,
+      created: 0,
+      updated: 0,
+      skipped: 0,
+      errors: [] as string[],
+    };
+
+    for (let i = 0; i < data.length; i++) {
+      const item = data[i];
+      try {
+        switch (type) {
+          case 'drugs': {
+            const existing = item.code ? await prisma.drug.findUnique({
+              where: { code: item.code },
+            }) : null;
+
+            if (existing) {
+              if (updateExisting) {
+                await prisma.drug.update({
+                  where: { id: existing.id },
+                  data: {
+                    name: item.name,
+                    genericName: item.genericName,
+                    category: item.category || 'General',
+                    form: item.form || 'tablet',
+                    strength: item.strength || '',
+                    price: parseFloat(item.price) || 0,
+                    reorderLevel: parseInt(item.reorderLevel) || 10,
+                    isActive: item.isActive !== false,
+                  },
+                });
+                results.updated++;
+              } else {
+                results.skipped++;
+              }
+            } else {
+              await prisma.drug.create({
+                data: {
+                  code: item.code || `DRG-${Date.now()}-${i}`,
+                  name: item.name,
+                  genericName: item.genericName || item.name,
+                  category: item.category || 'General',
+                  form: item.form || 'tablet',
+                  strength: item.strength || '',
+                  price: parseFloat(item.price) || 0,
+                  reorderLevel: parseInt(item.reorderLevel) || 10,
+                  stockQuantity: 0,
+                  isActive: item.isActive !== false,
+                },
+              });
+              results.created++;
+            }
+            break;
+          }
+
+          case 'lab-tests': {
+            const existing = await prisma.labTestMaster.findUnique({
+              where: { code: item.code },
+            });
+
+            if (existing) {
+              if (updateExisting) {
+                await prisma.labTestMaster.update({
+                  where: { id: existing.id },
+                  data: {
+                    name: item.name,
+                    category: item.category || 'General',
+                    price: parseFloat(item.price) || 0,
+                    tat: parseInt(item.tat) || 24,
+                    unit: item.unit,
+                    normalRange: item.normalRange,
+                    isActive: item.isActive !== false,
+                  },
+                });
+                results.updated++;
+              } else {
+                results.skipped++;
+              }
+            } else {
+              await prisma.labTestMaster.create({
+                data: {
+                  code: item.code,
+                  name: item.name,
+                  category: item.category || 'General',
+                  price: parseFloat(item.price) || 0,
+                  tat: parseInt(item.tat) || 24,
+                  unit: item.unit,
+                  normalRange: item.normalRange,
+                  isActive: item.isActive !== false,
+                },
+              });
+              results.created++;
+            }
+            break;
+          }
+
+          case 'radiology-tests': {
+            const existing = await prisma.radiologyTestMaster.findUnique({
+              where: { code: item.code },
+            });
+
+            if (existing) {
+              if (updateExisting) {
+                await prisma.radiologyTestMaster.update({
+                  where: { id: existing.id },
+                  data: {
+                    name: item.name,
+                    modality: item.modality || 'X-Ray',
+                    price: parseFloat(item.price) || 0,
+                    tat: parseInt(item.tat) || 24,
+                    isActive: item.isActive !== false,
+                  },
+                });
+                results.updated++;
+              } else {
+                results.skipped++;
+              }
+            } else {
+              await prisma.radiologyTestMaster.create({
+                data: {
+                  code: item.code,
+                  name: item.name,
+                  modality: item.modality || 'X-Ray',
+                  price: parseFloat(item.price) || 0,
+                  tat: parseInt(item.tat) || 24,
+                  isActive: item.isActive !== false,
+                },
+              });
+              results.created++;
+            }
+            break;
+          }
+
+          case 'procedures': {
+            const existing = await prisma.procedureMaster.findUnique({
+              where: { code: item.code },
+            });
+
+            if (existing) {
+              if (updateExisting) {
+                await prisma.procedureMaster.update({
+                  where: { id: existing.id },
+                  data: {
+                    name: item.name,
+                    category: item.category || 'General',
+                    price: parseFloat(item.price) || 0,
+                    isActive: item.isActive !== false,
+                  },
+                });
+                results.updated++;
+              } else {
+                results.skipped++;
+              }
+            } else {
+              await prisma.procedureMaster.create({
+                data: {
+                  code: item.code,
+                  name: item.name,
+                  category: item.category || 'General',
+                  price: parseFloat(item.price) || 0,
+                  isActive: item.isActive !== false,
+                },
+              });
+              results.created++;
+            }
+            break;
+          }
+
+          case 'departments': {
+            // For departments, use name as unique identifier within branch
+            const existing = await prisma.department.findFirst({
+              where: { name: item.name, branchId },
+            });
+
+            if (existing) {
+              if (updateExisting) {
+                await prisma.department.update({
+                  where: { id: existing.id },
+                  data: {
+                    type: item.type || 'clinical',
+                    isActive: item.isActive !== false,
+                  },
+                });
+                results.updated++;
+              } else {
+                results.skipped++;
+              }
+            } else {
+              await prisma.department.create({
+                data: {
+                  branchId,
+                  name: item.name,
+                  type: item.type || 'clinical',
+                  isActive: item.isActive !== false,
+                },
+              });
+              results.created++;
+            }
+            break;
+          }
+
+          default:
+            results.errors.push(`Row ${i + 1}: Unsupported type ${type}`);
+        }
+      } catch (itemError: any) {
+        results.errors.push(`Row ${i + 1}: ${itemError.message || 'Unknown error'}`);
+      }
+    }
+
+    // Invalidate relevant cache based on type
+    if (type === 'drugs') {
+      await redisService.del('master:drugs');
+    } else if (type === 'lab-tests') {
+      await redisService.del('master:lab-tests');
+    }
+
+    res.json({
+      message: 'Import completed',
+      results,
+    });
+  } catch (error) {
+    logger.error('Import master data error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get pricing for master data items
+app.get('/api/master/:type/pricing', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { type } = req.params;
+    const { search } = req.query;
+
+    let items: any[] = [];
+
+    switch (type) {
+      case 'drugs':
+        items = await prisma.drug.findMany({
+          where: {
+            isActive: true,
+            ...(search ? {
+              OR: [
+                { name: { contains: search as string, mode: 'insensitive' } },
+                { code: { contains: search as string, mode: 'insensitive' } },
+              ],
+            } : {}),
+          },
+          select: { id: true, code: true, name: true, price: true, category: true },
+          orderBy: { name: 'asc' },
+        });
+        break;
+
+      case 'lab-tests':
+        items = await prisma.labTestMaster.findMany({
+          where: {
+            isActive: true,
+            ...(search ? {
+              OR: [
+                { name: { contains: search as string, mode: 'insensitive' } },
+                { code: { contains: search as string, mode: 'insensitive' } },
+              ],
+            } : {}),
+          },
+          select: { id: true, code: true, name: true, price: true, category: true },
+          orderBy: { name: 'asc' },
+        });
+        break;
+
+      case 'radiology-tests':
+        items = await prisma.radiologyTestMaster.findMany({
+          where: {
+            isActive: true,
+            ...(search ? {
+              OR: [
+                { name: { contains: search as string, mode: 'insensitive' } },
+                { code: { contains: search as string, mode: 'insensitive' } },
+              ],
+            } : {}),
+          },
+          select: { id: true, code: true, name: true, price: true, modality: true },
+          orderBy: { name: 'asc' },
+        });
+        break;
+
+      case 'procedures':
+        items = await prisma.procedureMaster.findMany({
+          where: {
+            isActive: true,
+            ...(search ? {
+              OR: [
+                { name: { contains: search as string, mode: 'insensitive' } },
+                { code: { contains: search as string, mode: 'insensitive' } },
+              ],
+            } : {}),
+          },
+          select: { id: true, code: true, name: true, price: true, category: true },
+          orderBy: { name: 'asc' },
+        });
+        break;
+
+      case 'packages':
+        items = await prisma.packageMaster.findMany({
+          where: {
+            isActive: true,
+            ...(search ? {
+              OR: [
+                { name: { contains: search as string, mode: 'insensitive' } },
+                { code: { contains: search as string, mode: 'insensitive' } },
+              ],
+            } : {}),
+          },
+          select: { id: true, code: true, name: true, price: true },
+          orderBy: { name: 'asc' },
+        });
+        break;
+
+      default:
+        return res.status(400).json({ error: 'Invalid master data type' });
+    }
+
+    res.json({
+      type,
+      count: items.length,
+      items: items.map(item => ({
+        id: item.id,
+        code: item.code,
+        name: item.name,
+        category: item.category || item.modality || 'General',
+        price: Number(item.price || 0),
+      })),
+    });
+  } catch (error) {
+    logger.error('Get pricing error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Bulk update pricing
+app.put('/api/master/:type/pricing', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { type } = req.params;
+    const { updates } = req.body;
+
+    if (!Array.isArray(updates) || updates.length === 0) {
+      return res.status(400).json({ error: 'Updates array is required' });
+    }
+
+    const results = {
+      total: updates.length,
+      updated: 0,
+      errors: [] as string[],
+    };
+
+    for (const update of updates) {
+      try {
+        if (!update.id || update.price === undefined) {
+          results.errors.push(`Invalid update: missing id or price`);
+          continue;
+        }
+
+        const newPrice = parseFloat(update.price);
+        if (isNaN(newPrice) || newPrice < 0) {
+          results.errors.push(`Invalid price for ID ${update.id}`);
+          continue;
+        }
+
+        switch (type) {
+          case 'drugs':
+            await prisma.drug.update({
+              where: { id: update.id },
+              data: { price: newPrice },
+            });
+            break;
+          case 'lab-tests':
+            await prisma.labTestMaster.update({
+              where: { id: update.id },
+              data: { price: newPrice },
+            });
+            break;
+          case 'radiology-tests':
+            await prisma.radiologyTestMaster.update({
+              where: { id: update.id },
+              data: { price: newPrice },
+            });
+            break;
+          case 'procedures':
+            await prisma.procedureMaster.update({
+              where: { id: update.id },
+              data: { price: newPrice },
+            });
+            break;
+          case 'packages':
+            await prisma.packageMaster.update({
+              where: { id: update.id },
+              data: { price: newPrice },
+            });
+            break;
+          default:
+            results.errors.push(`Unsupported type: ${type}`);
+            continue;
+        }
+
+        results.updated++;
+      } catch (updateError: any) {
+        results.errors.push(`Error updating ${update.id}: ${updateError.message}`);
+      }
+    }
+
+    // Invalidate relevant cache based on type
+    if (type === 'drugs') {
+      await redisService.del('master:drugs');
+    } else if (type === 'lab-tests') {
+      await redisService.del('master:lab-tests');
+    }
+
+    res.json({
+      message: 'Pricing update completed',
+      results,
+    });
+  } catch (error) {
+    logger.error('Update pricing error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -5777,13 +7940,13 @@ app.get('/api/users', authenticateToken, async (req: any, res: Response) => {
       createdAt: u.createdAt.toISOString(),
     })));
   } catch (error) {
-    console.error('Get users error:', error);
+    logger.error('Get users error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
 // Create user
-app.post('/api/users', authenticateToken, validateBody(createUserSchema), async (req: any, res: Response) => {
+app.post('/api/users', authenticateToken, requirePermission('users:manage'), validateBody(createUserSchema), async (req: any, res: Response) => {
   try {
     const { username, fullName, email, phone, role, password } = req.body;
     const bcrypt = await import('bcryptjs');
@@ -5811,13 +7974,13 @@ app.post('/api/users', authenticateToken, validateBody(createUserSchema), async 
       status: 'active',
     });
   } catch (error) {
-    console.error('Create user error:', error);
+    logger.error('Create user error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
 // Update user
-app.put('/api/users/:id', authenticateToken, validateBody(updateUserSchema), async (req: any, res: Response) => {
+app.put('/api/users/:id', authenticateToken, requirePermission('users:manage'), validateBody(updateUserSchema), async (req: any, res: Response) => {
   try {
     const { id } = req.params;
     const { username, fullName, email, role, status } = req.body;
@@ -5842,25 +8005,29 @@ app.put('/api/users/:id', authenticateToken, validateBody(updateUserSchema), asy
       status: user.isActive ? 'active' : 'inactive',
     });
   } catch (error) {
-    console.error('Update user error:', error);
+    logger.error('Update user error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
 // Delete user
-app.delete('/api/users/:id', authenticateToken, async (req: any, res: Response) => {
+app.delete('/api/users/:id', authenticateToken, requirePermission('users:manage'), async (req: any, res: Response) => {
   try {
     const { id } = req.params;
+    // Prevent self-deletion
+    if (id === req.user.userId) {
+      return res.status(400).json({ error: 'Cannot delete your own account' });
+    }
     await prisma.user.delete({ where: { id } });
     res.json({ message: 'User deleted successfully' });
   } catch (error) {
-    console.error('Delete user error:', error);
+    logger.error('Delete user error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Reset user password
-app.post('/api/users/:id/reset-password', authenticateToken, async (req: any, res: Response) => {
+// Reset user password (admin only)
+app.post('/api/users/:id/reset-password', authenticateToken, requirePermission('users:manage'), async (req: any, res: Response) => {
   try {
     const { id } = req.params;
     const { newPassword } = req.body;
@@ -5874,7 +8041,52 @@ app.post('/api/users/:id/reset-password', authenticateToken, async (req: any, re
 
     res.json({ message: 'Password reset successfully' });
   } catch (error) {
-    console.error('Reset password error:', error);
+    logger.error('Reset password error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Change current user's password
+app.post('/api/users/change-password', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    const userId = req.user.userId;
+
+    // Validate input
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Current password and new password are required' });
+    }
+
+    // Get user with password hash
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { passwordHash: true },
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Verify current password
+    const bcrypt = await import('bcryptjs');
+    const isValidPassword = await bcrypt.compare(currentPassword, user.passwordHash);
+
+    if (!isValidPassword) {
+      return res.status(401).json({ error: 'Current password is incorrect' });
+    }
+
+    // Hash new password
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+
+    // Update password
+    await prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash },
+    });
+
+    res.json({ message: 'Password changed successfully' });
+  } catch (error) {
+    logger.error('Change password error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -5912,7 +8124,55 @@ app.get('/api/audit-logs', authenticateToken, async (req: any, res: Response) =>
       timestamp: log.timestamp.toISOString(),
     })));
   } catch (error) {
-    console.error('Get audit logs error:', error);
+    logger.error('Get audit logs error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Export audit logs as CSV
+app.get('/api/audit-logs/export', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { module, dateFrom, dateTo } = req.query;
+
+    const where: any = {};
+    if (module) where.resource = module;
+    if (dateFrom || dateTo) {
+      where.timestamp = {};
+      if (dateFrom) where.timestamp.gte = new Date(dateFrom as string);
+      if (dateTo) where.timestamp.lte = new Date(dateTo as string);
+    }
+
+    const logs = await prisma.auditLog.findMany({
+      where,
+      include: {
+        user: { select: { name: true, username: true } },
+      },
+      orderBy: { timestamp: 'desc' },
+    });
+
+    // Convert to CSV format
+    const csvHeaders = ['Timestamp', 'User', 'Module', 'Action', 'Resource ID', 'IP Address'];
+    const csvRows = logs.map(log => [
+      new Date(log.timestamp).toLocaleString(),
+      log.user?.username || log.performedBy || 'System',
+      log.resource || 'N/A',
+      log.action || 'N/A',
+      log.resourceId || '',
+      log.ipAddress || 'N/A',
+    ]);
+
+    // Build CSV content
+    const csvContent = [
+      csvHeaders.join(','),
+      ...csvRows.map(row => row.map(cell => `"${cell}"`).join(',')),
+    ].join('\n');
+
+    // Set response headers for CSV download
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename=audit-logs-${Date.now()}.csv`);
+    res.send(csvContent);
+  } catch (error) {
+    logger.error('Export audit logs error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -5936,7 +8196,7 @@ app.get('/api/settings', authenticateToken, async (req: any, res: Response) => {
 
     res.json(settings);
   } catch (error) {
-    console.error('Get settings error:', error);
+    logger.error('Get settings error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -5957,30 +8217,264 @@ app.post('/api/settings/hospital', authenticateToken, async (req: any, res: Resp
 
     res.json({ message: 'Hospital settings saved successfully' });
   } catch (error) {
-    console.error('Save hospital settings error:', error);
+    logger.error('Save hospital settings error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Save email config (placeholder)
+// Get email config
+app.get('/api/settings/email', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: req.user.tenantId },
+    });
+    const config = (tenant?.config as any) || {};
+    const emailConfig = config.email || {};
+
+    res.json({
+      provider: emailConfig.provider || 'smtp',
+      host: emailConfig.host || '',
+      port: emailConfig.port || 587,
+      user: emailConfig.user || '',
+      from: emailConfig.from || '',
+      secure: emailConfig.secure || false,
+      enabled: emailConfig.enabled || false,
+    });
+  } catch (error) {
+    logger.error('Get email config error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Save email config
 app.post('/api/settings/email', authenticateToken, async (req: any, res: Response) => {
   try {
-    // In a real implementation, this would save to a settings table
+    const { provider, host, port, user, pass, from, secure, enabled, apiKey } = req.body;
+
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: req.user.tenantId },
+    });
+    const currentConfig = (tenant?.config as any) || {};
+
+    const emailConfig: any = {
+      provider: provider || 'smtp',
+      host: host || '',
+      port: port || 587,
+      user: user || '',
+      from: from || '',
+      secure: secure || false,
+      enabled: enabled || false,
+    };
+
+    // Only update password if provided
+    if (pass) {
+      emailConfig.pass = pass;
+    } else if (currentConfig.email?.pass) {
+      emailConfig.pass = currentConfig.email.pass;
+    }
+
+    // Store API key for providers like SendGrid
+    if (apiKey) {
+      emailConfig.apiKey = apiKey;
+    } else if (currentConfig.email?.apiKey) {
+      emailConfig.apiKey = currentConfig.email.apiKey;
+    }
+
+    await prisma.tenant.update({
+      where: { id: req.user.tenantId },
+      data: {
+        config: {
+          ...currentConfig,
+          email: emailConfig,
+        },
+      },
+    });
+
+    // Log audit
+    await prisma.auditLog.create({
+      data: {
+        userId: req.user.userId,
+        action: 'UPDATE',
+        resource: 'settings',
+        resourceId: 'email',
+        newValue: { provider, host, port, from, enabled },
+        ipAddress: req.ip,
+        performedBy: req.user.userId,
+      },
+    });
+
     res.json({ message: 'Email configuration saved successfully' });
   } catch (error) {
-    console.error('Save email config error:', error);
+    logger.error('Save email config error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Save SMS config (placeholder)
+// Test email config
+app.post('/api/settings/email/test', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { testEmail } = req.body;
+
+    if (!testEmail) {
+      return res.status(400).json({ error: 'Test email address is required' });
+    }
+
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: req.user.tenantId },
+    });
+    const config = (tenant?.config as any) || {};
+    const emailConfig = config.email || {};
+
+    if (!emailConfig.enabled) {
+      return res.status(400).json({ error: 'Email is not enabled. Please enable and save configuration first.' });
+    }
+
+    // Use notification service to send test email
+    const { notificationService } = require('./services/notification');
+    const result = await notificationService.send({
+      type: 'PASSWORD_RESET',
+      recipientEmail: testEmail,
+      subject: 'Test Email from Hospital ERP',
+      message: 'This is a test email to verify your email configuration is working correctly.',
+      data: {
+        userName: req.user.username,
+        otp: '123456',
+        hospitalName: tenant?.name || 'Hospital ERP',
+      },
+    });
+
+    if (result.email) {
+      res.json({ message: 'Test email sent successfully' });
+    } else {
+      res.status(500).json({ error: 'Failed to send test email. Check configuration.' });
+    }
+  } catch (error) {
+    logger.error('Test email error:', error);
+    res.status(500).json({ error: 'Failed to send test email' });
+  }
+});
+
+// Get SMS config
+app.get('/api/settings/sms', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: req.user.tenantId },
+    });
+    const config = (tenant?.config as any) || {};
+    const smsConfig = config.sms || {};
+
+    res.json({
+      provider: smsConfig.provider || 'twilio',
+      senderId: smsConfig.senderId || '',
+      enabled: smsConfig.enabled || false,
+      // Don't return sensitive keys
+      hasApiKey: !!smsConfig.apiKey,
+      hasApiSecret: !!smsConfig.apiSecret,
+    });
+  } catch (error) {
+    logger.error('Get SMS config error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Save SMS config
 app.post('/api/settings/sms', authenticateToken, async (req: any, res: Response) => {
   try {
-    // In a real implementation, this would save to a settings table
+    const { provider, apiKey, apiSecret, senderId, enabled, accountSid, authToken } = req.body;
+
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: req.user.tenantId },
+    });
+    const currentConfig = (tenant?.config as any) || {};
+
+    const smsConfig: any = {
+      provider: provider || 'twilio',
+      senderId: senderId || '',
+      enabled: enabled || false,
+    };
+
+    // Only update keys if provided (supports both generic and Twilio-specific fields)
+    if (apiKey || accountSid) {
+      smsConfig.apiKey = apiKey || accountSid;
+    } else if (currentConfig.sms?.apiKey) {
+      smsConfig.apiKey = currentConfig.sms.apiKey;
+    }
+
+    if (apiSecret || authToken) {
+      smsConfig.apiSecret = apiSecret || authToken;
+    } else if (currentConfig.sms?.apiSecret) {
+      smsConfig.apiSecret = currentConfig.sms.apiSecret;
+    }
+
+    await prisma.tenant.update({
+      where: { id: req.user.tenantId },
+      data: {
+        config: {
+          ...currentConfig,
+          sms: smsConfig,
+        },
+      },
+    });
+
+    // Log audit
+    await prisma.auditLog.create({
+      data: {
+        userId: req.user.userId,
+        action: 'UPDATE',
+        resource: 'settings',
+        resourceId: 'sms',
+        newValue: { provider, senderId, enabled },
+        ipAddress: req.ip,
+        performedBy: req.user.userId,
+      },
+    });
+
     res.json({ message: 'SMS configuration saved successfully' });
   } catch (error) {
-    console.error('Save SMS config error:', error);
+    logger.error('Save SMS config error:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Test SMS config
+app.post('/api/settings/sms/test', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { testPhone } = req.body;
+
+    if (!testPhone) {
+      return res.status(400).json({ error: 'Test phone number is required' });
+    }
+
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: req.user.tenantId },
+    });
+    const config = (tenant?.config as any) || {};
+    const smsConfig = config.sms || {};
+
+    if (!smsConfig.enabled) {
+      return res.status(400).json({ error: 'SMS is not enabled. Please enable and save configuration first.' });
+    }
+
+    // Use notification service to send test SMS
+    const { notificationService } = require('./services/notification');
+    const result = await notificationService.send({
+      type: 'PASSWORD_RESET',
+      recipientPhone: testPhone,
+      message: `Test SMS from ${tenant?.name || 'Hospital ERP'}. Your OTP is 123456.`,
+      data: {
+        otp: '123456',
+        hospitalName: tenant?.name || 'Hospital ERP',
+      },
+    });
+
+    if (result.sms) {
+      res.json({ message: 'Test SMS sent successfully' });
+    } else {
+      res.status(500).json({ error: 'Failed to send test SMS. Check configuration.' });
+    }
+  } catch (error) {
+    logger.error('Test SMS error:', error);
+    res.status(500).json({ error: 'Failed to send test SMS' });
   }
 });
 
@@ -5990,7 +8484,7 @@ app.get('/api/reports', authenticateToken, async (req: any, res: Response) => {
     // Return mock reports for now
     res.json([]);
   } catch (error) {
-    console.error('Get reports error:', error);
+    logger.error('Get reports error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -6026,7 +8520,7 @@ app.post('/api/insurance-companies', authenticateToken, async (req: any, res: Re
       status: 'active',
     });
   } catch (error) {
-    console.error('Create insurance company error:', error);
+    logger.error('Create insurance company error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -6057,7 +8551,7 @@ app.get('/api/patient-insurances', authenticateToken, async (req: any, res: Resp
       status: pi.isActive && new Date(pi.validTill) > new Date() ? 'active' : 'expired',
     })));
   } catch (error) {
-    console.error('Get patient insurances error:', error);
+    logger.error('Get patient insurances error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -6110,36 +8604,512 @@ app.post('/api/patient-insurances', authenticateToken, async (req: any, res: Res
       status: 'active',
     });
   } catch (error) {
-    console.error('Create patient insurance error:', error);
+    logger.error('Create patient insurance error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Get TPA claims
-app.get('/api/tpa/claims', authenticateToken, async (req: any, res: Response) => {
+// ===========================
+// CLAIMS MANAGEMENT ROUTES
+// ===========================
+
+// Get all claims
+app.get('/api/claims', authenticateToken, async (req: any, res: Response) => {
   try {
-    // Return empty for now - would need Claims model
-    res.json([]);
+    const tenantId = req.user.tenantId;
+
+    const claims = await prisma.claim.findMany({
+      where: { tenantId },
+      orderBy: { submittedDate: 'desc' },
+    });
+
+    const claimsWithDetails = await Promise.all(
+      claims.map(async (claim) => {
+        const patient = await prisma.patient.findUnique({
+          where: { id: claim.patientId },
+          select: { name: true, mrn: true },
+        });
+
+        let insuranceCompanyName = '';
+        let policyNumber = '';
+
+        if (claim.patientInsuranceId) {
+          const patientInsurance = await prisma.patientInsurance.findUnique({
+            where: { id: claim.patientInsuranceId },
+            include: { tpa: { select: { name: true } } },
+          });
+          insuranceCompanyName = patientInsurance?.tpa.name || '';
+          policyNumber = patientInsurance?.policyNumber || '';
+        }
+
+        return {
+          id: claim.id,
+          claimNumber: claim.claimNumber,
+          patientId: claim.patientId,
+          patientName: patient?.name || '',
+          patientMRN: patient?.mrn || '',
+          patientInsuranceId: claim.patientInsuranceId,
+          insuranceCompanyId: claim.insuranceCompanyId,
+          insuranceCompanyName,
+          policyNumber,
+          admissionId: claim.admissionId,
+          claimType: claim.claimType,
+          claimAmount: Number(claim.claimAmount),
+          approvedAmount: Number(claim.approvedAmount),
+          rejectedAmount: Number(claim.rejectedAmount),
+          status: claim.status,
+          submittedDate: claim.submittedDate.toISOString(),
+          approvedDate: claim.approvedDate?.toISOString(),
+          settledDate: claim.settledDate?.toISOString(),
+          documents: claim.documents || [],
+          remarks: claim.remarks,
+        };
+      })
+    );
+
+    res.json(claimsWithDetails);
   } catch (error) {
-    console.error('Get TPA claims error:', error);
+    logger.error('Get claims error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Submit TPA claim
-app.post('/api/tpa/claims', authenticateToken, async (req: any, res: Response) => {
+// Get claim by ID
+app.get('/api/claims/:id', authenticateToken, async (req: any, res: Response) => {
   try {
-    const data = req.body;
-    // Return mock response
-    res.status(201).json({
-      id: `claim-${Date.now()}`,
-      claimNumber: `CLM-${Date.now().toString().slice(-8)}`,
-      ...data,
-      status: 'Submitted',
-      submittedDate: new Date().toISOString(),
+    const { id } = req.params;
+    const tenantId = req.user.tenantId;
+
+    const claim = await prisma.claim.findFirst({
+      where: { id, tenantId },
+    });
+
+    if (!claim) {
+      return res.status(404).json({ error: 'Claim not found' });
+    }
+
+    const patient = await prisma.patient.findUnique({
+      where: { id: claim.patientId },
+      select: { name: true, mrn: true },
+    });
+
+    let insuranceCompanyName = '';
+    let policyNumber = '';
+
+    if (claim.patientInsuranceId) {
+      const patientInsurance = await prisma.patientInsurance.findUnique({
+        where: { id: claim.patientInsuranceId },
+        include: { tpa: { select: { name: true } } },
+      });
+      insuranceCompanyName = patientInsurance?.tpa.name || '';
+      policyNumber = patientInsurance?.policyNumber || '';
+    }
+
+    const settlements = await prisma.settlement.findMany({
+      where: { claimId: id },
+      orderBy: { settlementDate: 'desc' },
+    });
+
+    res.json({
+      id: claim.id,
+      claimNumber: claim.claimNumber,
+      patientId: claim.patientId,
+      patientName: patient?.name || '',
+      patientMRN: patient?.mrn || '',
+      patientInsuranceId: claim.patientInsuranceId,
+      insuranceCompanyId: claim.insuranceCompanyId,
+      insuranceCompanyName,
+      policyNumber,
+      admissionId: claim.admissionId,
+      claimType: claim.claimType,
+      claimAmount: Number(claim.claimAmount),
+      approvedAmount: Number(claim.approvedAmount),
+      rejectedAmount: Number(claim.rejectedAmount),
+      status: claim.status,
+      submittedDate: claim.submittedDate.toISOString(),
+      approvedDate: claim.approvedDate?.toISOString(),
+      settledDate: claim.settledDate?.toISOString(),
+      documents: claim.documents || [],
+      remarks: claim.remarks,
+      settlements: settlements.map(s => ({
+        id: s.id,
+        settlementNumber: s.settlementNumber,
+        settlementAmount: Number(s.settlementAmount),
+        settlementDate: s.settlementDate.toISOString(),
+        paymentMode: s.paymentMode,
+        transactionRef: s.transactionRef,
+        remarks: s.remarks,
+      })),
     });
   } catch (error) {
-    console.error('Submit TPA claim error:', error);
+    logger.error('Get claim by ID error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Create a new claim
+app.post('/api/claims', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const {
+      patientId,
+      patientInsuranceId,
+      insuranceCompanyId,
+      invoiceId,
+      admissionId,
+      claimType,
+      claimAmount,
+      documents,
+      remarks,
+    } = req.body;
+
+    const tenantId = req.user.tenantId;
+    const userId = req.user.userId;
+
+    const claimCount = await prisma.claim.count({ where: { tenantId } });
+    const claimNumber = `CLM-${String(claimCount + 1).padStart(6, '0')}`;
+
+    const claim = await prisma.claim.create({
+      data: {
+        tenantId,
+        claimNumber,
+        patientId,
+        patientInsuranceId,
+        insuranceCompanyId,
+        invoiceId,
+        admissionId,
+        claimType: claimType?.toLowerCase() || 'cashless',
+        claimAmount: claimAmount || 0,
+        approvedAmount: 0,
+        rejectedAmount: 0,
+        status: 'submitted',
+        documents: documents || [],
+        remarks,
+        createdBy: userId,
+      },
+    });
+
+    const patient = await prisma.patient.findUnique({
+      where: { id: patientId },
+      select: { name: true, mrn: true },
+    });
+
+    res.status(201).json({
+      id: claim.id,
+      claimNumber: claim.claimNumber,
+      patientId: claim.patientId,
+      patientName: patient?.name || '',
+      patientMRN: patient?.mrn || '',
+      status: claim.status,
+      submittedDate: claim.submittedDate.toISOString(),
+    });
+  } catch (error) {
+    logger.error('Create claim error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update claim status
+app.put('/api/claims/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { status, approvedAmount, rejectedAmount, remarks, rejectionReason } = req.body;
+    const tenantId = req.user.tenantId;
+    const userId = req.user.userId;
+
+    const claim = await prisma.claim.findFirst({
+      where: { id, tenantId },
+    });
+
+    if (!claim) {
+      return res.status(404).json({ error: 'Claim not found' });
+    }
+
+    const updateData: any = {
+      status: status?.toLowerCase() || claim.status,
+      updatedBy: userId,
+    };
+
+    if (approvedAmount !== undefined) {
+      updateData.approvedAmount = approvedAmount;
+    }
+
+    if (rejectedAmount !== undefined) {
+      updateData.rejectedAmount = rejectedAmount;
+    }
+
+    if (remarks !== undefined) {
+      updateData.remarks = remarks;
+    }
+
+    if (rejectionReason !== undefined) {
+      updateData.rejectionReason = rejectionReason;
+    }
+
+    if (status === 'approved' && !claim.approvedDate) {
+      updateData.approvedDate = new Date();
+    }
+
+    if (status === 'rejected' && !claim.rejectedDate) {
+      updateData.rejectedDate = new Date();
+    }
+
+    if (status === 'settled' && !claim.settledDate) {
+      updateData.settledDate = new Date();
+    }
+
+    const updatedClaim = await prisma.claim.update({
+      where: { id },
+      data: updateData,
+    });
+
+    res.json({
+      id: updatedClaim.id,
+      claimNumber: updatedClaim.claimNumber,
+      status: updatedClaim.status,
+      approvedAmount: Number(updatedClaim.approvedAmount),
+      rejectedAmount: Number(updatedClaim.rejectedAmount),
+      approvedDate: updatedClaim.approvedDate?.toISOString(),
+      rejectedDate: updatedClaim.rejectedDate?.toISOString(),
+      settledDate: updatedClaim.settledDate?.toISOString(),
+      remarks: updatedClaim.remarks,
+    });
+  } catch (error) {
+    logger.error('Update claim error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ===========================
+// SETTLEMENT TRACKING ROUTES
+// ===========================
+
+// Get all settlements
+app.get('/api/settlements', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const tenantId = req.user.tenantId;
+
+    const settlements = await prisma.settlement.findMany({
+      where: { tenantId },
+      include: {
+        claim: {
+          select: {
+            claimNumber: true,
+            patientId: true,
+            claimAmount: true,
+          },
+        },
+      },
+      orderBy: { settlementDate: 'desc' },
+    });
+
+    const settlementsWithDetails = await Promise.all(
+      settlements.map(async (settlement) => {
+        const patient = await prisma.patient.findUnique({
+          where: { id: settlement.claim.patientId },
+          select: { name: true, mrn: true },
+        });
+
+        return {
+          id: settlement.id,
+          settlementNumber: settlement.settlementNumber,
+          claimId: settlement.claimId,
+          claimNumber: settlement.claim.claimNumber,
+          patientName: patient?.name || '',
+          patientMRN: patient?.mrn || '',
+          claimAmount: Number(settlement.claim.claimAmount),
+          settlementAmount: Number(settlement.settlementAmount),
+          settlementDate: settlement.settlementDate.toISOString(),
+          paymentMode: settlement.paymentMode,
+          transactionRef: settlement.transactionRef,
+          remarks: settlement.remarks,
+          settledBy: settlement.settledBy,
+        };
+      })
+    );
+
+    res.json(settlementsWithDetails);
+  } catch (error) {
+    logger.error('Get settlements error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Create a new settlement
+app.post('/api/settlements', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const {
+      claimId,
+      settlementAmount,
+      settlementDate,
+      paymentMode,
+      transactionRef,
+      remarks,
+    } = req.body;
+
+    const tenantId = req.user.tenantId;
+    const userId = req.user.userId;
+
+    const claim = await prisma.claim.findFirst({
+      where: { id: claimId, tenantId },
+    });
+
+    if (!claim) {
+      return res.status(404).json({ error: 'Claim not found' });
+    }
+
+    const settlementCount = await prisma.settlement.count({ where: { tenantId } });
+    const settlementNumber = `SET-${String(settlementCount + 1).padStart(6, '0')}`;
+
+    const settlement = await prisma.settlement.create({
+      data: {
+        tenantId,
+        settlementNumber,
+        claimId,
+        settlementAmount: settlementAmount || 0,
+        settlementDate: settlementDate ? new Date(settlementDate) : new Date(),
+        paymentMode,
+        transactionRef,
+        remarks,
+        settledBy: userId,
+      },
+    });
+
+    await prisma.claim.update({
+      where: { id: claimId },
+      data: {
+        status: 'settled',
+        settledDate: settlement.settlementDate,
+      },
+    });
+
+    res.status(201).json({
+      id: settlement.id,
+      settlementNumber: settlement.settlementNumber,
+      claimId: settlement.claimId,
+      settlementAmount: Number(settlement.settlementAmount),
+      settlementDate: settlement.settlementDate.toISOString(),
+      paymentMode: settlement.paymentMode,
+    });
+  } catch (error) {
+    logger.error('Create settlement error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Legacy TPA claims route (for backward compatibility)
+app.get('/api/tpa/claims', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const tenantId = req.user.tenantId;
+
+    const claims = await prisma.claim.findMany({
+      where: { tenantId },
+      orderBy: { submittedDate: 'desc' },
+    });
+
+    const claimsWithDetails = await Promise.all(
+      claims.map(async (claim) => {
+        const patient = await prisma.patient.findUnique({
+          where: { id: claim.patientId },
+          select: { name: true, mrn: true },
+        });
+
+        let insuranceCompanyName = '';
+        let policyNumber = '';
+
+        if (claim.patientInsuranceId) {
+          const patientInsurance = await prisma.patientInsurance.findUnique({
+            where: { id: claim.patientInsuranceId },
+            include: { tpa: { select: { name: true } } },
+          });
+          insuranceCompanyName = patientInsurance?.tpa.name || '';
+          policyNumber = patientInsurance?.policyNumber || '';
+        }
+
+        return {
+          id: claim.id,
+          claimNumber: claim.claimNumber,
+          patientId: claim.patientId,
+          patientName: patient?.name || '',
+          patientMRN: patient?.mrn || '',
+          patientInsuranceId: claim.patientInsuranceId,
+          insuranceCompanyId: claim.insuranceCompanyId,
+          insuranceCompanyName,
+          policyNumber,
+          admissionId: claim.admissionId,
+          claimType: claim.claimType.charAt(0).toUpperCase() + claim.claimType.slice(1),
+          claimAmount: Number(claim.claimAmount),
+          approvedAmount: Number(claim.approvedAmount),
+          rejectedAmount: Number(claim.rejectedAmount),
+          status: claim.status.charAt(0).toUpperCase() + claim.status.slice(1).replace('_', ' '),
+          submittedDate: claim.submittedDate.toISOString(),
+          approvedDate: claim.approvedDate?.toISOString(),
+          settledDate: claim.settledDate?.toISOString(),
+          documents: claim.documents || [],
+          remarks: claim.remarks,
+        };
+      })
+    );
+
+    res.json(claimsWithDetails);
+  } catch (error) {
+    logger.error('Get TPA claims error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Legacy TPA claim submission
+app.post('/api/tpa/claims', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const {
+      patientId,
+      patientInsuranceId,
+      insuranceCompanyId,
+      admissionId,
+      claimType,
+      claimAmount,
+      documents,
+    } = req.body;
+
+    const tenantId = req.user.tenantId;
+    const userId = req.user.userId;
+
+    const claimCount = await prisma.claim.count({ where: { tenantId } });
+    const claimNumber = `CLM-${String(claimCount + 1).padStart(6, '0')}`;
+
+    const claim = await prisma.claim.create({
+      data: {
+        tenantId,
+        claimNumber,
+        patientId,
+        patientInsuranceId,
+        insuranceCompanyId,
+        admissionId,
+        claimType: claimType?.toLowerCase() || 'cashless',
+        claimAmount: claimAmount || 0,
+        approvedAmount: 0,
+        rejectedAmount: 0,
+        status: 'submitted',
+        documents: documents || [],
+        createdBy: userId,
+      },
+    });
+
+    const patient = await prisma.patient.findUnique({
+      where: { id: patientId },
+      select: { name: true, mrn: true },
+    });
+
+    res.status(201).json({
+      id: claim.id,
+      claimNumber: claim.claimNumber,
+      patientId: claim.patientId,
+      patientName: patient?.name || '',
+      patientMRN: patient?.mrn || '',
+      status: 'Submitted',
+      submittedDate: claim.submittedDate.toISOString(),
+    });
+  } catch (error) {
+    logger.error('Submit TPA claim error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -6170,7 +9140,7 @@ app.get('/api/tpa/pre-authorizations', authenticateToken, async (req: any, res: 
       approvedDate: pa.approvalDate?.toISOString(),
     })));
   } catch (error) {
-    console.error('Get pre-authorizations error:', error);
+    logger.error('Get pre-authorizations error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -6217,7 +9187,64 @@ app.post('/api/tpa/pre-authorizations', authenticateToken, validateBody(preAutho
       requestedDate: preAuth.requestDate.toISOString(),
     });
   } catch (error) {
-    console.error('Submit pre-authorization error:', error);
+    logger.error('Submit pre-authorization error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update pre-authorization (approve/reject)
+app.put('/api/tpa/pre-authorizations/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { status, approvedAmount, remarks } = req.body;
+
+    const preAuth = await prisma.preAuthorization.findUnique({
+      where: { id },
+    });
+
+    if (!preAuth) {
+      return res.status(404).json({ error: 'Pre-authorization not found' });
+    }
+
+    const updateData: any = {
+      status: status?.toLowerCase() || preAuth.status,
+      remarks: remarks !== undefined ? remarks : preAuth.remarks,
+    };
+
+    if (approvedAmount !== undefined) {
+      updateData.approvedAmount = approvedAmount;
+    }
+
+    if (status === 'approved' && !preAuth.approvalDate) {
+      updateData.approvalDate = new Date();
+      updateData.approvalNumber = `PA-${String(Date.now()).slice(-8)}`;
+    }
+
+    const updatedPreAuth = await prisma.preAuthorization.update({
+      where: { id },
+      data: updateData,
+      include: {
+        patient: { select: { name: true } },
+        tpa: { select: { name: true } },
+      },
+    });
+
+    res.json({
+      id: updatedPreAuth.id,
+      patientId: updatedPreAuth.patientId,
+      patientName: updatedPreAuth.patient.name,
+      insuranceCompanyName: updatedPreAuth.tpa.name,
+      procedure: updatedPreAuth.procedurePlanned,
+      estimatedAmount: Number(updatedPreAuth.requestedAmount),
+      approvedAmount: Number(updatedPreAuth.approvedAmount) || 0,
+      status: updatedPreAuth.status === 'approved' ? 'Approved' : updatedPreAuth.status === 'rejected' ? 'Rejected' : 'Pending',
+      requestedDate: updatedPreAuth.requestDate.toISOString(),
+      approvedDate: updatedPreAuth.approvalDate?.toISOString(),
+      approvalNumber: updatedPreAuth.approvalNumber,
+      remarks: updatedPreAuth.remarks,
+    });
+  } catch (error) {
+    logger.error('Update pre-authorization error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -6241,7 +9268,7 @@ app.get('/api/icu/patients', authenticateToken, async (req: any, res: Response) 
       ventilatorId: b.ventilatorId,
     })));
   } catch (error) {
-    console.error('Get ICU patients error:', error);
+    logger.error('Get ICU patients error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -6396,7 +9423,7 @@ app.get('/api/ipd-billing/:admissionId', authenticateToken, async (req: any, res
       } : null,
     });
   } catch (error) {
-    console.error('Get IPD billing error:', error);
+    logger.error('Get IPD billing error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -6483,7 +9510,7 @@ app.post('/api/ipd-billing', authenticateToken, async (req: any, res: Response) 
       discharged: dischargePatient || false,
     });
   } catch (error) {
-    console.error('Create/Update IPD bill error:', error);
+    logger.error('Create/Update IPD bill error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -6572,7 +9599,155 @@ app.post('/api/ipd-billing/:admissionId/pay', authenticateToken, async (req: any
       newBalance,
     });
   } catch (error) {
-    console.error('IPD payment error:', error);
+    logger.error('IPD payment error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ============================================
+// IPD CHARGE CAPTURE ENDPOINTS
+// ============================================
+
+// POST /api/ipd/charges/capture - Automatically capture daily charges
+app.post('/api/ipd/charges/capture', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { admissionId, captureAll } = req.body;
+    const tenantId = req.user.tenantId;
+    const userId = req.user.id;
+
+    if (captureAll) {
+      // Capture charges for all active admissions
+      const result = await ipdChargeCaptureService.captureChargesForAllActiveAdmissions(
+        tenantId,
+        userId
+      );
+
+      return res.json({
+        success: result.errors.length === 0,
+        message: `Captured charges for ${result.totalAdmissions} admissions`,
+        totalAdmissions: result.totalAdmissions,
+        totalCharges: result.totalCharges,
+        errors: result.errors,
+      });
+    } else if (admissionId) {
+      // Capture charges for a specific admission
+      const result = await ipdChargeCaptureService.captureChargesForAdmission(
+        admissionId,
+        tenantId,
+        userId
+      );
+
+      return res.json({
+        success: result.success,
+        message: `Captured ${result.charges.length} charges`,
+        charges: result.charges,
+        errors: result.errors,
+      });
+    } else {
+      return res.status(400).json({
+        error: 'Please provide either admissionId or set captureAll to true',
+      });
+    }
+  } catch (error) {
+    logger.error('Charge capture error:', error);
+    logger.error('Charge capture error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/ipd/charges/:admissionId - Get all charges for an admission
+app.get('/api/ipd/charges/:admissionId', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { admissionId } = req.params;
+
+    const result = await ipdChargeCaptureService.getChargesByAdmission(admissionId);
+
+    res.json({
+      admissionId,
+      charges: result.charges,
+      summary: result.summary,
+    });
+  } catch (error) {
+    logger.error('Get charges error:', error);
+    logger.error('Get charges error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /api/ipd/charges/add - Manually add a charge
+app.post('/api/ipd/charges/add', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { admissionId, category, description, quantity, amount, date } = req.body;
+    const tenantId = req.user.tenantId;
+    const userId = req.user.id;
+
+    // Validate required fields
+    if (!admissionId || !category || !description || !quantity || !amount) {
+      return res.status(400).json({
+        error: 'Missing required fields: admissionId, category, description, quantity, amount',
+      });
+    }
+
+    // Validate category
+    const validCategories = [
+      'bed',
+      'nursing',
+      'procedure',
+      'lab',
+      'radiology',
+      'pharmacy',
+      'consumable',
+      'consultation',
+      'other',
+    ];
+    if (!validCategories.includes(category)) {
+      return res.status(400).json({
+        error: `Invalid category. Must be one of: ${validCategories.join(', ')}`,
+      });
+    }
+
+    const unitPrice = amount / quantity;
+    const chargeDate = date ? new Date(date) : new Date();
+
+    const charge = await ipdChargeCaptureService.addManualCharge(
+      tenantId,
+      admissionId,
+      category,
+      description,
+      quantity,
+      unitPrice,
+      chargeDate,
+      userId
+    );
+
+    res.json({
+      success: true,
+      message: 'Charge added successfully',
+      charge,
+    });
+  } catch (error) {
+    logger.error('Add charge error:', error);
+    logger.error('Add charge error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/ipd/billing/summary/:admissionId - Get billing summary for IPD
+app.get('/api/ipd/billing/summary/:admissionId', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { admissionId } = req.params;
+
+    const summary = await ipdChargeCaptureService.getBillingSummary(admissionId);
+
+    res.json(summary);
+  } catch (error: any) {
+    logger.error('Get billing summary error:', error);
+    logger.error('Get billing summary error:', error);
+
+    if (error.message === 'Admission not found') {
+      return res.status(404).json({ error: 'Admission not found' });
+    }
+
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -7379,6 +10554,575 @@ app.get('/api/cssd/instruments', authenticateToken, requirePermission('cssd:view
 });
 
 // ============================================
+// NURSING MODULE ENDPOINTS
+// ============================================
+
+// Get admitted patients under nursing care
+app.get('/api/nursing/patients', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { tenantId, branchId } = req.user;
+
+    // Get active admissions with patient, bed, and ward information
+    const admissions = await prisma.admission.findMany({
+      where: {
+        patient: {
+          tenantId,
+          branchId,
+        },
+        status: 'active',
+      },
+      include: {
+        patient: {
+          select: {
+            id: true,
+            mrn: true,
+            name: true,
+          },
+        },
+        bed: {
+          select: {
+            bedNumber: true,
+            wardId: true,
+            category: true,
+          },
+        },
+      },
+      orderBy: {
+        admissionDate: 'desc',
+      },
+    });
+
+    // Format the response to match frontend expectations
+    const patients = admissions.map((admission) => ({
+      id: admission.patient.id,
+      name: admission.patient.name,
+      mrn: admission.patient.mrn,
+      wardName: admission.bed?.wardId || 'General Ward',
+      bedNumber: admission.bed?.bedNumber || 'N/A',
+      admissionDate: admission.admissionDate.toISOString(),
+      admissionId: admission.id,
+    }));
+
+    res.json(patients);
+  } catch (error) {
+    logger.error('Get nursing patients error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get medication administration tasks
+app.get('/api/nursing/medications', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { tenantId, branchId } = req.user;
+    const { status, patientId } = req.query;
+
+    const where: any = {
+      tenantId,
+      branchId,
+    };
+
+    // Filter by status if provided (pending, administered, etc.)
+    if (status) {
+      where.status = status;
+    }
+
+    if (patientId) {
+      where.patientId = patientId;
+    }
+
+    // Get medications for today and upcoming
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+
+    where.scheduledTime = {
+      gte: startOfDay,
+    };
+
+    const medications = await prisma.medicationAdministration.findMany({
+      where,
+      orderBy: {
+        scheduledTime: 'asc',
+      },
+    });
+
+    // Get patient names for each medication
+    const patientIds = [...new Set(medications.map(m => m.patientId))];
+    const patients = await prisma.patient.findMany({
+      where: {
+        id: { in: patientIds },
+      },
+      select: {
+        id: true,
+        name: true,
+      },
+    });
+
+    const patientMap = new Map(patients.map(p => [p.id, p.name]));
+
+    // Format the response to match frontend expectations
+    const formattedMedications = medications.map((med) => ({
+      id: med.id,
+      patientId: med.patientId,
+      patientName: patientMap.get(med.patientId) || 'Unknown Patient',
+      medication: med.medicationName,
+      dosage: med.dosage,
+      route: med.route,
+      scheduledTime: med.scheduledTime.toISOString(),
+      status: med.status,
+      administeredBy: med.administeredByName,
+      administeredAt: med.administeredTime?.toISOString(),
+    }));
+
+    res.json(formattedMedications);
+  } catch (error) {
+    logger.error('Get nursing medications error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get all duty roster entries
+app.get('/api/nursing/roster', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { date, shift, nurseId, ward, department } = req.query;
+    const { tenantId, branchId } = req.user;
+
+    const where: any = {
+      tenantId,
+      branchId,
+    };
+
+    if (date) where.date = new Date(date as string);
+    if (shift) where.shift = shift;
+    if (nurseId) where.nurseId = nurseId;
+    if (ward) where.ward = ward;
+    if (department) where.department = department;
+
+    const rosters = await prisma.dutyRoster.findMany({
+      where,
+      orderBy: [
+        { date: 'desc' },
+        { shift: 'asc' },
+      ],
+    });
+
+    res.json(rosters);
+  } catch (error) {
+    logger.error('Get duty roster error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Create/assign nurse to shift
+app.post('/api/nursing/roster', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { nurseId, nurseName, date, shift, ward, department, notes } = req.body;
+    const { tenantId, branchId, userId } = req.user;
+
+    const roster = await prisma.dutyRoster.create({
+      data: {
+        tenantId,
+        branchId,
+        nurseId,
+        nurseName,
+        date: new Date(date),
+        shift,
+        ward,
+        department,
+        notes,
+        createdBy: userId,
+      },
+    });
+
+    res.status(201).json(roster);
+  } catch (error) {
+    logger.error('Create duty roster error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update roster entry
+app.put('/api/nursing/roster/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { nurseName, date, shift, ward, department, status, notes } = req.body;
+
+    const roster = await prisma.dutyRoster.update({
+      where: { id },
+      data: {
+        ...(nurseName && { nurseName }),
+        ...(date && { date: new Date(date) }),
+        ...(shift && { shift }),
+        ...(ward && { ward }),
+        ...(department && { department }),
+        ...(status && { status }),
+        ...(notes !== undefined && { notes }),
+      },
+    });
+
+    res.json(roster);
+  } catch (error) {
+    logger.error('Update duty roster error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete roster entry
+app.delete('/api/nursing/roster/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    await prisma.dutyRoster.delete({
+      where: { id },
+    });
+
+    res.json({ message: 'Duty roster entry deleted successfully' });
+  } catch (error) {
+    logger.error('Delete duty roster error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get pending medication administrations for admitted patients
+app.get('/api/nursing/medication-admin', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { patientId, admissionId, status, date } = req.query;
+    const { tenantId, branchId } = req.user;
+
+    const where: any = {
+      tenantId,
+      branchId,
+    };
+
+    if (patientId) where.patientId = patientId;
+    if (admissionId) where.admissionId = admissionId;
+    if (status) where.status = status;
+
+    if (date) {
+      const startOfDay = new Date(date as string);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(date as string);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      where.scheduledTime = {
+        gte: startOfDay,
+        lte: endOfDay,
+      };
+    }
+
+    const medications = await prisma.medicationAdministration.findMany({
+      where,
+      orderBy: {
+        scheduledTime: 'asc',
+      },
+    });
+
+    res.json(medications);
+  } catch (error) {
+    logger.error('Get medication administration error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Record medication administration
+app.post('/api/nursing/medication-admin', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const {
+      medicationId,
+      patientId,
+      admissionId,
+      medicationName,
+      dosage,
+      route,
+      frequency,
+      scheduledTime,
+      administeredTime,
+      administeredAt,
+      status,
+      notes,
+      sideEffects,
+    } = req.body;
+    const { tenantId, branchId, userId, name } = req.user;
+
+    // If medicationId is provided, update existing medication record
+    if (medicationId) {
+      const medication = await prisma.medicationAdministration.update({
+        where: { id: medicationId },
+        data: {
+          administeredTime: administeredAt ? new Date(administeredAt) : (administeredTime ? new Date(administeredTime) : new Date()),
+          administeredBy: userId,
+          administeredByName: name,
+          status: 'administered',
+          ...(notes && { notes }),
+          ...(sideEffects && { sideEffects }),
+        },
+      });
+
+      res.json(medication);
+    } else {
+      // Create new medication record
+      const medication = await prisma.medicationAdministration.create({
+        data: {
+          tenantId,
+          branchId,
+          patientId,
+          admissionId,
+          medicationName,
+          dosage,
+          route,
+          frequency,
+          scheduledTime: new Date(scheduledTime),
+          administeredTime: administeredTime ? new Date(administeredTime) : null,
+          administeredBy: status === 'administered' ? userId : null,
+          administeredByName: status === 'administered' ? name : null,
+          status: status || 'pending',
+          notes,
+          sideEffects,
+          createdBy: userId,
+        },
+      });
+
+      res.status(201).json(medication);
+    }
+  } catch (error) {
+    logger.error('Record medication administration error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update medication record
+app.put('/api/nursing/medication-admin/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const {
+      administeredTime,
+      status,
+      notes,
+      sideEffects,
+    } = req.body;
+    const { userId, name } = req.user;
+
+    const updateData: any = {};
+
+    if (administeredTime) updateData.administeredTime = new Date(administeredTime);
+    if (status) {
+      updateData.status = status;
+      if (status === 'administered') {
+        updateData.administeredBy = userId;
+        updateData.administeredByName = name;
+        if (!administeredTime) {
+          updateData.administeredTime = new Date();
+        }
+      }
+    }
+    if (notes !== undefined) updateData.notes = notes;
+    if (sideEffects !== undefined) updateData.sideEffects = sideEffects;
+
+    const medication = await prisma.medicationAdministration.update({
+      where: { id },
+      data: updateData,
+    });
+
+    res.json(medication);
+  } catch (error) {
+    logger.error('Update medication administration error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get shift handover notes
+app.get('/api/nursing/handover', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { date, shift, ward, department, patientId, status } = req.query;
+    const { tenantId, branchId } = req.user;
+
+    const where: any = {
+      tenantId,
+      branchId,
+    };
+
+    if (date) where.date = new Date(date as string);
+    if (shift) where.shift = shift;
+    if (ward) where.ward = ward;
+    if (department) where.department = department;
+    if (patientId) where.patientId = patientId;
+    if (status) where.status = status;
+
+    const handovers = await prisma.handoverNote.findMany({
+      where,
+      orderBy: [
+        { date: 'desc' },
+        { shift: 'asc' },
+        { priority: 'desc' },
+      ],
+    });
+
+    res.json(handovers);
+  } catch (error) {
+    logger.error('Get handover notes error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Create new handover note
+app.post('/api/nursing/handover', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const {
+      shift,
+      date,
+      ward,
+      department,
+      handoverFrom,
+      handoverTo,
+      patientId,
+      patientName,
+      admissionId,
+      notes,
+      priority,
+    } = req.body;
+    const { tenantId, branchId, userId } = req.user;
+
+    const handover = await prisma.handoverNote.create({
+      data: {
+        tenantId,
+        branchId,
+        shift,
+        date: new Date(date),
+        ward,
+        department,
+        handoverFrom,
+        handoverTo,
+        patientId,
+        patientName,
+        admissionId,
+        notes,
+        priority: priority || 'normal',
+        status: 'active',
+        createdBy: userId,
+      },
+    });
+
+    res.status(201).json(handover);
+  } catch (error) {
+    logger.error('Create handover note error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update handover note
+app.put('/api/nursing/handover/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const {
+      notes,
+      priority,
+      status,
+      handoverTo,
+    } = req.body;
+
+    const handover = await prisma.handoverNote.update({
+      where: { id },
+      data: {
+        ...(notes !== undefined && { notes }),
+        ...(priority && { priority }),
+        ...(status && { status }),
+        ...(handoverTo && { handoverTo }),
+      },
+    });
+
+    res.json(handover);
+  } catch (error) {
+    logger.error('Update handover note error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get patient vitals
+app.get('/api/nursing/vitals', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { patientId, admissionId, startDate, endDate } = req.query;
+    const { tenantId, branchId } = req.user;
+
+    const where: any = {
+      tenantId,
+      branchId,
+    };
+
+    if (patientId) where.patientId = patientId;
+    if (admissionId) where.admissionId = admissionId;
+
+    if (startDate || endDate) {
+      where.recordedAt = {};
+      if (startDate) where.recordedAt.gte = new Date(startDate as string);
+      if (endDate) where.recordedAt.lte = new Date(endDate as string);
+    }
+
+    const vitals = await prisma.nursingVitals.findMany({
+      where,
+      orderBy: {
+        recordedAt: 'desc',
+      },
+    });
+
+    res.json(vitals);
+  } catch (error) {
+    logger.error('Get nursing vitals error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Record patient vitals
+app.post('/api/nursing/vitals', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const {
+      patientId,
+      admissionId,
+      heartRate,
+      systolicBP,
+      diastolicBP,
+      temperature,
+      spo2,
+      respiratoryRate,
+      weight,
+      height,
+      bmi,
+      painScore,
+      consciousness,
+      notes,
+    } = req.body;
+    const { tenantId, branchId, userId, name } = req.user;
+
+    const vitals = await prisma.nursingVitals.create({
+      data: {
+        tenantId,
+        branchId,
+        patientId,
+        admissionId,
+        heartRate,
+        systolicBP,
+        diastolicBP,
+        temperature,
+        spo2,
+        respiratoryRate,
+        weight,
+        height,
+        bmi,
+        painScore,
+        consciousness,
+        notes,
+        recordedAt: new Date(),
+        recordedBy: userId,
+        recordedByName: name,
+      },
+    });
+
+    res.status(201).json(vitals);
+  } catch (error) {
+    logger.error('Record nursing vitals error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ============================================
 // BIOMETRIC ATTENDANCE ENDPOINTS
 // ============================================
 
@@ -7519,6 +11263,160 @@ app.get('/api/biometric/today', authenticateToken, requirePermission('hr:view'),
       message: 'Failed to fetch today\'s attendance',
     });
   }
+});
+
+// ============================================
+// PATIENT PORTAL APIs
+// ============================================
+
+// Store for OTP sessions (in production, use Redis)
+const otpSessions: Map<string, { patientId: string; otp: string; expiresAt: Date }> = new Map();
+
+// Patient Portal - Request OTP
+app.post('/api/patient-portal/request-otp', async (req: Request, res: Response) => {
+  try {
+    const { mrn, phone, dob } = req.body;
+    if (!dob) return res.status(400).json({ error: 'Date of birth is required' });
+
+    let patient;
+    if (mrn) {
+      patient = await prisma.patient.findFirst({ where: { mrn } });
+    } else if (phone) {
+      patient = await prisma.patient.findFirst({ where: { contact: phone } });
+    }
+
+    if (!patient) return res.status(404).json({ message: 'Patient not found. Please check your details.' });
+
+    const patientDob = patient.dob ? new Date(patient.dob).toISOString().split('T')[0] : null;
+    const inputDob = new Date(dob).toISOString().split('T')[0];
+    if (patientDob !== inputDob) return res.status(401).json({ message: 'Date of birth does not match our records.' });
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const crypto = require('crypto');
+    const sessionId = crypto.randomUUID();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    otpSessions.set(sessionId, { patientId: patient.id, otp, expiresAt });
+
+    try {
+      const { notificationService } = require('./services/notification');
+      if (patient.contact) {
+        await notificationService.send({
+          type: 'PASSWORD_RESET',
+          recipientPhone: patient.contact,
+          recipientEmail: patient.email || undefined,
+          message: `Your OTP for Patient Portal login is: ${otp}. Valid for 10 minutes.`,
+          data: { otp, hospitalName: 'Hospital ERP' },
+        });
+      }
+    } catch (e) { logger.info('OTP notification error:', e); }
+
+    console.log(`Patient Portal OTP for ${patient.mrn}: ${otp}`);
+    res.json({ sessionId, message: 'OTP sent successfully', ...(process.env.NODE_ENV === 'development' ? { otp } : {}) });
+  } catch (error) {
+    logger.error('Request OTP error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Patient Portal - Verify OTP
+app.post('/api/patient-portal/verify-otp', async (req: Request, res: Response) => {
+  try {
+    const { sessionId, otp } = req.body;
+    if (!sessionId || !otp) return res.status(400).json({ error: 'Session ID and OTP are required' });
+
+    const session = otpSessions.get(sessionId);
+    if (!session) return res.status(401).json({ message: 'Session expired. Please request a new OTP.' });
+    if (new Date() > session.expiresAt) { otpSessions.delete(sessionId); return res.status(401).json({ message: 'OTP expired.' }); }
+    if (session.otp !== otp) return res.status(401).json({ message: 'Invalid OTP. Please try again.' });
+
+    otpSessions.delete(sessionId);
+    const patient = await prisma.patient.findUnique({
+      where: { id: session.patientId },
+      select: { id: true, mrn: true, name: true, dob: true, gender: true, contact: true, email: true, bloodGroup: true },
+    });
+    if (!patient) return res.status(404).json({ message: 'Patient not found' });
+
+    const token = jwt.sign({ patientId: patient.id, mrn: patient.mrn, type: 'patient-portal' }, process.env.JWT_SECRET!, { expiresIn: '24h' });
+    res.json({ token, patient });
+  } catch (error) {
+    logger.error('Verify OTP error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Patient Portal auth middleware
+const authenticatePatientPortal = (req: any, res: Response, next: any) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return res.status(401).json({ error: 'Authentication required' });
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as any;
+    if (decoded.type !== 'patient-portal') return res.status(403).json({ error: 'Invalid token type' });
+    req.patientId = decoded.patientId;
+    next();
+  } catch { return res.status(403).json({ error: 'Invalid token' }); }
+};
+
+// Patient Portal - Get appointments
+app.get('/api/patient-portal/appointments', authenticatePatientPortal, async (req: any, res: Response) => {
+  try {
+    const appointments = await prisma.appointment.findMany({
+      where: { patientId: req.patientId },
+      include: { doctor: { select: { name: true } } },
+      orderBy: { appointmentDate: 'desc' },
+      take: 20,
+    });
+    res.json(appointments.map(apt => ({
+      id: apt.id, date: apt.appointmentDate.toISOString().split('T')[0], time: apt.appointmentTime,
+      doctor: apt.doctor?.name || 'N/A', department: apt.department || 'General', status: apt.status, reason: apt.reason || '',
+    })));
+  } catch (error) { logger.error('Get patient appointments error:', error); res.status(500).json({ error: 'Internal server error' }); }
+});
+
+// Patient Portal - Get lab results
+app.get('/api/patient-portal/lab-results', authenticatePatientPortal, async (req: any, res: Response) => {
+  try {
+    const orders = await prisma.order.findMany({
+      where: { patientId: req.patientId, orderType: 'lab' },
+      include: { results: true },
+      orderBy: { orderedAt: 'desc' },
+      take: 20,
+    });
+    res.json(orders.map(order => {
+      const details = order.details as any;
+      const result = order.results[0];
+      return {
+        id: order.id, testName: details?.testName || details?.tests?.map((t: any) => t.name).join(', ') || 'Lab Test',
+        date: order.orderedAt.toISOString().split('T')[0], status: order.status, isCritical: result?.isCritical || false,
+      };
+    }));
+  } catch (error) { logger.error('Get patient lab results error:', error); res.status(500).json({ error: 'Internal server error' }); }
+});
+
+// Patient Portal - Get prescriptions
+app.get('/api/patient-portal/prescriptions', authenticatePatientPortal, async (req: any, res: Response) => {
+  try {
+    const prescriptions = await prisma.prescription.findMany({
+      where: { opdNote: { patientId: req.patientId } },
+      include: { doctor: { select: { name: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    });
+    res.json(prescriptions.map(rx => ({ id: rx.id, date: rx.createdAt.toISOString().split('T')[0], doctor: rx.doctor?.name || 'Doctor', drugs: (rx.drugs as any[]) || [] })));
+  } catch (error) { logger.error('Get patient prescriptions error:', error); res.status(500).json({ error: 'Internal server error' }); }
+});
+
+// Patient Portal - Get bills
+app.get('/api/patient-portal/bills', authenticatePatientPortal, async (req: any, res: Response) => {
+  try {
+    const invoices = await prisma.invoice.findMany({ where: { patientId: req.patientId }, orderBy: { createdAt: 'desc' }, take: 20 });
+    res.json(invoices.map((inv, idx) => ({
+      id: inv.id, date: inv.createdAt.toISOString().split('T')[0],
+      invoiceNumber: `INV-${inv.createdAt.getFullYear()}${(inv.createdAt.getMonth() + 1).toString().padStart(2, '0')}${idx + 1}`,
+      amount: Number(inv.total), paid: Number(inv.paid), balance: Number(inv.balance), status: inv.status,
+    })));
+  } catch (error) { logger.error('Get patient bills error:', error); res.status(500).json({ error: 'Internal server error' }); }
 });
 
 // ============================================

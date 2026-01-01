@@ -29,7 +29,7 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { Settings, Users, FileText, Activity, Plus, Edit, Trash2, Key, Building2, Mail, Phone } from 'lucide-react';
+import { Settings, Users, FileText, Activity, Plus, Edit, Trash2, Key, Building2, Mail, Phone, Download, Lock, Database } from 'lucide-react';
 import api from '../services/api';
 
 interface User {
@@ -82,9 +82,15 @@ const SystemControl: React.FC = () => {
   const [isUserDialogOpen, setIsUserDialogOpen] = useState(false);
   const [isEditingUser, setIsEditingUser] = useState(false);
   const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(false);
+  const [isChangePasswordDialogOpen, setIsChangePasswordDialogOpen] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState('');
   const [userFormData, setUserFormData] = useState<Partial<User>>({});
   const [passwordData, setPasswordData] = useState({ newPassword: '', confirmPassword: '' });
+  const [changePasswordData, setChangePasswordData] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: ''
+  });
 
   // System Settings State
   const [hospitalInfo, setHospitalInfo] = useState({
@@ -343,6 +349,54 @@ const SystemControl: React.FC = () => {
     setIsPasswordDialogOpen(true);
   };
 
+  const handleChangePassword = async () => {
+    if (changePasswordData.newPassword !== changePasswordData.confirmPassword) {
+      alert('New passwords do not match!');
+      return;
+    }
+
+    try {
+      await api.post('/api/users/change-password', {
+        currentPassword: changePasswordData.currentPassword,
+        newPassword: changePasswordData.newPassword,
+      });
+      setIsChangePasswordDialogOpen(false);
+      setChangePasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      alert('Password changed successfully!');
+    } catch (error: any) {
+      console.error('Error changing password:', error);
+      alert(error.response?.data?.error || 'Failed to change password');
+    }
+  };
+
+  const handleExportAuditLogs = async () => {
+    try {
+      const params = new URLSearchParams();
+      if (auditFilters.module) params.append('module', auditFilters.module);
+      if (auditFilters.dateFrom) params.append('dateFrom', auditFilters.dateFrom);
+      if (auditFilters.dateTo) params.append('dateTo', auditFilters.dateTo);
+
+      const response = await api.get(`/api/audit-logs/export?${params.toString()}`, {
+        responseType: 'blob',
+      });
+
+      // Create a download link
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `audit-logs-${Date.now()}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+
+      alert('Audit logs exported successfully!');
+    } catch (error) {
+      console.error('Error exporting audit logs:', error);
+      alert('Failed to export audit logs');
+    }
+  };
+
   // Settings Handlers
   const handleSaveHospitalInfo = async () => {
     try {
@@ -435,7 +489,7 @@ const SystemControl: React.FC = () => {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="users">
             <Users className="mr-2 h-4 w-4" />
             User Management
@@ -443,6 +497,10 @@ const SystemControl: React.FC = () => {
           <TabsTrigger value="settings">
             <Settings className="mr-2 h-4 w-4" />
             System Settings
+          </TabsTrigger>
+          <TabsTrigger value="security">
+            <Lock className="mr-2 h-4 w-4" />
+            Security
           </TabsTrigger>
           <TabsTrigger value="audit">
             <Activity className="mr-2 h-4 w-4" />
@@ -754,12 +812,124 @@ const SystemControl: React.FC = () => {
           </Card>
         </TabsContent>
 
+        {/* Security Tab */}
+        <TabsContent value="security" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Password Management</CardTitle>
+              <CardDescription>Change your password or reset user passwords</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="p-4 border rounded-lg">
+                <h3 className="font-semibold mb-2">Change Your Password</h3>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Update your account password for security purposes
+                </p>
+                <Button onClick={() => setIsChangePasswordDialogOpen(true)}>
+                  <Key className="mr-2 h-4 w-4" />
+                  Change My Password
+                </Button>
+              </div>
+              <div className="p-4 border rounded-lg">
+                <h3 className="font-semibold mb-2">Reset User Passwords</h3>
+                <p className="text-sm text-muted-foreground mb-4">
+                  As an administrator, you can reset passwords for other users using the key icon in the User Management tab
+                </p>
+                <Button variant="outline" onClick={() => setActiveTab('users')}>
+                  <Users className="mr-2 h-4 w-4" />
+                  Go to User Management
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Backup Configuration</CardTitle>
+              <CardDescription>Configure automated system backups</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Backup Frequency</Label>
+                  <Select defaultValue="daily">
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select frequency" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="hourly">Hourly</SelectItem>
+                      <SelectItem value="daily">Daily</SelectItem>
+                      <SelectItem value="weekly">Weekly</SelectItem>
+                      <SelectItem value="monthly">Monthly</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Backup Time</Label>
+                  <Input type="time" defaultValue="02:00" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Retention Period (Days)</Label>
+                  <Input type="number" defaultValue="30" placeholder="Enter days" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Backup Location</Label>
+                  <Select defaultValue="local">
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select location" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="local">Local Storage</SelectItem>
+                      <SelectItem value="cloud">Cloud Storage</SelectItem>
+                      <SelectItem value="both">Both</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="p-4 bg-muted rounded-lg space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="font-medium">Last Backup</span>
+                  <Badge variant="outline">2025-12-30 02:00 AM</Badge>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="font-medium">Backup Status</span>
+                  <Badge>Success</Badge>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="font-medium">Backup Size</span>
+                  <span className="text-sm">2.5 GB</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="font-medium">Next Scheduled Backup</span>
+                  <span className="text-sm">2025-12-31 02:00 AM</span>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <Button>
+                  <Database className="mr-2 h-4 w-4" />
+                  Save Backup Settings
+                </Button>
+                <Button variant="outline">
+                  <Download className="mr-2 h-4 w-4" />
+                  Run Backup Now
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         {/* Audit Logs Tab */}
         <TabsContent value="audit" className="space-y-4">
           <Card>
-            <CardHeader>
-              <CardTitle>Audit Logs</CardTitle>
-              <CardDescription>View system activity and user actions</CardDescription>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle>Audit Logs</CardTitle>
+                <CardDescription>View system activity and user actions</CardDescription>
+              </div>
+              <Button onClick={handleExportAuditLogs} variant="outline">
+                <Download className="mr-2 h-4 w-4" />
+                Export to CSV
+              </Button>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-4 gap-4">
@@ -1164,6 +1334,57 @@ const SystemControl: React.FC = () => {
             <Button onClick={isEditingReport ? handleEditReport : handleAddReport}>
               {isEditingReport ? 'Update Report' : 'Add Report'}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Change Password Dialog */}
+      <Dialog open={isChangePasswordDialogOpen} onOpenChange={setIsChangePasswordDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Change Password</DialogTitle>
+            <DialogDescription>Update your account password</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Current Password</Label>
+              <Input
+                type="password"
+                value={changePasswordData.currentPassword}
+                onChange={(e) =>
+                  setChangePasswordData({ ...changePasswordData, currentPassword: e.target.value })
+                }
+                placeholder="Enter current password"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>New Password</Label>
+              <Input
+                type="password"
+                value={changePasswordData.newPassword}
+                onChange={(e) =>
+                  setChangePasswordData({ ...changePasswordData, newPassword: e.target.value })
+                }
+                placeholder="Enter new password"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Confirm New Password</Label>
+              <Input
+                type="password"
+                value={changePasswordData.confirmPassword}
+                onChange={(e) =>
+                  setChangePasswordData({ ...changePasswordData, confirmPassword: e.target.value })
+                }
+                placeholder="Confirm new password"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsChangePasswordDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleChangePassword}>Change Password</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

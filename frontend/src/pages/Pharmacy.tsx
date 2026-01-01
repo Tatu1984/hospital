@@ -13,13 +13,15 @@ import api from '../services/api';
 
 interface Drug {
   id: string;
-  code: string;
+  code?: string;
   name: string;
   genericName: string;
   category: string;
-  dosageForm: string;
+  dosageForm?: string;
+  form?: string;
   strength: string;
-  unitPrice: number;
+  unitPrice?: number;
+  price?: number;
   stockQuantity: number;
   reorderLevel: number;
   isActive: boolean;
@@ -165,7 +167,7 @@ export default function Pharmacy() {
     if (!barcode.trim()) return;
 
     // Find drug by code/barcode
-    const drug = drugs.find(d => d.code === barcode);
+    const drug = drugs.find(d => d.code === barcode || d.id === barcode);
     if (drug) {
       addToCart(drug);
       setBarcodeInput('');
@@ -176,6 +178,7 @@ export default function Pharmacy() {
 
   const addToCart = (drug: Drug) => {
     const existingItem = cart.find(item => item.drugId === drug.id);
+    const unitPrice = drug.unitPrice || drug.price || 0;
 
     if (existingItem) {
       setCart(cart.map(item =>
@@ -189,8 +192,8 @@ export default function Pharmacy() {
         drugName: drug.name,
         batchNumber: 'BATCH-' + Date.now(),
         quantity: 1,
-        unitPrice: drug.unitPrice,
-        total: drug.unitPrice
+        unitPrice: unitPrice,
+        total: unitPrice
       }]);
     }
   };
@@ -393,12 +396,12 @@ export default function Pharmacy() {
                         <div>
                           <div className="font-medium">{drug.name}</div>
                           <div className="text-sm text-slate-600">
-                            {drug.genericName} | {drug.dosageForm} {drug.strength}
+                            {drug.genericName} | {drug.dosageForm || drug.form} {drug.strength}
                           </div>
-                          <div className="text-xs text-slate-500">Code: {drug.code} | Stock: {drug.stockQuantity}</div>
+                          <div className="text-xs text-slate-500">Code: {drug.code || drug.id.substring(0, 8)} | Stock: {drug.stockQuantity}</div>
                         </div>
                         <div className="text-right">
-                          <div className="font-semibold text-green-600">Rs. {drug.unitPrice}</div>
+                          <div className="font-semibold text-green-600">Rs. {drug.unitPrice || drug.price}</div>
                           <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); addToCart(drug); }}>
                             Add
                           </Button>
@@ -549,11 +552,11 @@ export default function Pharmacy() {
                   ) : (
                     drugs.map((drug) => (
                       <TableRow key={drug.id}>
-                        <TableCell className="font-medium">{drug.code}</TableCell>
+                        <TableCell className="font-medium">{drug.code || drug.id.substring(0, 8)}</TableCell>
                         <TableCell>{drug.name}</TableCell>
                         <TableCell className="text-sm text-slate-600">{drug.genericName}</TableCell>
                         <TableCell>{drug.category}</TableCell>
-                        <TableCell>{drug.dosageForm}</TableCell>
+                        <TableCell>{drug.dosageForm || drug.form}</TableCell>
                         <TableCell>{drug.strength}</TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
@@ -565,7 +568,7 @@ export default function Pharmacy() {
                             )}
                           </div>
                         </TableCell>
-                        <TableCell>Rs. {drug.unitPrice}</TableCell>
+                        <TableCell>Rs. {drug.unitPrice || drug.price}</TableCell>
                         <TableCell>
                           <Badge variant={
                             drug.stockQuantity === 0 ? 'destructive' :
@@ -822,7 +825,7 @@ export default function Pharmacy() {
                         <TableCell className="text-orange-600 font-semibold">{drug.stockQuantity}</TableCell>
                         <TableCell>{drug.reorderLevel}</TableCell>
                         <TableCell>{drug.category}</TableCell>
-                        <TableCell>Rs. {drug.unitPrice}</TableCell>
+                        <TableCell>Rs. {drug.unitPrice || drug.price}</TableCell>
                         <TableCell>
                           <Button size="sm" variant="outline">
                             <Package className="w-4 h-4 mr-1" />

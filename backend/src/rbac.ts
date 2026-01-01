@@ -31,13 +31,13 @@ export type Permission =
 
   // Clinical - OPD
   | 'opd:view' | 'opd:create' | 'opd:edit'
-  | 'encounters:view' | 'encounters:create'
+  | 'encounters:view' | 'encounters:create' | 'encounters:edit'
   | 'prescriptions:view' | 'prescriptions:create'
 
   // Clinical - IPD
   | 'ipd:view' | 'ipd:create' | 'ipd:edit'
   | 'admissions:view' | 'admissions:create' | 'admissions:discharge'
-  | 'beds:view' | 'beds:manage'
+  | 'beds:view' | 'beds:manage' | 'beds:reserve'
   | 'nurse_station:view' | 'nurse_station:edit'
 
   // Emergency
@@ -58,6 +58,7 @@ export type Permission =
 
   // Diagnostics - Radiology
   | 'radiology:view' | 'radiology:create' | 'radiology:edit'
+  | 'radiology:upload' | 'radiology:annotate' | 'radiology:report' | 'radiology:manage'
   | 'radiology_orders:view' | 'radiology_orders:create' | 'radiology_orders:update'
 
   // Blood Bank
@@ -80,10 +81,21 @@ export type Permission =
   | 'employees:view' | 'employees:create' | 'employees:edit'
   | 'attendance:view' | 'attendance:manage'
   | 'leaves:view' | 'leaves:create' | 'leaves:approve'
+  | 'shifts:view' | 'shifts:manage' | 'shifts:clock' | 'shifts:swap'
 
   // Operations - Inventory
-  | 'inventory:view' | 'inventory:manage'
+  | 'inventory:view' | 'inventory:manage' | 'inventory:create' | 'inventory:edit'
+  | 'inventory:receive' | 'inventory:issue' | 'inventory:verify'
   | 'purchase_orders:view' | 'purchase_orders:create' | 'purchase_orders:approve'
+
+  // Barcode
+  | 'barcode:view' | 'barcode:generate' | 'barcode:scan' | 'barcode:lookup' | 'barcode:manage'
+
+  // Nursing
+  | 'nursing:view' | 'nursing:create' | 'nursing:edit' | 'nursing:manage'
+
+  // Drug Interactions
+  | 'drugs:check' | 'drugs:view'
 
   // Operations - Housekeeping
   | 'housekeeping:view' | 'housekeeping:manage'
@@ -116,13 +128,17 @@ export type Permission =
   | 'hr:create'
 
   // Reports & Analytics
-  | 'reports:view' | 'reports:export'
+  | 'reports:view' | 'reports:export' | 'reports:create' | 'reports:edit' | 'reports:delete'
+  | 'reports:generate' | 'reports:schedule'
   | 'analytics:view'
 
   // Master Data & System
   | 'master_data:view' | 'master_data:edit'
   | 'system:view' | 'system:manage'
-  | 'users:view' | 'users:manage';
+  | 'users:view' | 'users:manage'
+
+  // Insurance & TPA
+  | 'insurance:view' | 'insurance:verify' | 'insurance:pre_auth' | 'insurance:approve';
 
 // Role to Permissions mapping
 export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
@@ -136,7 +152,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'prescriptions:view', 'prescriptions:create',
     'ipd:view', 'ipd:create', 'ipd:edit',
     'admissions:view', 'admissions:create', 'admissions:discharge',
-    'beds:view', 'beds:manage',
+    'beds:view', 'beds:manage', 'beds:reserve',
     'nurse_station:view', 'nurse_station:edit',
     'emergency:view', 'emergency:create', 'emergency:edit', 'emergency:admit', 'emergency:discharge',
     'icu:view', 'icu:create', 'icu:edit',
@@ -147,6 +163,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'lab_orders:view', 'lab_orders:create', 'lab_orders:update',
     'lab_results:view', 'lab_results:create',
     'radiology:view', 'radiology:create', 'radiology:edit',
+    'radiology:upload', 'radiology:annotate', 'radiology:report', 'radiology:manage',
     'radiology_orders:view', 'radiology_orders:create', 'radiology_orders:update',
     'blood_bank:view', 'blood_bank:manage',
     'blood_donors:view', 'blood_donors:create',
@@ -161,8 +178,13 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'employees:view', 'employees:create', 'employees:edit',
     'attendance:view', 'attendance:manage',
     'leaves:view', 'leaves:create', 'leaves:approve',
-    'inventory:view', 'inventory:manage',
+    'shifts:view', 'shifts:manage', 'shifts:clock', 'shifts:swap',
+    'inventory:view', 'inventory:manage', 'inventory:create', 'inventory:edit',
+    'inventory:receive', 'inventory:issue', 'inventory:verify',
     'purchase_orders:view', 'purchase_orders:create', 'purchase_orders:approve',
+    'barcode:view', 'barcode:generate', 'barcode:scan', 'barcode:lookup', 'barcode:manage',
+    'nursing:view', 'nursing:create', 'nursing:edit', 'nursing:manage',
+    'drugs:check', 'drugs:view',
     'housekeeping:view', 'housekeeping:manage',
     'diet:view', 'diet:manage',
     'ambulance:view', 'ambulance:manage',
@@ -172,11 +194,13 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'payroll:view', 'payroll:create', 'payroll:edit',
     'accounting:view', 'accounting:create', 'accounting:edit',
     'cssd:view', 'cssd:create', 'cssd:update', 'cssd:manage',
-    'reports:view', 'reports:export',
+    'reports:view', 'reports:export', 'reports:create', 'reports:edit', 'reports:delete',
+    'reports:generate', 'reports:schedule',
     'analytics:view',
     'master_data:view', 'master_data:edit',
     'system:view', 'system:manage',
     'users:view', 'users:manage',
+    'insurance:view', 'insurance:verify', 'insurance:pre_auth', 'insurance:approve',
   ],
 
   // DOCTOR - Clinical focus
@@ -222,6 +246,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'admissions:view',
     'beds:view',
     'nurse_station:view', 'nurse_station:edit',
+    'nursing:view', 'nursing:create', 'nursing:edit',
     'icu:view',
     'icu_vitals:view', 'icu_vitals:create',
     'lab:view',
@@ -233,6 +258,9 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'blood_requests:view',
     'pharmacy:view',
     'diet:view',
+    'drugs:view', 'drugs:check',
+    'barcode:scan',
+    'shifts:view', 'shifts:clock', 'shifts:swap',
   ],
 
   // FRONT_OFFICE - Registration & Appointments
@@ -261,6 +289,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'commissions:view', 'commissions:manage', 'commissions:payout',
     'doctor_revenue:view', 'doctor_revenue:manage',
     'reports:view', 'reports:export',
+    'insurance:view', 'insurance:verify', 'insurance:pre_auth', 'insurance:approve',
   ],
 
   // LAB_TECH - Laboratory focus
@@ -280,6 +309,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'dashboard:view',
     'patients:view',
     'radiology:view', 'radiology:create', 'radiology:edit',
+    'radiology:upload', 'radiology:annotate', 'radiology:report',
     'radiology_orders:view', 'radiology_orders:create', 'radiology_orders:update',
     'inventory:view',
     'reports:view',
@@ -358,7 +388,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'patients:view',
     'ipd:view', 'ipd:create', 'ipd:edit',
     'admissions:view', 'admissions:create', 'admissions:discharge',
-    'beds:view', 'beds:manage',
+    'beds:view', 'beds:manage', 'beds:reserve',
     'nurse_station:view', 'nurse_station:edit',
     'diet:view', 'diet:manage',
     'housekeeping:view',
@@ -372,6 +402,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'employees:view', 'employees:create', 'employees:edit',
     'attendance:view', 'attendance:manage',
     'leaves:view', 'leaves:create', 'leaves:approve',
+    'shifts:view', 'shifts:manage', 'shifts:clock', 'shifts:swap',
     'payroll:view', 'payroll:create', 'payroll:edit',
     'reports:view', 'reports:export',
     'users:view',

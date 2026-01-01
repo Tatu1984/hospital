@@ -2,6 +2,8 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ToastProvider } from './components/Toast';
 import Login from './pages/Login';
+import PatientPortalLogin from './pages/PatientPortalLogin';
+import PatientPortal from './pages/PatientPortal';
 import NewDashboard from './pages/NewDashboard';
 import MainLayout from './components/MainLayout';
 
@@ -103,6 +105,10 @@ const AppRoutes = () => {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+
+      {/* Patient Portal Routes */}
+      <Route path="/patient-portal/login" element={<PatientPortalLogin />} />
+      <Route path="/patient-portal" element={<PatientPortal />} />
       <Route
         path="/"
         element={

@@ -170,16 +170,43 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   'POST /api/appointments/:id/check-in': ['appointments:edit'],
   'POST /api/appointments/:id/cancel': ['appointments:edit'],
 
+  // OPD Workflow routes
+  'GET /api/opd/queue': ['opd:view'],
+  'POST /api/opd/encounters/:id/start': ['encounters:edit'],
+  'POST /api/opd/encounters/:id/complete': ['encounters:edit'],
+  'GET /api/opd/encounters/:id': ['encounters:view'],
+  'PUT /api/opd/encounters/:id': ['encounters:edit'],
+
   // Lab routes
   'POST /api/lab-orders': ['lab_orders:create'],
   'GET /api/lab-orders': ['lab_orders:view'],
   'PUT /api/lab-orders/:id': ['lab_orders:update'],
   'POST /api/lab-results': ['lab_results:create'],
 
-  // Radiology routes
+  // Radiology routes (Orders)
   'POST /api/radiology-orders': ['radiology_orders:create'],
   'GET /api/radiology-orders': ['radiology_orders:view'],
   'PUT /api/radiology-orders/:id': ['radiology_orders:update'],
+
+  // PACS/Radiology Study routes
+  'POST /api/radiology/studies': ['radiology:create'],
+  'GET /api/radiology/studies': ['radiology:view'],
+  'GET /api/radiology/studies/:id': ['radiology:view'],
+  'PUT /api/radiology/studies/:id/status': ['radiology:edit'],
+  'POST /api/radiology/studies/:studyId/series': ['radiology:create'],
+  'POST /api/radiology/series/:seriesId/images': ['radiology:upload'],
+  'POST /api/radiology/studies/:studyId/upload': ['radiology:upload'],
+  'GET /api/radiology/studies/:id/images': ['radiology:view'],
+  'GET /api/radiology/images/:id/file': ['radiology:view'],
+  'POST /api/radiology/images/:imageId/annotations': ['radiology:annotate'],
+  'GET /api/radiology/images/:id/annotations': ['radiology:view'],
+  'POST /api/radiology/studies/:studyId/report': ['radiology:report'],
+  'PUT /api/radiology/reports/:id': ['radiology:report'],
+  'GET /api/radiology/report-templates': ['radiology:view'],
+  'POST /api/radiology/report-templates': ['radiology:manage'],
+  'PUT /api/radiology/report-templates/:id': ['radiology:manage'],
+  'DELETE /api/radiology/report-templates/:id': ['radiology:manage'],
+  'GET /api/radiology/modalities': ['radiology:view'],
 
   // Pharmacy routes
   'GET /api/pharmacy/pending-prescriptions': ['pharmacy:view'],
@@ -190,7 +217,35 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   'POST /api/admissions': ['admissions:create'],
   'GET /api/admissions': ['admissions:view'],
   'POST /api/admissions/:id/discharge': ['admissions:discharge'],
+
+  // Bed Management routes
   'GET /api/beds': ['beds:view'],
+  'GET /api/beds/available': ['beds:view'],
+  'POST /api/beds/:id/check-availability': ['beds:view'],
+  'POST /api/beds/:id/reserve': ['beds:reserve'],
+  'DELETE /api/beds/reservations/:id': ['beds:reserve'],
+  'GET /api/beds/:id/history': ['beds:view'],
+  'PATCH /api/beds/:id/status': ['beds:manage'],
+  'POST /api/beds/transfer': ['beds:manage'],
+  'GET /api/beds/:id/conflicts/:admissionId': ['beds:view'],
+  'GET /api/beds/reservations': ['beds:view'],
+
+  // Insurance routes
+  'POST /api/insurance/verify': ['insurance:verify'],
+  'GET /api/insurance/patient/:patientId': ['insurance:view'],
+  'POST /api/insurance/pre-auth/request': ['insurance:pre_auth'],
+  'GET /api/insurance/pre-auth': ['insurance:view'],
+  'GET /api/insurance/pre-auth/:id': ['insurance:view'],
+  'PUT /api/insurance/pre-auth/:id/approve': ['insurance:approve'],
+  'PUT /api/insurance/pre-auth/:id/reject': ['insurance:approve'],
+
+  // Insurance Eligibility Verification routes
+  'POST /api/insurance/verify-eligibility': ['insurance:verify'],
+  'GET /api/insurance/coverage/:patientInsuranceId': ['insurance:view'],
+  'POST /api/insurance/coverage/:patientInsuranceId/check-limit': ['insurance:verify'],
+  'GET /api/insurance/utilization/:patientInsuranceId': ['insurance:view'],
+  'POST /api/insurance/utilization/:patientInsuranceId/update': ['insurance:approve'],
+  'GET /api/insurance/eligibility-history/:patientInsuranceId': ['insurance:view'],
 
   // Emergency routes
   'GET /api/emergency/cases': ['emergency:view'],
@@ -234,9 +289,7 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   'POST /api/hr/leaves/:id/approve': ['leaves:approve'],
   'POST /api/hr/leaves/:id/reject': ['leaves:approve'],
 
-  // Inventory routes
-  'GET /api/inventory/items': ['inventory:view'],
-  'POST /api/inventory/items': ['inventory:manage'],
+  // Inventory routes - basic
   'GET /api/inventory/purchase-orders': ['purchase_orders:view'],
   'POST /api/inventory/purchase-orders': ['purchase_orders:create'],
   'PUT /api/inventory/purchase-orders/:id': ['purchase_orders:approve'],
@@ -266,6 +319,20 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
 
   // Report routes
   'GET /api/reports/dashboard': ['reports:view'],
+  'GET /api/reports/templates': ['reports:view'],
+  'GET /api/reports/templates/:id': ['reports:view'],
+  'POST /api/reports/templates': ['reports:create'],
+  'PUT /api/reports/templates/:id': ['reports:edit'],
+  'DELETE /api/reports/templates/:id': ['reports:delete'],
+  'POST /api/reports/generate': ['reports:generate'],
+  'GET /api/reports/generated': ['reports:view'],
+  'GET /api/reports/generated/:id/download': ['reports:view'],
+  'POST /api/reports/schedule': ['reports:schedule'],
+  'GET /api/reports/schedules': ['reports:view'],
+  'PUT /api/reports/schedules/:id': ['reports:schedule'],
+  'DELETE /api/reports/schedules/:id': ['reports:schedule'],
+  'POST /api/reports/system/seed': ['master_data:edit'],
+  'POST /api/reports/cleanup': ['master_data:edit'],
 
   // Nurse routes
   'GET /api/nurse/medications': ['nurse_station:view'],
@@ -275,6 +342,60 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   'GET /api/ipd-billing/:admissionId': ['billing:view'],
   'POST /api/ipd-billing': ['billing:create'],
   'POST /api/ipd-billing/:admissionId/pay': ['billing:payment'],
+
+  // Billing Integration routes
+  'GET /api/billing/patient/:patientId/pending': ['billing:view'],
+  'GET /api/billing/admission/:admissionId/pending': ['billing:view'],
+  'POST /api/billing/generate-invoice': ['billing:create'],
+  'GET /api/billing/orders/:orderId/billing-status': ['billing:view'],
+
+  // Barcode routes
+  'POST /api/barcodes/generate': ['barcode:generate'],
+  'POST /api/barcodes/bulk-generate': ['barcode:generate'],
+  'GET /api/barcodes/lookup/:code': ['barcode:lookup'],
+  'POST /api/barcodes/scan': ['barcode:scan'],
+  'GET /api/barcodes/scan-history': ['barcode:view'],
+  'GET /api/barcodes/:id/label': ['barcode:view'],
+  'GET /api/barcodes/entity/:entityType/:entityId': ['barcode:view'],
+  'PUT /api/barcodes/:id/deactivate': ['barcode:manage'],
+  'PUT /api/barcodes/:id/reactivate': ['barcode:manage'],
+  'POST /api/barcodes/validate': ['barcode:lookup'],
+
+  // Pharmacy barcode routes
+  'POST /api/pharmacy/dispense-by-barcode': ['pharmacy:dispense', 'barcode:scan'],
+
+  // Inventory barcode routes
+  'GET /api/inventory/items': ['inventory:view'],
+  'GET /api/inventory/items/:id': ['inventory:view'],
+  'POST /api/inventory/items': ['inventory:create'],
+  'PUT /api/inventory/items/:id': ['inventory:edit'],
+  'GET /api/inventory/stock': ['inventory:view'],
+  'GET /api/inventory/low-stock': ['inventory:view'],
+  'POST /api/inventory/receive-by-barcode': ['inventory:receive', 'barcode:scan'],
+  'POST /api/inventory/issue-by-barcode': ['inventory:issue', 'barcode:scan'],
+  'POST /api/inventory/verify-by-barcode': ['inventory:verify', 'barcode:scan'],
+
+  // Shift Management routes
+  'GET /api/shifts/templates': ['shifts:view'],
+  'GET /api/shifts/templates/:id': ['shifts:view'],
+  'POST /api/shifts/templates': ['shifts:manage'],
+  'PUT /api/shifts/templates/:id': ['shifts:manage'],
+  'DELETE /api/shifts/templates/:id': ['shifts:manage'],
+  'GET /api/shifts': ['shifts:view'],
+  'GET /api/shifts/:id': ['shifts:view'],
+  'POST /api/shifts': ['shifts:manage'],
+  'PUT /api/shifts/:id': ['shifts:manage'],
+  'POST /api/shifts/:id/start': ['shifts:clock'],
+  'POST /api/shifts/:id/end': ['shifts:clock'],
+  'POST /api/shifts/roster/generate': ['shifts:manage'],
+  'GET /api/shifts/roster': ['shifts:view'],
+  'POST /api/shifts/roster/publish': ['shifts:manage'],
+  'POST /api/shifts/swap-request': ['shifts:swap'],
+  'GET /api/shifts/swap-request': ['shifts:view'],
+  'PUT /api/shifts/swap-request/:id/approve': ['shifts:manage'],
+  'GET /api/shifts/staffing-report': ['shifts:view'],
+  'GET /api/shifts/overtime/:employeeId': ['shifts:view'],
+  'GET /api/shifts/staffing/:date': ['shifts:view'],
 };
 
 // Helper function to get permissions for a route

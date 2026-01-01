@@ -29,6 +29,10 @@ interface Surgery {
   anesthesiaType: string;
   preOpChecklist: boolean;
   notes: string;
+  actualStartTime?: string;
+  actualEndTime?: string;
+  complications?: string;
+  implants?: any;
 }
 
 interface OTRoom {
@@ -56,13 +60,35 @@ interface SurgeryFormData {
   notes: string;
 }
 
+interface ChecklistItem {
+  id: string;
+  item: string;
+  completed: boolean;
+}
+
+interface PostOpData {
+  postOpNotes: string;
+  complications: string;
+  implants: string;
+}
+
 export default function OperationTheatre() {
   const [surgeries, setSurgeries] = useState<Surgery[]>([]);
   const [otRooms, setOTRooms] = useState<OTRoom[]>([]);
   const [selectedSurgery, setSelectedSurgery] = useState<Surgery | null>(null);
   const [isScheduleDialogOpen, setIsScheduleDialogOpen] = useState(false);
   const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false);
+  const [isChecklistDialogOpen, setIsChecklistDialogOpen] = useState(false);
+  const [isPostOpDialogOpen, setIsPostOpDialogOpen] = useState(false);
+  const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [checklistItems, setChecklistItems] = useState<ChecklistItem[]>([]);
+  const [cancelReason, setCancelReason] = useState('');
+  const [postOpData, setPostOpData] = useState<PostOpData>({
+    postOpNotes: '',
+    complications: '',
+    implants: ''
+  });
 
   const [surgeryFormData, setSurgeryFormData] = useState<SurgeryFormData>({
     patientId: '',
@@ -108,7 +134,11 @@ export default function OperationTheatre() {
         priority: s.priority,
         anesthesiaType: s.anesthesiaType,
         preOpChecklist: s.preOpChecklistComplete || false,
-        notes: s.notes || ''
+        notes: s.notes || '',
+        actualStartTime: s.actualStartTime,
+        actualEndTime: s.actualEndTime,
+        complications: s.complications,
+        implants: s.implants
       }));
       setSurgeries(transformedSurgeries);
     } catch (error) {
@@ -153,6 +183,44 @@ export default function OperationTheatre() {
     }
   };
 
+  const fetchChecklist = async (surgeryId: string) => {
+    try {
+      const response = await api.get(`/api/surgeries/${surgeryId}/checklist`);
+      setChecklistItems(response.data.items);
+      return response.data.completed;
+    } catch (error) {
+      console.error('Error fetching checklist:', error);
+      return false;
+    }
+  };
+
+  const handleStartSurgeryClick = async (surgery: Surgery) => {
+    setSelectedSurgery(surgery);
+    const checklistComplete = await fetchChecklist(surgery.id);
+
+    if (!checklistComplete) {
+      setIsChecklistDialogOpen(true);
+    } else {
+      handleStartSurgery(surgery.id);
+    }
+  };
+
+  const handleChecklistComplete = async () => {
+    if (!selectedSurgery) return;
+
+    setLoading(true);
+    try {
+      await api.post(`/api/surgeries/${selectedSurgery.id}/checklist`, { completed: true });
+      setIsChecklistDialogOpen(false);
+      await handleStartSurgery(selectedSurgery.id);
+    } catch (error) {
+      console.error('Error completing checklist:', error);
+      alert('Failed to complete checklist');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleStartSurgery = async (surgeryId: string) => {
     setLoading(true);
     try {
@@ -163,6 +231,34 @@ export default function OperationTheatre() {
     } catch (error) {
       console.error('Error starting surgery:', error);
       alert('Failed to start surgery');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCompleteSurgeryClick = (surgery: Surgery) => {
+    setSelectedSurgery(surgery);
+    setPostOpData({
+      postOpNotes: '',
+      complications: '',
+      implants: ''
+    });
+    setIsPostOpDialogOpen(true);
+  };
+
+  const handlePostOpSubmit = async () => {
+    if (!selectedSurgery) return;
+
+    setLoading(true);
+    try {
+      await api.post(`/api/surgeries/${selectedSurgery.id}/complete`, postOpData);
+      await fetchSurgeries();
+      await fetchOTRooms();
+      setIsPostOpDialogOpen(false);
+      alert('Surgery completed successfully');
+    } catch (error) {
+      console.error('Error completing surgery:', error);
+      alert('Failed to complete surgery');
     } finally {
       setLoading(false);
     }
@@ -183,6 +279,33 @@ export default function OperationTheatre() {
     }
   };
 
+  const handleCancelSurgeryClick = (surgery: Surgery) => {
+    setSelectedSurgery(surgery);
+    setCancelReason('');
+    setIsCancelDialogOpen(true);
+  };
+
+  const handleCancelSurgerySubmit = async () => {
+    if (!selectedSurgery) return;
+    if (!cancelReason.trim()) {
+      alert('Please provide a reason for cancellation');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await api.post(`/api/surgeries/${selectedSurgery.id}/cancel`, { reason: cancelReason });
+      await fetchSurgeries();
+      setIsCancelDialogOpen(false);
+      alert('Surgery cancelled');
+    } catch (error) {
+      console.error('Error cancelling surgery:', error);
+      alert('Failed to cancel surgery');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleCancelSurgery = async (surgeryId: string) => {
     if (!confirm('Are you sure you want to cancel this surgery?')) return;
 
@@ -197,6 +320,16 @@ export default function OperationTheatre() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const calculateDuration = (startTime: string | null, endTime: string | null) => {
+    if (!startTime || !endTime) return null;
+    const start = new Date(startTime);
+    const end = new Date(endTime);
+    const diff = end.getTime() - start.getTime();
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    return `${hours}h ${minutes}m`;
   };
 
   const resetForm = () => {
@@ -447,12 +580,12 @@ export default function OperationTheatre() {
                         <TableCell>
                           <div className="flex gap-2">
                             {surgery.status === 'SCHEDULED' && (
-                              <Button size="sm" onClick={() => handleStartSurgery(surgery.id)}>
+                              <Button size="sm" onClick={() => handleStartSurgeryClick(surgery)}>
                                 Start
                               </Button>
                             )}
                             {surgery.status === 'IN_PROGRESS' && (
-                              <Button size="sm" variant="outline" onClick={() => handleCompleteSurgery(surgery.id)}>
+                              <Button size="sm" variant="outline" onClick={() => handleCompleteSurgeryClick(surgery)}>
                                 Complete
                               </Button>
                             )}
@@ -507,10 +640,10 @@ export default function OperationTheatre() {
                         </TableCell>
                         <TableCell>
                           <div className="flex gap-2">
-                            <Button size="sm" onClick={() => handleStartSurgery(surgery.id)}>
+                            <Button size="sm" onClick={() => handleStartSurgeryClick(surgery)}>
                               Start
                             </Button>
-                            <Button size="sm" variant="outline" onClick={() => handleCancelSurgery(surgery.id)}>
+                            <Button size="sm" variant="outline" onClick={() => handleCancelSurgeryClick(surgery)}>
                               Cancel
                             </Button>
                           </div>
@@ -555,7 +688,7 @@ export default function OperationTheatre() {
                         <TableCell>{surgery.scheduledTime}</TableCell>
                         <TableCell>{surgery.duration} min</TableCell>
                         <TableCell>
-                          <Button size="sm" onClick={() => handleCompleteSurgery(surgery.id)}>
+                          <Button size="sm" onClick={() => handleCompleteSurgeryClick(surgery)}>
                             Complete Surgery
                           </Button>
                         </TableCell>
@@ -825,14 +958,194 @@ export default function OperationTheatre() {
                 </div>
               </div>
 
+              {selectedSurgery.status === 'COMPLETED' && (
+                <div className="grid grid-cols-2 gap-4 border-t pt-4">
+                  <div>
+                    <Label className="text-sm text-slate-500">Actual Start Time</Label>
+                    <div className="font-medium">
+                      {selectedSurgery.actualStartTime
+                        ? new Date(selectedSurgery.actualStartTime).toLocaleString()
+                        : 'N/A'}
+                    </div>
+                  </div>
+                  <div>
+                    <Label className="text-sm text-slate-500">Actual End Time</Label>
+                    <div className="font-medium">
+                      {selectedSurgery.actualEndTime
+                        ? new Date(selectedSurgery.actualEndTime).toLocaleString()
+                        : 'N/A'}
+                    </div>
+                  </div>
+                  <div className="col-span-2">
+                    <Label className="text-sm text-slate-500">Actual Duration</Label>
+                    <div className="font-medium text-lg text-blue-600">
+                      {calculateDuration(selectedSurgery.actualStartTime || null, selectedSurgery.actualEndTime || null) || 'N/A'}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {selectedSurgery.notes && (
                 <div>
                   <Label className="text-sm text-slate-500">Notes</Label>
                   <div className="mt-1 p-3 bg-slate-50 rounded-md">{selectedSurgery.notes}</div>
                 </div>
               )}
+
+              {selectedSurgery.complications && (
+                <div>
+                  <Label className="text-sm text-slate-500">Complications</Label>
+                  <div className="mt-1 p-3 bg-red-50 border border-red-200 rounded-md text-red-900">
+                    {selectedSurgery.complications}
+                  </div>
+                </div>
+              )}
+
+              {selectedSurgery.implants && (
+                <div>
+                  <Label className="text-sm text-slate-500">Implants/Prosthetics</Label>
+                  <div className="mt-1 p-3 bg-slate-50 rounded-md">
+                    {typeof selectedSurgery.implants === 'string'
+                      ? selectedSurgery.implants
+                      : JSON.stringify(selectedSurgery.implants)}
+                  </div>
+                </div>
+              )}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Pre-Op Checklist Dialog */}
+      <Dialog open={isChecklistDialogOpen} onOpenChange={setIsChecklistDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Pre-Operative Checklist</DialogTitle>
+            <DialogDescription>
+              Complete all checklist items before starting surgery
+            </DialogDescription>
+          </DialogHeader>
+          {selectedSurgery && (
+            <div className="space-y-4 py-4">
+              <div className="bg-blue-50 p-3 rounded-md">
+                <div className="font-medium">{selectedSurgery.patientName}</div>
+                <div className="text-sm text-slate-600">{selectedSurgery.procedureName}</div>
+              </div>
+              <div className="space-y-2 max-h-96 overflow-y-auto">
+                {checklistItems.map((item) => (
+                  <div key={item.id} className="flex items-center gap-3 p-3 border rounded-md">
+                    <CheckCircle className="w-5 h-5 text-green-600" />
+                    <span className="flex-1">{item.item}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="bg-orange-50 border border-orange-200 p-3 rounded-md">
+                <p className="text-sm text-orange-800">
+                  By confirming, you verify that all pre-operative requirements have been met and the patient is ready for surgery.
+                </p>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsChecklistDialogOpen(false)} disabled={loading}>
+              Cancel
+            </Button>
+            <Button onClick={handleChecklistComplete} disabled={loading}>
+              {loading ? 'Processing...' : 'Confirm & Start Surgery'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Post-Op Notes Dialog */}
+      <Dialog open={isPostOpDialogOpen} onOpenChange={setIsPostOpDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Complete Surgery - Post-Operative Notes</DialogTitle>
+            <DialogDescription>
+              Document post-operative details and complete the surgery
+            </DialogDescription>
+          </DialogHeader>
+          {selectedSurgery && (
+            <div className="space-y-4 py-4">
+              <div className="bg-blue-50 p-3 rounded-md">
+                <div className="font-medium">{selectedSurgery.patientName}</div>
+                <div className="text-sm text-slate-600">{selectedSurgery.procedureName}</div>
+              </div>
+              <div className="space-y-2">
+                <Label>Post-Operative Notes *</Label>
+                <textarea
+                  className="w-full min-h-[100px] p-3 border rounded-md"
+                  placeholder="Procedure details, findings, techniques used..."
+                  value={postOpData.postOpNotes}
+                  onChange={(e) => setPostOpData({ ...postOpData, postOpNotes: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Complications (if any)</Label>
+                <textarea
+                  className="w-full min-h-[80px] p-3 border rounded-md"
+                  placeholder="Any complications encountered during surgery..."
+                  value={postOpData.complications}
+                  onChange={(e) => setPostOpData({ ...postOpData, complications: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Implants/Prosthetics Used</Label>
+                <Input
+                  placeholder="e.g., Hip implant, Surgical mesh, etc."
+                  value={postOpData.implants}
+                  onChange={(e) => setPostOpData({ ...postOpData, implants: e.target.value })}
+                />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsPostOpDialogOpen(false)} disabled={loading}>
+              Cancel
+            </Button>
+            <Button onClick={handlePostOpSubmit} disabled={loading || !postOpData.postOpNotes.trim()}>
+              {loading ? 'Completing...' : 'Complete Surgery'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Cancel Surgery Dialog */}
+      <Dialog open={isCancelDialogOpen} onOpenChange={setIsCancelDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Cancel Surgery</DialogTitle>
+            <DialogDescription>
+              Please provide a reason for cancelling this surgery
+            </DialogDescription>
+          </DialogHeader>
+          {selectedSurgery && (
+            <div className="space-y-4 py-4">
+              <div className="bg-red-50 p-3 rounded-md">
+                <div className="font-medium">{selectedSurgery.patientName}</div>
+                <div className="text-sm text-slate-600">{selectedSurgery.procedureName}</div>
+                <div className="text-sm text-slate-500">Scheduled: {selectedSurgery.scheduledDate} at {selectedSurgery.scheduledTime}</div>
+              </div>
+              <div className="space-y-2">
+                <Label>Cancellation Reason *</Label>
+                <textarea
+                  className="w-full min-h-[100px] p-3 border rounded-md"
+                  placeholder="Reason for cancellation..."
+                  value={cancelReason}
+                  onChange={(e) => setCancelReason(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsCancelDialogOpen(false)} disabled={loading}>
+              Close
+            </Button>
+            <Button variant="destructive" onClick={handleCancelSurgerySubmit} disabled={loading || !cancelReason.trim()}>
+              {loading ? 'Cancelling...' : 'Cancel Surgery'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

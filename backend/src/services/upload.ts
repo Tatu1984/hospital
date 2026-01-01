@@ -35,6 +35,12 @@ const allowedMimeTypes = {
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   ],
   images: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
+  dicom: [
+    'application/dicom',
+    'application/octet-stream', // DICOM files often have this MIME type
+    'image/jpeg', // For converted DICOM images
+    'image/png',  // For converted DICOM images
+  ],
 };
 
 // Generate secure filename
@@ -162,8 +168,52 @@ export const getFileInfo = (filePath: string): { exists: boolean; size?: number;
   }
 };
 
+// DICOM/Radiology image storage
+const dicomDir = path.join(uploadDir, 'radiology');
+
+// Only create directories in non-serverless environments
+if (!process.env.VERCEL) {
+  try {
+    if (!fs.existsSync(dicomDir)) {
+      fs.mkdirSync(dicomDir, { recursive: true });
+    }
+  } catch (error) {
+    logger.warn('Could not create DICOM directory', { dir: dicomDir, error });
+  }
+}
+
+// Storage configuration for DICOM/radiology images
+const dicomStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const studyId = req.params.studyId || req.body.studyId || 'general';
+    const studyDir = path.join(dicomDir, studyId);
+    if (!fs.existsSync(studyDir)) {
+      fs.mkdirSync(studyDir, { recursive: true });
+    }
+    cb(null, studyDir);
+  },
+  filename: (req, file, cb) => {
+    cb(null, generateFilename(file.originalname));
+  },
+});
+
+// Multer configuration for DICOM files
+export const dicomUpload = multer({
+  storage: dicomStorage,
+  limits: {
+    fileSize: (parseInt(process.env.MAX_DICOM_SIZE_MB || '100') * 1024 * 1024), // 100MB default for DICOM
+  },
+  fileFilter: fileFilter(allowedMimeTypes.dicom),
+});
+
+// Get DICOM file path for serving
+export const getDICOMFilePath = (studyId: string, filename: string): string => {
+  return path.join(dicomDir, studyId, filename);
+};
+
 // Export directories for reference
 export const uploadPaths = {
   documents: documentDir,
   images: imagesDir,
+  dicom: dicomDir,
 };

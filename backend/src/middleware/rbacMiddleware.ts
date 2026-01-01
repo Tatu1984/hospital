@@ -112,6 +112,15 @@ const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   'POST:/api/admissions/:id/discharge': ['admissions:discharge'],
   'GET:/api/beds': ['beds:view'],
 
+  // Insurance routes
+  'POST:/api/insurance/verify': ['insurance:verify'],
+  'GET:/api/insurance/patient/:patientId': ['insurance:view'],
+  'POST:/api/insurance/pre-auth/request': ['insurance:pre_auth'],
+  'GET:/api/insurance/pre-auth': ['insurance:view'],
+  'GET:/api/insurance/pre-auth/:id': ['insurance:view'],
+  'PUT:/api/insurance/pre-auth/:id/approve': ['insurance:approve'],
+  'PUT:/api/insurance/pre-auth/:id/reject': ['insurance:approve'],
+
   // Emergency routes
   'GET:/api/emergency/cases': ['emergency:view'],
   'POST:/api/emergency/cases': ['emergency:create'],

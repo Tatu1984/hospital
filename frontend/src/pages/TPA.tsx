@@ -47,16 +47,32 @@ interface TPAClaim {
   insuranceCompanyName: string;
   policyNumber: string;
   admissionId?: string;
-  claimType: 'Cashless' | 'Reimbursement';
+  claimType: string;
   claimAmount: number;
   approvedAmount: number;
   rejectedAmount: number;
-  status: 'Submitted' | 'Approved' | 'Rejected' | 'Pending' | 'Query' | 'Settled';
+  status: string;
   submittedDate: string;
   approvedDate?: string;
   settledDate?: string;
   documents: string[];
   remarks?: string;
+}
+
+interface Settlement {
+  id: string;
+  settlementNumber: string;
+  claimId: string;
+  claimNumber: string;
+  patientName: string;
+  patientMRN: string;
+  claimAmount: number;
+  settlementAmount: number;
+  settlementDate: string;
+  paymentMode: string;
+  transactionRef?: string;
+  remarks?: string;
+  settledBy?: string;
 }
 
 interface PreAuthorization {
@@ -79,12 +95,19 @@ export default function TPA() {
   const [patientInsurances, setPatientInsurances] = useState<PatientInsurance[]>([]);
   const [claims, setClaims] = useState<TPAClaim[]>([]);
   const [preAuths, setPreAuths] = useState<PreAuthorization[]>([]);
+  const [settlements, setSettlements] = useState<Settlement[]>([]);
 
   const [isAddInsuranceDialogOpen, setIsAddInsuranceDialogOpen] = useState(false);
   const [isAddPatientInsDialogOpen, setIsAddPatientInsDialogOpen] = useState(false);
   const [isAddClaimDialogOpen, setIsAddClaimDialogOpen] = useState(false);
   const [isPreAuthDialogOpen, setIsPreAuthDialogOpen] = useState(false);
+  const [isUpdateClaimDialogOpen, setIsUpdateClaimDialogOpen] = useState(false);
+  const [isUpdatePreAuthDialogOpen, setIsUpdatePreAuthDialogOpen] = useState(false);
+  const [isAddSettlementDialogOpen, setIsAddSettlementDialogOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  const [selectedClaim, setSelectedClaim] = useState<TPAClaim | null>(null);
+  const [selectedPreAuth, setSelectedPreAuth] = useState<PreAuthorization | null>(null);
 
   const [insuranceFormData, setInsuranceFormData] = useState({
     name: '',
@@ -119,11 +142,35 @@ export default function TPA() {
     estimatedAmount: 0
   });
 
+  const [updateClaimFormData, setUpdateClaimFormData] = useState({
+    status: '',
+    approvedAmount: 0,
+    rejectedAmount: 0,
+    remarks: '',
+    rejectionReason: ''
+  });
+
+  const [updatePreAuthFormData, setUpdatePreAuthFormData] = useState({
+    status: '',
+    approvedAmount: 0,
+    remarks: ''
+  });
+
+  const [settlementFormData, setSettlementFormData] = useState({
+    claimId: '',
+    settlementAmount: 0,
+    settlementDate: '',
+    paymentMode: '',
+    transactionRef: '',
+    remarks: ''
+  });
+
   useEffect(() => {
     fetchInsuranceCompanies();
     fetchPatientInsurances();
     fetchClaims();
     fetchPreAuths();
+    fetchSettlements();
   }, []);
 
   const fetchInsuranceCompanies = async () => {
@@ -159,6 +206,15 @@ export default function TPA() {
       setPreAuths(response.data);
     } catch (error) {
       console.error('Error fetching pre-authorizations:', error);
+    }
+  };
+
+  const fetchSettlements = async () => {
+    try {
+      const response = await api.get('/api/settlements');
+      setSettlements(response.data);
+    } catch (error) {
+      console.error('Error fetching settlements:', error);
     }
   };
 
@@ -333,10 +389,114 @@ export default function TPA() {
     }
   };
 
+  const handleUpdateClaim = async () => {
+    if (!selectedClaim) return;
+    setLoading(true);
+    try {
+      await api.put(`/api/claims/${selectedClaim.id}`, updateClaimFormData);
+
+      await fetchClaims();
+      setIsUpdateClaimDialogOpen(false);
+      setSelectedClaim(null);
+      setUpdateClaimFormData({
+        status: '',
+        approvedAmount: 0,
+        rejectedAmount: 0,
+        remarks: '',
+        rejectionReason: ''
+      });
+      alert('Claim updated successfully!');
+    } catch (error) {
+      console.error('Error updating claim:', error);
+      alert('Failed to update claim');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUpdatePreAuth = async () => {
+    if (!selectedPreAuth) return;
+    setLoading(true);
+    try {
+      await api.put(`/api/tpa/pre-authorizations/${selectedPreAuth.id}`, updatePreAuthFormData);
+
+      await fetchPreAuths();
+      setIsUpdatePreAuthDialogOpen(false);
+      setSelectedPreAuth(null);
+      setUpdatePreAuthFormData({
+        status: '',
+        approvedAmount: 0,
+        remarks: ''
+      });
+      alert('Pre-authorization updated successfully!');
+    } catch (error) {
+      console.error('Error updating pre-auth:', error);
+      alert('Failed to update pre-authorization');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAddSettlement = async () => {
+    setLoading(true);
+    try {
+      await api.post('/api/settlements', settlementFormData);
+
+      await fetchSettlements();
+      await fetchClaims();
+      setIsAddSettlementDialogOpen(false);
+      setSettlementFormData({
+        claimId: '',
+        settlementAmount: 0,
+        settlementDate: '',
+        paymentMode: '',
+        transactionRef: '',
+        remarks: ''
+      });
+      alert('Settlement recorded successfully!');
+    } catch (error) {
+      console.error('Error adding settlement:', error);
+      alert('Failed to record settlement');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const openUpdateClaimDialog = (claim: TPAClaim) => {
+    setSelectedClaim(claim);
+    setUpdateClaimFormData({
+      status: claim.status,
+      approvedAmount: claim.approvedAmount,
+      rejectedAmount: claim.rejectedAmount,
+      remarks: claim.remarks || '',
+      rejectionReason: ''
+    });
+    setIsUpdateClaimDialogOpen(true);
+  };
+
+  const openUpdatePreAuthDialog = (preAuth: PreAuthorization) => {
+    setSelectedPreAuth(preAuth);
+    setUpdatePreAuthFormData({
+      status: preAuth.status,
+      approvedAmount: preAuth.approvedAmount,
+      remarks: ''
+    });
+    setIsUpdatePreAuthDialogOpen(true);
+  };
+
+  const openSettlementDialog = (claim: TPAClaim) => {
+    setSettlementFormData({
+      ...settlementFormData,
+      claimId: claim.id,
+      settlementAmount: claim.approvedAmount
+    });
+    setIsAddSettlementDialogOpen(true);
+  };
+
   const stats = {
     activeInsurances: patientInsurances.filter(p => p.status === 'active').length,
-    pendingClaims: claims.filter(c => c.status === 'Pending' || c.status === 'Submitted').length,
-    approvedClaims: claims.filter(c => c.status === 'Approved').length,
+    pendingClaims: claims.filter(c => ['Pending', 'Submitted', 'pending', 'submitted', 'under_review'].includes(c.status)).length,
+    approvedClaims: claims.filter(c => ['Approved', 'approved'].includes(c.status)).length,
     claimAmount: claims.reduce((sum, c) => sum + c.claimAmount, 0)
   };
 
@@ -385,9 +545,10 @@ export default function TPA() {
       </div>
 
       <Tabs defaultValue="claims" className="w-full">
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-6">
           <TabsTrigger value="claims">Claims</TabsTrigger>
           <TabsTrigger value="preauth">Pre-Authorization</TabsTrigger>
+          <TabsTrigger value="settlements">Settlements</TabsTrigger>
           <TabsTrigger value="patient-ins">Patient Insurance</TabsTrigger>
           <TabsTrigger value="companies">Insurance Companies</TabsTrigger>
           <TabsTrigger value="reports">Reports</TabsTrigger>
@@ -486,12 +647,13 @@ export default function TPA() {
                     <TableHead>Approved Amount</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Submitted Date</TableHead>
+                    <TableHead>Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {claims.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center py-8 text-slate-500">
+                      <TableCell colSpan={9} className="text-center py-8 text-slate-500">
                         No claims submitted
                       </TableCell>
                     </TableRow>
@@ -505,7 +667,7 @@ export default function TPA() {
                         </TableCell>
                         <TableCell>{claim.insuranceCompanyName}</TableCell>
                         <TableCell>
-                          <Badge variant="outline">{claim.claimType}</Badge>
+                          <Badge variant="outline">{claim.claimType.charAt(0).toUpperCase() + claim.claimType.slice(1)}</Badge>
                         </TableCell>
                         <TableCell>Rs. {claim.claimAmount.toFixed(2)}</TableCell>
                         <TableCell className="font-semibold text-green-600">
@@ -513,14 +675,26 @@ export default function TPA() {
                         </TableCell>
                         <TableCell>
                           <Badge variant={
-                            claim.status === 'Approved' ? 'default' :
-                            claim.status === 'Rejected' ? 'destructive' :
+                            claim.status === 'approved' || claim.status === 'Approved' ? 'default' :
+                            claim.status === 'rejected' || claim.status === 'Rejected' ? 'destructive' :
                             'secondary'
                           }>
-                            {claim.status}
+                            {claim.status.charAt(0).toUpperCase() + claim.status.slice(1).replace('_', ' ')}
                           </Badge>
                         </TableCell>
                         <TableCell>{new Date(claim.submittedDate).toLocaleDateString()}</TableCell>
+                        <TableCell>
+                          <div className="flex gap-2">
+                            <Button size="sm" variant="outline" onClick={() => openUpdateClaimDialog(claim)}>
+                              Update
+                            </Button>
+                            {(claim.status === 'approved' || claim.status === 'Approved') && claim.status !== 'settled' && (
+                              <Button size="sm" onClick={() => openSettlementDialog(claim)}>
+                                Settle
+                              </Button>
+                            )}
+                          </div>
+                        </TableCell>
                       </TableRow>
                     ))
                   )}
@@ -610,12 +784,13 @@ export default function TPA() {
                     <TableHead>Approved Amount</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Requested Date</TableHead>
+                    <TableHead>Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {preAuths.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-8 text-slate-500">
+                      <TableCell colSpan={8} className="text-center py-8 text-slate-500">
                         No pre-authorization requests
                       </TableCell>
                     </TableRow>
@@ -631,14 +806,19 @@ export default function TPA() {
                         </TableCell>
                         <TableCell>
                           <Badge variant={
-                            preAuth.status === 'Approved' ? 'default' :
-                            preAuth.status === 'Rejected' ? 'destructive' :
+                            preAuth.status === 'Approved' || preAuth.status === 'approved' ? 'default' :
+                            preAuth.status === 'Rejected' || preAuth.status === 'rejected' ? 'destructive' :
                             'secondary'
                           }>
                             {preAuth.status}
                           </Badge>
                         </TableCell>
                         <TableCell>{new Date(preAuth.requestedDate).toLocaleDateString()}</TableCell>
+                        <TableCell>
+                          <Button size="sm" variant="outline" onClick={() => openUpdatePreAuthDialog(preAuth)}>
+                            Update
+                          </Button>
+                        </TableCell>
                       </TableRow>
                     ))
                   )}
@@ -910,6 +1090,59 @@ export default function TPA() {
           </Card>
         </TabsContent>
 
+        {/* Settlements Tab */}
+        <TabsContent value="settlements">
+          <Card>
+            <CardHeader>
+              <CardTitle>Claim Settlements</CardTitle>
+              <CardDescription>Track all claim settlements</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Settlement Number</TableHead>
+                    <TableHead>Claim Number</TableHead>
+                    <TableHead>Patient</TableHead>
+                    <TableHead>Claim Amount</TableHead>
+                    <TableHead>Settlement Amount</TableHead>
+                    <TableHead>Settlement Date</TableHead>
+                    <TableHead>Payment Mode</TableHead>
+                    <TableHead>Transaction Ref</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {settlements.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={8} className="text-center py-8 text-slate-500">
+                        No settlements recorded
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    settlements.map(settlement => (
+                      <TableRow key={settlement.id}>
+                        <TableCell className="font-medium">{settlement.settlementNumber}</TableCell>
+                        <TableCell>{settlement.claimNumber}</TableCell>
+                        <TableCell>
+                          {settlement.patientName}
+                          <div className="text-xs text-slate-500">{settlement.patientMRN}</div>
+                        </TableCell>
+                        <TableCell>Rs. {settlement.claimAmount.toFixed(2)}</TableCell>
+                        <TableCell className="font-semibold text-green-600">
+                          Rs. {settlement.settlementAmount.toFixed(2)}
+                        </TableCell>
+                        <TableCell>{new Date(settlement.settlementDate).toLocaleDateString()}</TableCell>
+                        <TableCell>{settlement.paymentMode}</TableCell>
+                        <TableCell>{settlement.transactionRef || '-'}</TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         {/* Reports Tab */}
         <TabsContent value="reports">
           <Card>
@@ -927,15 +1160,15 @@ export default function TPA() {
                     <div className="space-y-3">
                       <div className="flex justify-between p-2 bg-orange-50 rounded">
                         <span>Pending:</span>
-                        <span className="font-bold">{claims.filter(c => c.status === 'Pending' || c.status === 'Submitted').length}</span>
+                        <span className="font-bold">{claims.filter(c => c.status === 'Pending' || c.status === 'Submitted' || c.status === 'pending' || c.status === 'submitted').length}</span>
                       </div>
                       <div className="flex justify-between p-2 bg-green-50 rounded">
                         <span>Approved:</span>
-                        <span className="font-bold">{claims.filter(c => c.status === 'Approved').length}</span>
+                        <span className="font-bold">{claims.filter(c => c.status === 'Approved' || c.status === 'approved').length}</span>
                       </div>
                       <div className="flex justify-between p-2 bg-red-50 rounded">
                         <span>Rejected:</span>
-                        <span className="font-bold">{claims.filter(c => c.status === 'Rejected').length}</span>
+                        <span className="font-bold">{claims.filter(c => c.status === 'Rejected' || c.status === 'rejected').length}</span>
                       </div>
                     </div>
                   </CardContent>
@@ -967,6 +1200,205 @@ export default function TPA() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Update Claim Status Dialog */}
+      <Dialog open={isUpdateClaimDialogOpen} onOpenChange={setIsUpdateClaimDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Update Claim Status</DialogTitle>
+            <DialogDescription>Update status and amounts for claim {selectedClaim?.claimNumber}</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="space-y-2">
+              <Label>Status *</Label>
+              <Select value={updateClaimFormData.status} onValueChange={(value) => setUpdateClaimFormData(prev => ({ ...prev, status: value }))}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="submitted">Submitted</SelectItem>
+                  <SelectItem value="under_review">Under Review</SelectItem>
+                  <SelectItem value="approved">Approved</SelectItem>
+                  <SelectItem value="rejected">Rejected</SelectItem>
+                  <SelectItem value="settled">Settled</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Approved Amount (Rs.)</Label>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                value={updateClaimFormData.approvedAmount}
+                onChange={(e) => setUpdateClaimFormData(prev => ({ ...prev, approvedAmount: parseFloat(e.target.value) || 0 }))}
+                placeholder="0.00"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Rejected Amount (Rs.)</Label>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                value={updateClaimFormData.rejectedAmount}
+                onChange={(e) => setUpdateClaimFormData(prev => ({ ...prev, rejectedAmount: parseFloat(e.target.value) || 0 }))}
+                placeholder="0.00"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Remarks</Label>
+              <Input
+                value={updateClaimFormData.remarks}
+                onChange={(e) => setUpdateClaimFormData(prev => ({ ...prev, remarks: e.target.value }))}
+                placeholder="Enter any remarks"
+              />
+            </div>
+            {updateClaimFormData.status === 'rejected' && (
+              <div className="space-y-2">
+                <Label>Rejection Reason</Label>
+                <Input
+                  value={updateClaimFormData.rejectionReason}
+                  onChange={(e) => setUpdateClaimFormData(prev => ({ ...prev, rejectionReason: e.target.value }))}
+                  placeholder="Reason for rejection"
+                />
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsUpdateClaimDialogOpen(false)} disabled={loading}>
+              Cancel
+            </Button>
+            <Button onClick={handleUpdateClaim} disabled={loading}>
+              {loading ? 'Updating...' : 'Update Claim'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Update Pre-Authorization Dialog */}
+      <Dialog open={isUpdatePreAuthDialogOpen} onOpenChange={setIsUpdatePreAuthDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Update Pre-Authorization</DialogTitle>
+            <DialogDescription>Approve or reject pre-authorization request</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="space-y-2">
+              <Label>Status *</Label>
+              <Select value={updatePreAuthFormData.status} onValueChange={(value) => setUpdatePreAuthFormData(prev => ({ ...prev, status: value }))}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="approved">Approved</SelectItem>
+                  <SelectItem value="rejected">Rejected</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {updatePreAuthFormData.status === 'approved' && (
+              <div className="space-y-2">
+                <Label>Approved Amount (Rs.) *</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={updatePreAuthFormData.approvedAmount}
+                  onChange={(e) => setUpdatePreAuthFormData(prev => ({ ...prev, approvedAmount: parseFloat(e.target.value) || 0 }))}
+                  placeholder="0.00"
+                />
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label>Remarks</Label>
+              <Input
+                value={updatePreAuthFormData.remarks}
+                onChange={(e) => setUpdatePreAuthFormData(prev => ({ ...prev, remarks: e.target.value }))}
+                placeholder="Enter any remarks"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsUpdatePreAuthDialogOpen(false)} disabled={loading}>
+              Cancel
+            </Button>
+            <Button onClick={handleUpdatePreAuth} disabled={loading}>
+              {loading ? 'Updating...' : 'Update Pre-Auth'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Settlement Dialog */}
+      <Dialog open={isAddSettlementDialogOpen} onOpenChange={setIsAddSettlementDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Record Settlement</DialogTitle>
+            <DialogDescription>Record settlement details for the approved claim</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="space-y-2">
+              <Label>Settlement Amount (Rs.) *</Label>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                value={settlementFormData.settlementAmount}
+                onChange={(e) => setSettlementFormData(prev => ({ ...prev, settlementAmount: parseFloat(e.target.value) || 0 }))}
+                placeholder="0.00"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Settlement Date</Label>
+              <Input
+                type="date"
+                value={settlementFormData.settlementDate}
+                onChange={(e) => setSettlementFormData(prev => ({ ...prev, settlementDate: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Payment Mode *</Label>
+              <Select value={settlementFormData.paymentMode} onValueChange={(value) => setSettlementFormData(prev => ({ ...prev, paymentMode: value }))}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select payment mode" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="cheque">Cheque</SelectItem>
+                  <SelectItem value="neft">NEFT</SelectItem>
+                  <SelectItem value="rtgs">RTGS</SelectItem>
+                  <SelectItem value="upi">UPI</SelectItem>
+                  <SelectItem value="cash">Cash</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Transaction Reference</Label>
+              <Input
+                value={settlementFormData.transactionRef}
+                onChange={(e) => setSettlementFormData(prev => ({ ...prev, transactionRef: e.target.value }))}
+                placeholder="Cheque number / Transaction ID"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Remarks</Label>
+              <Input
+                value={settlementFormData.remarks}
+                onChange={(e) => setSettlementFormData(prev => ({ ...prev, remarks: e.target.value }))}
+                placeholder="Enter any remarks"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsAddSettlementDialogOpen(false)} disabled={loading}>
+              Cancel
+            </Button>
+            <Button onClick={handleAddSettlement} disabled={loading}>
+              {loading ? 'Recording...' : 'Record Settlement'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

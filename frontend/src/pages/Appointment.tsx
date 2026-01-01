@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -7,17 +7,37 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Calendar, Plus, Clock } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Calendar, Plus, Clock, Bell, AlertTriangle, CheckCircle } from 'lucide-react';
 
 interface Appointment {
   id: string;
   patientName: string;
   doctorName: string;
+  doctorId?: string;
   department: string;
   date: string;
   time: string;
   status: 'Scheduled' | 'Confirmed' | 'Completed' | 'Cancelled' | 'No-Show';
   type: 'In-Person' | 'Teleconsultation';
+}
+
+interface TimeSlot {
+  start: string;
+  end: string;
+  isBooked: boolean;
+  isAvailable: boolean;
+}
+
+interface ConflictCheckResult {
+  hasConflict: boolean;
+  conflicts?: Array<{
+    appointmentId: string;
+    patientName: string;
+    time: string;
+  }>;
+  nextAvailableSlot?: string;
+  message: string;
 }
 
 export default function Appointment() {
@@ -26,9 +46,10 @@ export default function Appointment() {
       id: '1',
       patientName: 'John Doe',
       doctorName: 'Dr. Sarah Smith',
+      doctorId: 'doc-1',
       department: 'Cardiology',
       date: '2025-12-06',
-      time: '10:00 AM',
+      time: '10:00',
       status: 'Confirmed',
       type: 'In-Person'
     },
@@ -36,9 +57,10 @@ export default function Appointment() {
       id: '2',
       patientName: 'Jane Wilson',
       doctorName: 'Dr. Michael Johnson',
+      doctorId: 'doc-2',
       department: 'Orthopedics',
       date: '2025-12-06',
-      time: '11:30 AM',
+      time: '11:30',
       status: 'Scheduled',
       type: 'Teleconsultation'
     }
@@ -47,10 +69,14 @@ export default function Appointment() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isRescheduleDialogOpen, setIsRescheduleDialogOpen] = useState(false);
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
+  const [availableSlots, setAvailableSlots] = useState<TimeSlot[]>([]);
+  const [conflictWarning, setConflictWarning] = useState<ConflictCheckResult | null>(null);
+  const [loadingSlots, setLoadingSlots] = useState(false);
   const [formData, setFormData] = useState({
     patientName: '',
     patientPhone: '',
     doctorName: '',
+    doctorId: '',
     department: '',
     date: '',
     time: '',
@@ -59,11 +85,90 @@ export default function Appointment() {
     priority: 'Normal'
   });
 
+  // Fetch available slots when doctor and date are selected
+  useEffect(() => {
+    if (formData.doctorId && formData.date) {
+      fetchAvailableSlots(formData.doctorId, formData.date);
+    } else {
+      setAvailableSlots([]);
+    }
+  }, [formData.doctorId, formData.date]);
+
+  // Check for conflicts when time is selected
+  useEffect(() => {
+    if (formData.doctorId && formData.date && formData.time) {
+      checkConflict(formData.doctorId, formData.date, formData.time);
+    } else {
+      setConflictWarning(null);
+    }
+  }, [formData.doctorId, formData.date, formData.time]);
+
+  const fetchAvailableSlots = async (doctorId: string, date: string) => {
+    setLoadingSlots(true);
+    try {
+      // Mock API call - replace with actual API
+      // const response = await fetch(`/api/doctors/${doctorId}/availability?date=${date}`);
+      // const data = await response.json();
+
+      // Simulating API response
+      const mockSlots: TimeSlot[] = [
+        { start: '09:00', end: '09:30', isBooked: false, isAvailable: true },
+        { start: '09:30', end: '10:00', isBooked: true, isAvailable: false },
+        { start: '10:00', end: '10:30', isBooked: true, isAvailable: false },
+        { start: '10:30', end: '11:00', isBooked: false, isAvailable: true },
+        { start: '11:00', end: '11:30', isBooked: false, isAvailable: true },
+        { start: '11:30', end: '12:00', isBooked: true, isAvailable: false },
+        { start: '14:00', end: '14:30', isBooked: false, isAvailable: true },
+        { start: '14:30', end: '15:00', isBooked: false, isAvailable: true },
+        { start: '15:00', end: '15:30', isBooked: false, isAvailable: true },
+        { start: '15:30', end: '16:00', isBooked: false, isAvailable: true },
+      ];
+
+      setAvailableSlots(mockSlots);
+    } catch (error) {
+      console.error('Error fetching slots:', error);
+    } finally {
+      setLoadingSlots(false);
+    }
+  };
+
+  const checkConflict = async (doctorId: string, date: string, time: string) => {
+    try {
+      // Mock API call - replace with actual API
+      // const response = await fetch('/api/appointments/check-conflict', {
+      //   method: 'POST',
+      //   body: JSON.stringify({ doctorId, appointmentDate: date, appointmentTime: time })
+      // });
+      // const data = await response.json();
+
+      // Check if the selected slot is booked
+      const selectedSlot = availableSlots.find(slot => slot.start === time);
+      if (selectedSlot && !selectedSlot.isAvailable) {
+        setConflictWarning({
+          hasConflict: true,
+          message: 'This time slot is already booked',
+          nextAvailableSlot: availableSlots.find(s => s.isAvailable)?.start || null,
+          conflicts: [{ appointmentId: 'mock-1', patientName: 'John Doe', time }]
+        });
+      } else {
+        setConflictWarning({ hasConflict: false, message: 'Slot is available' });
+      }
+    } catch (error) {
+      console.error('Error checking conflict:', error);
+    }
+  };
+
   const handleSubmit = () => {
+    if (conflictWarning?.hasConflict) {
+      alert('Please select an available time slot');
+      return;
+    }
+
     const newAppointment: Appointment = {
       id: String(appointments.length + 1),
       patientName: formData.patientName,
       doctorName: formData.doctorName,
+      doctorId: formData.doctorId,
       department: formData.department,
       date: formData.date,
       time: formData.time,
@@ -74,9 +179,11 @@ export default function Appointment() {
     setAppointments([...appointments, newAppointment]);
     setIsDialogOpen(false);
     setFormData({
-      patientName: '', patientPhone: '', doctorName: '', department: '',
+      patientName: '', patientPhone: '', doctorName: '', doctorId: '', department: '',
       date: '', time: '', type: 'In-Person', reason: '', priority: 'Normal'
     });
+    setConflictWarning(null);
+    setAvailableSlots([]);
   };
 
   const handleConfirmAppointment = (appointment: Appointment) => {
@@ -111,6 +218,18 @@ export default function Appointment() {
       setAppointments(appointments.map(apt =>
         apt.id === appointment.id ? { ...apt, status: 'Cancelled' } : apt
       ));
+    }
+  };
+
+  const handleSendReminder = async (appointment: Appointment) => {
+    try {
+      // Mock API call - replace with actual API
+      // await fetch(`/api/appointments/${appointment.id}/send-reminder`, { method: 'POST' });
+
+      alert(`Reminder sent successfully to ${appointment.patientName}`);
+    } catch (error) {
+      console.error('Error sending reminder:', error);
+      alert('Failed to send reminder');
     }
   };
 
@@ -174,7 +293,22 @@ export default function Appointment() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="doctorName">Doctor *</Label>
-                <Select value={formData.doctorName} onValueChange={(value) => setFormData(prev => ({ ...prev, doctorName: value }))}>
+                <Select
+                  value={formData.doctorName}
+                  onValueChange={(value) => {
+                    const doctorMap: Record<string, string> = {
+                      'Dr. Sarah Smith': 'doc-1',
+                      'Dr. Michael Johnson': 'doc-2',
+                      'Dr. Emily Davis': 'doc-3',
+                      'Dr. Robert Brown': 'doc-4',
+                    };
+                    setFormData(prev => ({
+                      ...prev,
+                      doctorName: value,
+                      doctorId: doctorMap[value] || ''
+                    }));
+                  }}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Select doctor" />
                   </SelectTrigger>
@@ -188,12 +322,84 @@ export default function Appointment() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="date">Appointment Date *</Label>
-                <Input id="date" type="date" value={formData.date} onChange={(e) => setFormData(prev => ({ ...prev, date: e.target.value }))} required />
+                <Input
+                  id="date"
+                  type="date"
+                  value={formData.date}
+                  onChange={(e) => setFormData(prev => ({ ...prev, date: e.target.value }))}
+                  required
+                />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="time">Appointment Time *</Label>
-                <Input id="time" type="time" value={formData.time} onChange={(e) => setFormData(prev => ({ ...prev, time: e.target.value }))} required />
-              </div>
+
+              {/* Available Slots Section */}
+              {formData.doctorId && formData.date && (
+                <div className="col-span-2 space-y-2">
+                  <Label>Available Time Slots</Label>
+                  {loadingSlots ? (
+                    <div className="text-sm text-gray-500">Loading slots...</div>
+                  ) : availableSlots.length > 0 ? (
+                    <div className="grid grid-cols-4 gap-2 max-h-40 overflow-y-auto p-2 border rounded">
+                      {availableSlots.map((slot) => (
+                        <Button
+                          key={slot.start}
+                          type="button"
+                          variant={formData.time === slot.start ? "default" : "outline"}
+                          className={`text-sm ${
+                            slot.isBooked
+                              ? 'bg-red-50 text-red-500 cursor-not-allowed'
+                              : slot.isAvailable && formData.time === slot.start
+                              ? 'bg-blue-500 text-white'
+                              : 'hover:bg-blue-50'
+                          }`}
+                          disabled={slot.isBooked}
+                          onClick={() => setFormData(prev => ({ ...prev, time: slot.start }))}
+                        >
+                          {slot.start}
+                          {slot.isBooked && ' ✗'}
+                        </Button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-gray-500">Select a doctor and date to view available slots</div>
+                  )}
+                </div>
+              )}
+
+              {/* Conflict Warning */}
+              {conflictWarning && conflictWarning.hasConflict && (
+                <div className="col-span-2">
+                  <Alert variant="destructive">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertDescription>
+                      {conflictWarning.message}
+                      {conflictWarning.nextAvailableSlot && (
+                        <div className="mt-2">
+                          Next available: {conflictWarning.nextAvailableSlot}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="ml-2"
+                            onClick={() => setFormData(prev => ({ ...prev, time: conflictWarning.nextAvailableSlot! }))}
+                          >
+                            Select
+                          </Button>
+                        </div>
+                      )}
+                    </AlertDescription>
+                  </Alert>
+                </div>
+              )}
+
+              {conflictWarning && !conflictWarning.hasConflict && formData.time && (
+                <div className="col-span-2">
+                  <Alert>
+                    <CheckCircle className="h-4 w-4 text-green-500" />
+                    <AlertDescription className="text-green-600">
+                      Time slot is available!
+                    </AlertDescription>
+                  </Alert>
+                </div>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="type">Appointment Type *</Label>
                 <Select value={formData.type} onValueChange={(value: any) => setFormData(prev => ({ ...prev, type: value }))}>
@@ -310,14 +516,39 @@ export default function Appointment() {
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    <div className="flex gap-2">
-                      <Button variant="outline" size="sm" onClick={() => handleConfirmAppointment(appointment)} disabled={appointment.status === 'Confirmed' || appointment.status === 'Cancelled' || appointment.status === 'Completed'}>
+                    <div className="flex gap-2 flex-wrap">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleConfirmAppointment(appointment)}
+                        disabled={appointment.status === 'Confirmed' || appointment.status === 'Cancelled' || appointment.status === 'Completed'}
+                      >
                         Confirm
                       </Button>
-                      <Button variant="outline" size="sm" onClick={() => handleReschedule(appointment)} disabled={appointment.status === 'Cancelled' || appointment.status === 'Completed'}>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleReschedule(appointment)}
+                        disabled={appointment.status === 'Cancelled' || appointment.status === 'Completed'}
+                      >
                         Reschedule
                       </Button>
-                      <Button variant="destructive" size="sm" onClick={() => handleCancelAppointment(appointment)} disabled={appointment.status === 'Cancelled' || appointment.status === 'Completed'}>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-1"
+                        onClick={() => handleSendReminder(appointment)}
+                        disabled={appointment.status === 'Cancelled' || appointment.status === 'Completed'}
+                      >
+                        <Bell className="w-3 h-3" />
+                        Reminder
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => handleCancelAppointment(appointment)}
+                        disabled={appointment.status === 'Cancelled' || appointment.status === 'Completed'}
+                      >
                         Cancel
                       </Button>
                     </div>

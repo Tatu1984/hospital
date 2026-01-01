@@ -139,6 +139,7 @@ export const dischargeSchema = z.object({
 export const createLabOrderSchema = z.object({
   patientId: idSchema,
   encounterId: idSchema.optional(),
+  admissionId: idSchema.optional(),
   tests: z.array(z.object({
     testId: idSchema,
     priority: z.enum(['ROUTINE', 'URGENT', 'STAT']).default('ROUTINE'),
@@ -297,9 +298,12 @@ export const icuBedAssignmentSchema = z.object({
 export const createRadiologyOrderSchema = z.object({
   patientId: idSchema,
   encounterId: idSchema.optional(),
-  testId: idSchema,
-  modality: z.enum(['X-RAY', 'CT', 'MRI', 'ULTRASOUND', 'MAMMOGRAPHY', 'FLUOROSCOPY', 'PET', 'NUCLEAR']),
-  priority: z.enum(['ROUTINE', 'URGENT', 'STAT']).default('ROUTINE'),
+  admissionId: idSchema.optional(),
+  tests: z.array(z.object({
+    testId: idSchema,
+    priority: z.enum(['ROUTINE', 'URGENT', 'STAT']).default('ROUTINE'),
+    notes: z.string().max(500).optional(),
+  })).min(1),
   clinicalHistory: z.string().max(2000).optional(),
   specialInstructions: z.string().max(1000).optional(),
 });
@@ -577,6 +581,145 @@ export type LoginInput = z.infer<typeof loginSchema>;
 export type CreatePatientInput = z.infer<typeof createPatientSchema>;
 export type CreateAppointmentInput = z.infer<typeof createAppointmentSchema>;
 export type CreateEncounterInput = z.infer<typeof createEncounterSchema>;
+// OPD Workflow validators
+export const updateEncounterSchema = z.object({
+  subjective: z.string().max(5000).optional(),
+  objective: z.string().max(5000).optional(),
+  assessment: z.string().max(2000).optional(),
+  plan: z.string().max(2000).optional(),
+  vitals: z.object({
+    temperature: z.number().min(30).max(45).optional(),
+    pulse: z.number().int().min(20).max(250).optional(),
+    bp_systolic: z.number().int().min(50).max(300).optional(),
+    bp_diastolic: z.number().int().min(30).max(200).optional(),
+    respiratory_rate: z.number().int().min(5).max(60).optional(),
+    spo2: z.number().int().min(50).max(100).optional(),
+    weight: z.number().min(0.5).max(500).optional(),
+    height: z.number().min(20).max(300).optional(),
+  }).optional(),
+});
+
+// ===========================
+// ANESTHESIA & OT VALIDATORS
+// ===========================
+
+export const createAnesthesiaRecordSchema = z.object({
+  surgeryId: idSchema,
+  patientId: idSchema,
+  anesthetistId: idSchema,
+  anesthesiaType: z.enum(['general', 'spinal', 'epidural', 'local', 'regional', 'MAC', 'sedation']),
+  preOpAssessment: z.object({
+    asaGrade: z.enum(['I', 'II', 'III', 'IV', 'V', 'VI']),
+    airwayAssessment: z.object({
+      mallamapati: z.enum(['I', 'II', 'III', 'IV']).optional(),
+      thyromental: z.number().optional(),
+      mouthOpening: z.string().max(100).optional(),
+      neckMobility: z.string().max(100).optional(),
+      dentition: z.string().max(200).optional(),
+    }).optional(),
+    npoStatus: z.object({
+      lastSolid: z.string().datetime().optional(),
+      lastFluid: z.string().datetime().optional(),
+      hoursNPO: z.number().optional(),
+    }),
+    preExistingConditions: z.array(z.string()).optional(),
+    currentMedications: z.array(z.string()).optional(),
+    allergies: z.array(z.string()).optional(),
+    labValues: z.record(z.string(), z.any()).optional(),
+  }),
+  startTime: z.string().datetime(),
+  endTime: z.string().datetime().optional(),
+});
+
+export const updateAnesthesiaRecordSchema = z.object({
+  agents: z.array(z.object({
+    name: z.string().min(1).max(200),
+    dose: z.string().max(100),
+    unit: z.string().max(50).optional(),
+    route: z.enum(['IV', 'IM', 'SC', 'PO', 'Inhalation', 'Topical', 'Intrathecal', 'Epidural']),
+    time: z.string().datetime(),
+  })).optional(),
+  airwayManagement: z.object({
+    technique: z.enum(['mask', 'LMA', 'ETT', 'tracheostomy', 'none']).optional(),
+    ettSize: z.string().max(50).optional(),
+    ettDepth: z.string().max(50).optional(),
+    cuffPressure: z.number().optional(),
+    intubationAttempts: z.number().int().min(0).max(10).optional(),
+    difficulty: z.enum(['easy', 'moderate', 'difficult']).optional(),
+    ventilatorSettings: z.object({
+      mode: z.string().max(50).optional(),
+      tidalVolume: z.number().optional(),
+      respiratoryRate: z.number().optional(),
+      fio2: z.number().min(21).max(100).optional(),
+      peep: z.number().optional(),
+      pip: z.number().optional(),
+    }).optional(),
+  }).optional(),
+  fluidBalance: z.object({
+    ivFluids: z.array(z.object({
+      fluid: z.string().max(100),
+      volume: z.number(),
+      time: z.string().datetime(),
+    })).optional(),
+    bloodProducts: z.array(z.object({
+      product: z.string().max(100),
+      volume: z.number(),
+      time: z.string().datetime(),
+    })).optional(),
+    urineOutput: z.number().optional(),
+    bloodLoss: z.number().optional(),
+    drains: z.array(z.object({
+      type: z.string().max(50),
+      output: z.number(),
+    })).optional(),
+  }).optional(),
+  recoveryNotes: z.string().max(5000).optional(),
+  postOpInstructions: z.string().max(5000).optional(),
+  endTime: z.string().datetime().optional(),
+});
+
+export const addVitalsEntrySchema = z.object({
+  heartRate: z.number().int().min(0).max(300).optional(),
+  systolicBP: z.number().int().min(0).max(300).optional(),
+  diastolicBP: z.number().int().min(0).max(200).optional(),
+  meanBP: z.number().int().min(0).max(250).optional(),
+  temperature: z.number().min(25).max(45).optional(),
+  spo2: z.number().int().min(0).max(100).optional(),
+  etco2: z.number().int().min(0).max(100).optional(),
+  respiratoryRate: z.number().int().min(0).max(100).optional(),
+  time: z.string().datetime(),
+  notes: z.string().max(500).optional(),
+});
+
+export const addAnesthesiaComplicationSchema = z.object({
+  type: z.string().min(1).max(200),
+  description: z.string().min(1).max(2000),
+  management: z.string().min(1).max(2000),
+  time: z.string().datetime(),
+});
+
+export const reportSurgeryComplicationSchema = z.object({
+  surgeryId: idSchema,
+  type: z.enum(['intraoperative', 'postoperative']),
+  description: z.string().min(10).max(5000),
+  severity: z.enum(['minor', 'moderate', 'major', 'critical']),
+  managementDone: z.string().min(10).max(5000),
+  outcome: z.string().min(1).max(1000),
+  reportedBy: idSchema,
+});
+
+export const addSurgeryImplantSchema = z.object({
+  surgeryId: idSchema,
+  implantName: z.string().min(1).max(200),
+  manufacturer: z.string().min(1).max(200),
+  serialNumber: z.string().min(1).max(100),
+  batchNumber: z.string().min(1).max(100),
+  expiryDate: optionalDateSchema,
+  quantity: z.number().int().min(1).max(1000),
+  cost: z.number().min(0).max(10000000),
+});
+
+// Export types
 export type OPDNoteInput = z.infer<typeof opdNoteSchema>;
 export type CreatePrescriptionInput = z.infer<typeof createPrescriptionSchema>;
 export type CreateAdmissionInput = z.infer<typeof createAdmissionSchema>;
@@ -592,3 +735,394 @@ export type BloodRequestInput = z.infer<typeof bloodRequestSchema>;
 export type CreatePurchaseOrderInput = z.infer<typeof createPurchaseOrderSchema>;
 export type CreateEmployeeInput = z.infer<typeof createEmployeeSchema>;
 export type LeaveRequestInput = z.infer<typeof leaveRequestSchema>;
+export type UpdateEncounterInput = z.infer<typeof updateEncounterSchema>;
+export type CreateAnesthesiaRecordInput = z.infer<typeof createAnesthesiaRecordSchema>;
+export type UpdateAnesthesiaRecordInput = z.infer<typeof updateAnesthesiaRecordSchema>;
+export type AddVitalsEntryInput = z.infer<typeof addVitalsEntrySchema>;
+export type ReportSurgeryComplicationInput = z.infer<typeof reportSurgeryComplicationSchema>;
+export type AddSurgeryImplantInput = z.infer<typeof addSurgeryImplantSchema>;
+
+// ===========================
+// SHIFT MANAGEMENT VALIDATORS
+// ===========================
+
+export const createShiftTemplateSchema = z.object({
+  name: z.string().min(2, 'Name must be at least 2 characters').max(100),
+  code: z.string().min(2).max(50).regex(/^[A-Z0-9_-]+$/, 'Code must contain only uppercase letters, numbers, underscores, and hyphens'),
+  startTime: z.string().regex(/^([0-1][0-9]|2[0-3]):[0-5][0-9]$/, 'Invalid time format. Use HH:MM (24-hour format)'),
+  endTime: z.string().regex(/^([0-1][0-9]|2[0-3]):[0-5][0-9]$/, 'Invalid time format. Use HH:MM (24-hour format)'),
+  breakMinutes: z.number().int().min(0).max(180).default(30),
+  isOvernight: z.boolean().default(false),
+  isActive: z.boolean().default(true),
+});
+
+export const updateShiftTemplateSchema = createShiftTemplateSchema.partial();
+
+export const createShiftSchema = z.object({
+  templateId: idSchema,
+  employeeId: idSchema,
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format. Use YYYY-MM-DD'),
+  status: z.enum(['scheduled', 'started', 'completed', 'absent', 'leave']).default('scheduled'),
+  notes: z.string().max(500).optional(),
+});
+
+export const updateShiftSchema = z.object({
+  templateId: idSchema.optional(),
+  status: z.enum(['scheduled', 'started', 'completed', 'absent', 'leave']).optional(),
+  notes: z.string().max(500).optional(),
+  actualStartTime: z.string().datetime().optional(),
+  actualEndTime: z.string().datetime().optional(),
+});
+
+export const getShiftsQuerySchema = z.object({
+  employeeId: idSchema.optional(),
+  department: z.string().optional(),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  status: z.enum(['scheduled', 'started', 'completed', 'absent', 'leave']).optional(),
+  templateId: idSchema.optional(),
+}).merge(paginationSchema);
+
+export const generateRosterSchema = z.object({
+  departmentId: z.string().optional().nullable(),
+  wardId: z.string().optional().nullable(),
+  weekStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format. Use YYYY-MM-DD'),
+  publishImmediately: z.boolean().default(false),
+});
+
+export const publishRosterSchema = z.object({
+  rosterId: idSchema,
+});
+
+export const createShiftSwapRequestSchema = z.object({
+  requestedShiftId: idSchema,
+  targetEmployeeId: idSchema.optional().nullable(),
+  offeredShiftId: idSchema.optional().nullable(),
+  reason: z.string().min(10, 'Reason must be at least 10 characters').max(500).optional(),
+});
+
+export const approveShiftSwapSchema = z.object({
+  swapRequestId: idSchema,
+  approved: z.boolean(),
+});
+
+export const getRosterQuerySchema = z.object({
+  departmentId: z.string().optional(),
+  wardId: z.string().optional(),
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  status: z.enum(['draft', 'published']).optional(),
+}).merge(paginationSchema);
+
+export const getStaffingReportSchema = z.object({
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format. Use YYYY-MM-DD'),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Invalid date format. Use YYYY-MM-DD'),
+  departmentId: z.string().optional(),
+  wardId: z.string().optional(),
+});
+
+export const calculateOvertimeSchema = z.object({
+  employeeId: idSchema,
+  month: z.number().int().min(1).max(12),
+  year: z.number().int().min(2000).max(2100),
+});
+
+// Export shift management types
+export type CreateShiftTemplateInput = z.infer<typeof createShiftTemplateSchema>;
+export type UpdateShiftTemplateInput = z.infer<typeof updateShiftTemplateSchema>;
+export type CreateShiftInput = z.infer<typeof createShiftSchema>;
+export type UpdateShiftInput = z.infer<typeof updateShiftSchema>;
+export type GenerateRosterInput = z.infer<typeof generateRosterSchema>;
+export type CreateShiftSwapRequestInput = z.infer<typeof createShiftSwapRequestSchema>;
+export type GetStaffingReportInput = z.infer<typeof getStaffingReportSchema>;
+export type CalculateOvertimeInput = z.infer<typeof calculateOvertimeSchema>;
+
+// ===========================
+// BED MANAGEMENT VALIDATORS
+// ===========================
+
+export const checkBedAvailabilitySchema = z.object({
+  fromDate: z.string().datetime('Invalid date format'),
+  toDate: z.string().datetime('Invalid date format').optional(),
+});
+
+export const findAvailableBedsSchema = z.object({
+  wardId: idSchema,
+  category: z.string().min(1).max(50),
+  fromDate: z.string().datetime('Invalid date format'),
+  toDate: z.string().datetime('Invalid date format').optional(),
+});
+
+export const reserveBedSchema = z.object({
+  bedId: idSchema,
+  patientId: idSchema,
+  reservedFrom: z.string().datetime('Invalid date format'),
+  reservedUntil: z.string().datetime('Invalid date format'),
+  admissionId: idSchema.optional(),
+  remarks: z.string().max(500).optional(),
+}).refine((data) => {
+  const from = new Date(data.reservedFrom);
+  const until = new Date(data.reservedUntil);
+  return until > from;
+}, {
+  message: 'reservedUntil must be after reservedFrom',
+  path: ['reservedUntil'],
+});
+
+export const updateBedStatusSchema = z.object({
+  status: z.enum(['vacant', 'occupied', 'reserved', 'maintenance', 'dirty']),
+});
+
+export const transferBedSchema = z.object({
+  admissionId: idSchema,
+  newBedId: idSchema,
+  reason: z.string().max(500).optional(),
+});
+
+export const getBedHistorySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+
+export const getAvailableBedsQuerySchema = z.object({
+  wardId: idSchema.optional(),
+  category: z.string().optional(),
+  fromDate: z.string().datetime().optional(),
+  toDate: z.string().datetime().optional(),
+  floor: z.string().optional(),
+});
+
+// Export bed management types
+export type CheckBedAvailabilityInput = z.infer<typeof checkBedAvailabilitySchema>;
+export type FindAvailableBedsInput = z.infer<typeof findAvailableBedsSchema>;
+export type ReserveBedInput = z.infer<typeof reserveBedSchema>;
+export type UpdateBedStatusInput = z.infer<typeof updateBedStatusSchema>;
+export type TransferBedInput = z.infer<typeof transferBedSchema>;
+export type GetBedHistoryInput = z.infer<typeof getBedHistorySchema>;
+export type GetAvailableBedsQueryInput = z.infer<typeof getAvailableBedsQuerySchema>;
+
+// ===========================
+// PACS (RADIOLOGY) VALIDATORS
+// ===========================
+
+export const createRadiologyStudySchema = z.object({
+  orderId: idSchema,
+  patientId: idSchema,
+  modality: z.enum(['CR', 'CT', 'MR', 'US', 'XR', 'DX', 'MG', 'PT', 'NM', 'RF', 'OT']),
+  studyDescription: z.string().min(1).max(500).optional(),
+  referringPhysician: z.string().max(200).optional(),
+  performingTechnician: z.string().max(200).optional(),
+  studyDate: z.string().datetime().optional(),
+});
+
+export const updateStudyStatusSchema = z.object({
+  status: z.enum(['scheduled', 'in_progress', 'completed', 'reported']),
+});
+
+export const createRadiologySeriesSchema = z.object({
+  studyId: idSchema,
+  seriesNumber: z.number().int().min(1).max(9999),
+  modality: z.enum(['CR', 'CT', 'MR', 'US', 'XR', 'DX', 'MG', 'PT', 'NM', 'RF', 'OT']),
+  seriesDescription: z.string().max(500).optional(),
+  bodyPart: z.string().max(100).optional(),
+  seriesInstanceUID: z.string().max(200).optional(),
+});
+
+export const uploadRadiologyImageSchema = z.object({
+  studyId: idSchema,
+  seriesId: idSchema.optional(),
+  seriesNumber: z.number().int().min(1).max(9999).default(1),
+  instanceNumber: z.number().int().min(1).max(9999),
+  imageType: z.enum(['ORIGINAL', 'DERIVED']).default('ORIGINAL'),
+  sopInstanceUID: z.string().max(200).optional(),
+  rows: z.number().int().min(1).max(10000).optional(),
+  columns: z.number().int().min(1).max(10000).optional(),
+  bitsAllocated: z.number().int().min(1).max(32).optional(),
+  windowCenter: z.number().optional(),
+  windowWidth: z.number().optional(),
+});
+
+export const createImageAnnotationSchema = z.object({
+  imageId: idSchema,
+  type: z.enum(['text', 'arrow', 'circle', 'measurement', 'roi']),
+  coordinates: z.object({
+    x: z.number().optional(),
+    y: z.number().optional(),
+    width: z.number().optional(),
+    height: z.number().optional(),
+    points: z.array(z.object({
+      x: z.number(),
+      y: z.number(),
+    })).optional(),
+  }),
+  label: z.string().max(200).optional(),
+  color: z.string().max(50).optional(),
+  createdBy: idSchema,
+});
+
+export const createRadiologyReportSchema = z.object({
+  studyId: idSchema,
+  reportType: z.enum(['preliminary', 'final', 'addendum']).default('final'),
+  findings: z.string().min(10, 'Findings must be at least 10 characters').max(10000),
+  impression: z.string().min(10, 'Impression must be at least 10 characters').max(5000),
+  recommendations: z.string().max(2000).optional(),
+  reportedBy: idSchema,
+  templateUsed: idSchema.optional(),
+});
+
+export const updateRadiologyReportSchema = z.object({
+  findings: z.string().min(10).max(10000).optional(),
+  impression: z.string().min(10).max(5000).optional(),
+  recommendations: z.string().max(2000).optional(),
+  status: z.enum(['draft', 'preliminary', 'final']).optional(),
+  verifiedBy: idSchema.optional(),
+  verifiedAt: z.string().datetime().optional(),
+});
+
+export const createReportTemplateSchema = z.object({
+  name: z.string().min(2, 'Name must be at least 2 characters').max(200),
+  modality: z.enum(['CR', 'CT', 'MR', 'US', 'XR', 'DX', 'MG', 'PT', 'NM', 'RF', 'OT']),
+  bodyPart: z.string().max(100).optional(),
+  content: z.string().min(10, 'Template content must be at least 10 characters').max(20000),
+  createdBy: idSchema,
+});
+
+export const updateReportTemplateSchema = z.object({
+  name: z.string().min(2).max(200).optional(),
+  bodyPart: z.string().max(100).optional(),
+  content: z.string().min(10).max(20000).optional(),
+  isActive: z.boolean().optional(),
+});
+
+export const listStudiesQuerySchema = z.object({
+  patientId: idSchema.optional(),
+  modality: z.enum(['CR', 'CT', 'MR', 'US', 'XR', 'DX', 'MG', 'PT', 'NM', 'RF', 'OT']).optional(),
+  status: z.enum(['scheduled', 'in_progress', 'completed', 'reported']).optional(),
+  dateFrom: z.string().datetime().optional(),
+  dateTo: z.string().datetime().optional(),
+}).merge(paginationSchema);
+
+export const getReportTemplatesQuerySchema = z.object({
+  modality: z.enum(['CR', 'CT', 'MR', 'US', 'XR', 'DX', 'MG', 'PT', 'NM', 'RF', 'OT']).optional(),
+  bodyPart: z.string().max(100).optional(),
+  isActive: z.boolean().optional(),
+});
+
+// Export PACS types
+export type CreateRadiologyStudyInput = z.infer<typeof createRadiologyStudySchema>;
+export type UpdateStudyStatusInput = z.infer<typeof updateStudyStatusSchema>;
+export type CreateRadiologySeriesInput = z.infer<typeof createRadiologySeriesSchema>;
+export type UploadRadiologyImageInput = z.infer<typeof uploadRadiologyImageSchema>;
+export type CreateImageAnnotationInput = z.infer<typeof createImageAnnotationSchema>;
+export type CreateRadiologyReportInput = z.infer<typeof createRadiologyReportSchema>;
+export type UpdateRadiologyReportInput = z.infer<typeof updateRadiologyReportSchema>;
+export type CreateReportTemplateInput = z.infer<typeof createReportTemplateSchema>;
+export type UpdateReportTemplateInput = z.infer<typeof updateReportTemplateSchema>;
+export type ListStudiesQueryInput = z.infer<typeof listStudiesQuerySchema>;
+export type GetReportTemplatesQueryInput = z.infer<typeof getReportTemplatesQuerySchema>;
+
+// ===========================
+// BARCODE VALIDATORS
+// ===========================
+
+export const barcodeTypeEnum = z.enum(['EAN13', 'CODE128', 'QR', 'CODE39', 'DATAMATRIX']);
+export const entityTypeEnum = z.enum(['drug', 'inventory_item', 'patient', 'sample']);
+export const scanActionEnum = z.enum(['lookup', 'dispense', 'receive', 'verify', 'stock_take']);
+
+// Generate barcode schema
+export const generateBarcodeSchema = z.object({
+  entityType: entityTypeEnum,
+  entityId: idSchema,
+  barcodeType: barcodeTypeEnum.default('CODE128').optional(),
+  prefix: z.string().max(10).optional(),
+});
+
+// Bulk generate barcodes schema
+export const bulkGenerateBarcodeSchema = z.object({
+  entityType: entityTypeEnum,
+  entityIds: z.array(idSchema).min(1, 'At least one entity ID required').max(100, 'Maximum 100 entities at once'),
+  barcodeType: barcodeTypeEnum.default('CODE128').optional(),
+});
+
+// Barcode lookup schema
+export const barcodeLookupSchema = z.object({
+  code: z.string().min(1, 'Barcode code is required').max(128),
+});
+
+// Record scan schema
+export const recordScanSchema = z.object({
+  code: z.string().min(1, 'Barcode code is required').max(128),
+  action: scanActionEnum,
+  location: z.string().max(100).optional(),
+  additionalData: z.record(z.any()).optional(),
+});
+
+// Scan history query schema
+export const scanHistoryQuerySchema = z.object({
+  code: z.string().max(128).optional(),
+  scannedBy: idSchema.optional(),
+  action: scanActionEnum.optional(),
+  location: z.string().max(100).optional(),
+  startDate: z.string().datetime().optional(),
+  endDate: z.string().datetime().optional(),
+  limit: z.coerce.number().int().min(1).max(500).default(100).optional(),
+});
+
+// Validate barcode schema
+export const validateBarcodeSchema = z.object({
+  code: z.string().min(1, 'Barcode code is required').max(128),
+  type: barcodeTypeEnum.optional(),
+});
+
+// Pharmacy dispense by barcode schema
+export const pharmacyDispenseByBarcodeSchema = z.object({
+  barcode: z.string().min(1, 'Barcode is required').max(128),
+  quantity: z.number().int().min(1, 'Quantity must be at least 1'),
+  patientId: idSchema.optional(),
+  prescriptionId: idSchema.optional(),
+  paymentMode: z.enum(['cash', 'card', 'upi', 'insurance', 'credit']).default('cash').optional(),
+  location: z.string().max(100).optional(),
+});
+
+// Inventory receive by barcode schema
+export const inventoryReceiveByBarcodeSchema = z.object({
+  barcode: z.string().min(1, 'Barcode is required').max(128),
+  quantity: z.number().int().min(1, 'Quantity must be at least 1'),
+  storeId: z.string().min(1, 'Store ID is required'),
+  batchNumber: z.string().max(50).optional(),
+  expiryDate: dateSchema.optional(),
+  poNumber: z.string().max(50).optional(),
+  vendorName: z.string().max(200).optional(),
+  location: z.string().max(100).optional(),
+});
+
+// Inventory issue by barcode schema
+export const inventoryIssueByBarcodeSchema = z.object({
+  barcode: z.string().min(1, 'Barcode is required').max(128),
+  quantity: z.number().int().min(1, 'Quantity must be at least 1'),
+  storeId: z.string().min(1, 'Store ID is required'),
+  issuedTo: z.string().max(200).optional(),
+  department: z.string().max(100).optional(),
+  requisitionNumber: z.string().max(50).optional(),
+  location: z.string().max(100).optional(),
+});
+
+// Inventory verify by barcode schema
+export const inventoryVerifyByBarcodeSchema = z.object({
+  barcode: z.string().min(1, 'Barcode is required').max(128),
+  storeId: z.string().min(1, 'Store ID is required'),
+  physicalCount: z.number().int().min(0, 'Physical count cannot be negative'),
+  location: z.string().max(100).optional(),
+});
+
+// Export barcode types
+export type GenerateBarcodeInput = z.infer<typeof generateBarcodeSchema>;
+export type BulkGenerateBarcodeInput = z.infer<typeof bulkGenerateBarcodeSchema>;
+export type BarcodeLookupInput = z.infer<typeof barcodeLookupSchema>;
+export type RecordScanInput = z.infer<typeof recordScanSchema>;
+export type ScanHistoryQueryInput = z.infer<typeof scanHistoryQuerySchema>;
+export type ValidateBarcodeInput = z.infer<typeof validateBarcodeSchema>;
+export type PharmacyDispenseByBarcodeInput = z.infer<typeof pharmacyDispenseByBarcodeSchema>;
+export type InventoryReceiveByBarcodeInput = z.infer<typeof inventoryReceiveByBarcodeSchema>;
+export type InventoryIssueByBarcodeInput = z.infer<typeof inventoryIssueByBarcodeSchema>;
+export type InventoryVerifyByBarcodeInput = z.infer<typeof inventoryVerifyByBarcodeSchema>;
