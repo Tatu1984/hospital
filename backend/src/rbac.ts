@@ -37,7 +37,8 @@ export type Permission =
   // Clinical - IPD
   | 'ipd:view' | 'ipd:create' | 'ipd:edit'
   | 'admissions:view' | 'admissions:create' | 'admissions:discharge'
-  | 'beds:view' | 'beds:manage' | 'beds:reserve'
+  | 'beds:view' | 'beds:manage' | 'beds:reserve' | 'beds:create' | 'beds:edit' | 'beds:delete'
+  | 'wards:view' | 'wards:create' | 'wards:edit' | 'wards:delete'
   | 'nurse_station:view' | 'nurse_station:edit'
 
   // Emergency
@@ -152,7 +153,8 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'prescriptions:view', 'prescriptions:create',
     'ipd:view', 'ipd:create', 'ipd:edit',
     'admissions:view', 'admissions:create', 'admissions:discharge',
-    'beds:view', 'beds:manage', 'beds:reserve',
+    'beds:view', 'beds:manage', 'beds:reserve', 'beds:create', 'beds:edit', 'beds:delete',
+    'wards:view', 'wards:create', 'wards:edit', 'wards:delete',
     'nurse_station:view', 'nurse_station:edit',
     'emergency:view', 'emergency:create', 'emergency:edit', 'emergency:admit', 'emergency:discharge',
     'icu:view', 'icu:create', 'icu:edit',
@@ -388,7 +390,8 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'patients:view',
     'ipd:view', 'ipd:create', 'ipd:edit',
     'admissions:view', 'admissions:create', 'admissions:discharge',
-    'beds:view', 'beds:manage', 'beds:reserve',
+    'beds:view', 'beds:manage', 'beds:reserve', 'beds:create', 'beds:edit', 'beds:delete',
+    'wards:view', 'wards:create', 'wards:edit', 'wards:delete',
     'nurse_station:view', 'nurse_station:edit',
     'diet:view', 'diet:manage',
     'housekeeping:view',

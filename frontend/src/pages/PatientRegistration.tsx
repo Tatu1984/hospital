@@ -7,9 +7,21 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Search, Plus, Edit, FileText, Fingerprint, Eye } from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Search, Plus, Edit, FileText, Fingerprint, Eye, AlertTriangle } from 'lucide-react';
 import api from '../services/api';
 import { useNavigate } from 'react-router-dom';
+
+interface DuplicatePatient {
+  id: string;
+  mrn: string;
+  name: string;
+  dob?: string;
+  contact?: string;
+  email?: string;
+  score: number;
+  matchReasons: string[];
+}
 
 interface Patient {
   id: string;
@@ -61,6 +73,10 @@ export default function PatientRegistration() {
     referralSourceId: ''
   });
 
+  // Duplicate detection state
+  const [duplicates, setDuplicates] = useState<DuplicatePatient[]>([]);
+  const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
+
   useEffect(() => {
     fetchPatients();
     fetchReferralSources();
@@ -91,7 +107,7 @@ export default function PatientRegistration() {
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (forceCreate = false) => {
     setLoading(true);
     try {
       const payload = {
@@ -104,11 +120,14 @@ export default function PatientRegistration() {
         bloodGroup: formData.bloodGroup || undefined,
         allergies: formData.allergies || undefined,
         referralSourceId: formData.referralSourceId || undefined,
+        forceCreate: forceCreate
       };
 
       await api.post('/api/patients', payload);
       await fetchPatients(); // Refresh the list
       setIsDialogOpen(false);
+      setShowDuplicateDialog(false);
+      setDuplicates([]);
       setFormData({
         mrn: '', firstName: '', lastName: '', dateOfBirth: '', age: '', gender: '',
         phone: '', email: '', address: '', city: '', state: '', zipCode: '', country: '',
@@ -116,9 +135,18 @@ export default function PatientRegistration() {
         idProofNumber: '', insuranceProvider: '', insuranceNumber: '', allergies: '',
         chronicConditions: '', referralSourceId: ''
       });
+      alert('Patient registered successfully!');
     } catch (error: any) {
       console.error('Error creating patient:', error);
       const data = error?.response?.data;
+
+      // Handle duplicate detection (409 response)
+      if (error?.response?.status === 409 && data?.error === 'POTENTIAL_DUPLICATE') {
+        setDuplicates(data.duplicates || []);
+        setShowDuplicateDialog(true);
+        return;
+      }
+
       let errorMessage = data?.message || data?.error || error?.message || 'Unknown error';
 
       // Show validation details if available
@@ -131,6 +159,22 @@ export default function PatientRegistration() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSelectExistingPatient = (patient: DuplicatePatient) => {
+    // Navigate to patient details or close dialog
+    setShowDuplicateDialog(false);
+    setDuplicates([]);
+    setIsDialogOpen(false);
+    // Reset form
+    setFormData({
+      mrn: '', firstName: '', lastName: '', dateOfBirth: '', age: '', gender: '',
+      phone: '', email: '', address: '', city: '', state: '', zipCode: '', country: '',
+      bloodGroup: '', emergencyContact: '', emergencyPhone: '', idProofType: '',
+      idProofNumber: '', insuranceProvider: '', insuranceNumber: '', allergies: '',
+      chronicConditions: '', referralSourceId: ''
+    });
+    alert(`Using existing patient: ${patient.name} (MRN: ${patient.mrn})`);
   };
 
   const handleViewPatient = (patient: Patient) => {
@@ -365,7 +409,7 @@ export default function PatientRegistration() {
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={loading}>Cancel</Button>
-              <Button onClick={handleSubmit} disabled={loading}>
+              <Button onClick={() => handleSubmit(false)} disabled={loading}>
                 {loading ? 'Registering...' : 'Register Patient'}
               </Button>
               <Button variant="secondary" className="gap-2" disabled={loading}>
@@ -637,6 +681,62 @@ export default function PatientRegistration() {
             <Button variant="outline" onClick={() => setIsEditDialogOpen(false)} disabled={loading}>Cancel</Button>
             <Button onClick={handleUpdatePatient} disabled={loading}>
               {loading ? 'Updating...' : 'Update Patient'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Duplicate Detection Dialog */}
+      <Dialog open={showDuplicateDialog} onOpenChange={setShowDuplicateDialog}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-orange-600">
+              <AlertTriangle className="w-5 h-5" />
+              Potential Duplicate Patients Found
+            </DialogTitle>
+            <DialogDescription>
+              The following existing patients may match the new registration. Please review and select an action.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4 space-y-4">
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Warning</AlertTitle>
+              <AlertDescription>
+                Creating duplicate patient records can cause data inconsistency and billing issues.
+              </AlertDescription>
+            </Alert>
+
+            <div className="space-y-3 max-h-60 overflow-y-auto">
+              {duplicates.map((dup) => (
+                <Card key={dup.id} className="p-4 border-2 hover:border-blue-300 cursor-pointer" onClick={() => handleSelectExistingPatient(dup)}>
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <p className="font-semibold">{dup.name}</p>
+                      <p className="text-sm text-slate-600">MRN: {dup.mrn}</p>
+                      <p className="text-sm text-slate-500">
+                        {dup.dob && `DOB: ${dup.dob}`} {dup.contact && `| Phone: ${dup.contact}`}
+                      </p>
+                      <div className="flex gap-1 mt-2 flex-wrap">
+                        {dup.matchReasons?.map((reason, idx) => (
+                          <Badge key={idx} variant="secondary" className="text-xs">{reason}</Badge>
+                        ))}
+                      </div>
+                    </div>
+                    <Badge variant={dup.score >= 85 ? 'destructive' : dup.score >= 70 ? 'default' : 'secondary'}>
+                      {dup.score}% match
+                    </Badge>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          </div>
+          <DialogFooter className="flex gap-2">
+            <Button variant="outline" onClick={() => { setShowDuplicateDialog(false); setDuplicates([]); }}>
+              Cancel Registration
+            </Button>
+            <Button variant="destructive" onClick={() => handleSubmit(true)} disabled={loading}>
+              {loading ? 'Creating...' : 'Create Anyway (Force)'}
             </Button>
           </DialogFooter>
         </DialogContent>

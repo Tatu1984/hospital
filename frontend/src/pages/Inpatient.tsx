@@ -66,11 +66,19 @@ interface Patient {
   contact: string;
 }
 
+interface Doctor {
+  id: string;
+  name: string;
+  specialty: string;
+  department?: string;
+}
+
 export default function Inpatient() {
   const [admissions, setAdmissions] = useState<Admission[]>([]);
   const [beds, setBeds] = useState<Bed[]>([]);
   const [wards, setWards] = useState<Ward[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
+  const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [isAdmitDialogOpen, setIsAdmitDialogOpen] = useState(false);
   const [isDischargeDialogOpen, setIsDischargeDialogOpen] = useState(false);
   const [selectedAdmission, setSelectedAdmission] = useState<Admission | null>(null);
@@ -103,7 +111,9 @@ export default function Inpatient() {
     patientId: '',
     bedId: '',
     diagnosis: '',
-    admissionNotes: ''
+    admissionNotes: '',
+    primaryDoctorId: '',
+    consultingDoctorIds: [] as string[]
   });
 
   const [dischargeFormData, setDischargeFormData] = useState({
@@ -117,7 +127,17 @@ export default function Inpatient() {
     fetchBeds();
     fetchWards();
     fetchPatients();
+    fetchDoctors();
   }, []);
+
+  const fetchDoctors = async () => {
+    try {
+      const response = await api.get('/api/doctors');
+      setDoctors(response.data);
+    } catch (error) {
+      console.error('Error fetching doctors:', error);
+    }
+  };
 
   const fetchWards = async () => {
     try {
@@ -177,16 +197,18 @@ export default function Inpatient() {
         patientId: admitFormData.patientId,
         bedId: admitFormData.bedId || null,
         diagnosis: admitFormData.diagnosis,
-        admissionNotes: admitFormData.admissionNotes
+        admissionNotes: admitFormData.admissionNotes,
+        primaryDoctorId: admitFormData.primaryDoctorId,
+        consultingDoctorIds: admitFormData.consultingDoctorIds.length > 0 ? admitFormData.consultingDoctorIds : undefined
       });
 
       await fetchAdmissions();
       await fetchBeds();
       setIsAdmitDialogOpen(false);
-      setAdmitFormData({ patientId: '', bedId: '', diagnosis: '', admissionNotes: '' });
-    } catch (error) {
+      setAdmitFormData({ patientId: '', bedId: '', diagnosis: '', admissionNotes: '', primaryDoctorId: '', consultingDoctorIds: [] });
+    } catch (error: any) {
       console.error('Error admitting patient:', error);
-      alert('Failed to admit patient');
+      alert(error?.response?.data?.message || error?.response?.data?.error || 'Failed to admit patient');
     } finally {
       setLoading(false);
     }
@@ -426,6 +448,57 @@ export default function Inpatient() {
               </div>
 
               <div className="space-y-2">
+                <Label htmlFor="primaryDoctor">Primary Doctor *</Label>
+                <Select value={admitFormData.primaryDoctorId} onValueChange={(value) => setAdmitFormData(prev => ({ ...prev, primaryDoctorId: value }))}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select primary treating doctor" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {doctors.map((doctor) => (
+                      <SelectItem key={doctor.id} value={doctor.id}>
+                        Dr. {doctor.name} - {doctor.specialty}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Consulting Doctors (Optional)</Label>
+                <div className="border rounded-md p-3 max-h-32 overflow-y-auto space-y-2">
+                  {doctors.filter(d => d.id !== admitFormData.primaryDoctorId).map((doctor) => (
+                    <div key={doctor.id} className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id={`consultant-${doctor.id}`}
+                        checked={admitFormData.consultingDoctorIds.includes(doctor.id)}
+                        onChange={(e) => {
+                          setAdmitFormData(prev => ({
+                            ...prev,
+                            consultingDoctorIds: e.target.checked
+                              ? [...prev.consultingDoctorIds, doctor.id]
+                              : prev.consultingDoctorIds.filter(id => id !== doctor.id)
+                          }));
+                        }}
+                        className="w-4 h-4"
+                      />
+                      <label htmlFor={`consultant-${doctor.id}`} className="text-sm">
+                        Dr. {doctor.name} - {doctor.specialty}
+                      </label>
+                    </div>
+                  ))}
+                  {doctors.length === 0 && (
+                    <p className="text-sm text-slate-500">No doctors available</p>
+                  )}
+                </div>
+                {admitFormData.consultingDoctorIds.length > 0 && (
+                  <p className="text-xs text-slate-500">
+                    {admitFormData.consultingDoctorIds.length} consulting doctor(s) selected
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
                 <Label htmlFor="diagnosis">Admission Diagnosis *</Label>
                 <Input
                   id="diagnosis"
@@ -450,7 +523,7 @@ export default function Inpatient() {
               <Button variant="outline" onClick={() => setIsAdmitDialogOpen(false)} disabled={loading}>
                 Cancel
               </Button>
-              <Button onClick={handleAdmit} disabled={loading || !admitFormData.patientId || !admitFormData.diagnosis}>
+              <Button onClick={handleAdmit} disabled={loading || !admitFormData.patientId || !admitFormData.diagnosis || !admitFormData.primaryDoctorId}>
                 {loading ? 'Admitting...' : 'Admit Patient'}
               </Button>
             </DialogFooter>
