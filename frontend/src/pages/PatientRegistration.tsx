@@ -189,9 +189,9 @@ export default function PatientRegistration() {
   };
 
   const filteredPatients = patients.filter(patient =>
-    patient.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    patient.mrn.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    patient.phone.includes(searchTerm)
+    (patient.name?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false) ||
+    (patient.mrn?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false) ||
+    (patient.phone?.includes(searchTerm) ?? false)
   );
 
   return (
