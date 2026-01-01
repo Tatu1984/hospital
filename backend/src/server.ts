@@ -381,6 +381,38 @@ app.get('/api/live', (req: Request, res: Response) => {
   res.json({ alive: true, timestamp: new Date().toISOString() });
 });
 
+// Debug endpoint - temporarily added for login troubleshooting
+app.post('/api/auth/debug-login', async (req: Request, res: Response) => {
+  const steps: string[] = [];
+  try {
+    steps.push('1. Request received');
+    const { username, password } = req.body || {};
+    steps.push(`2. Body parsed: username=${username ? 'present' : 'missing'}, password=${password ? 'present' : 'missing'}`);
+
+    steps.push('3. Checking JWT_SECRET');
+    const hasJwtSecret = !!process.env.JWT_SECRET;
+    steps.push(`4. JWT_SECRET: ${hasJwtSecret ? 'present' : 'MISSING'}`);
+
+    steps.push('5. Attempting Prisma query');
+    const user = await prisma.user.findUnique({
+      where: { username: username || '' },
+      select: { id: true, username: true, isActive: true, passwordHash: true }
+    });
+    steps.push(`6. User found: ${user ? 'yes' : 'no'}`);
+
+    if (user && password) {
+      steps.push('7. Checking password');
+      const valid = await bcrypt.compare(password, user.passwordHash);
+      steps.push(`8. Password valid: ${valid}`);
+    }
+
+    res.json({ success: true, steps });
+  } catch (error: any) {
+    steps.push(`ERROR: ${error.message}`);
+    res.status(500).json({ success: false, steps, error: error.message });
+  }
+});
+
 // Auth routes - with rate limiting and validation
 app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (req: Request, res: Response) => {
   try {
@@ -445,9 +477,13 @@ app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (r
         branch: user.branch,
       },
     });
-  } catch (error) {
-    logger.error('Login error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+  } catch (error: any) {
+    logger.error('Login error:', { message: error?.message, stack: error?.stack, code: error?.code });
+    // Return more details for debugging
+    res.status(500).json({
+      error: 'Internal server error',
+      details: process.env.NODE_ENV !== 'production' ? error?.message : undefined
+    });
   }
 });
 
