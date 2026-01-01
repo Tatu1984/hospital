@@ -688,7 +688,7 @@ export default function TPA() {
                             <Button size="sm" variant="outline" onClick={() => openUpdateClaimDialog(claim)}>
                               Update
                             </Button>
-                            {(claim.status === 'approved' || claim.status === 'Approved') && claim.status !== 'settled' && (
+                            {(claim.status === 'approved' || claim.status === 'Approved') && (
                               <Button size="sm" onClick={() => openSettlementDialog(claim)}>
                                 Settle
                               </Button>
@@ -806,8 +806,8 @@ export default function TPA() {
                         </TableCell>
                         <TableCell>
                           <Badge variant={
-                            preAuth.status === 'Approved' || preAuth.status === 'approved' ? 'default' :
-                            preAuth.status === 'Rejected' || preAuth.status === 'rejected' ? 'destructive' :
+                            preAuth.status === 'Approved' ? 'default' :
+                            preAuth.status === 'Rejected' ? 'destructive' :
                             'secondary'
                           }>
                             {preAuth.status}

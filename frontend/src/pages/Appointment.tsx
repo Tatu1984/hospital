@@ -103,7 +103,7 @@ export default function Appointment() {
     }
   }, [formData.doctorId, formData.date, formData.time]);
 
-  const fetchAvailableSlots = async (doctorId: string, date: string) => {
+  const fetchAvailableSlots = async (_doctorId: string, _date: string) => {
     setLoadingSlots(true);
     try {
       // Mock API call - replace with actual API
@@ -132,7 +132,7 @@ export default function Appointment() {
     }
   };
 
-  const checkConflict = async (doctorId: string, date: string, time: string) => {
+  const checkConflict = async (_doctorId: string, _date: string, time: string) => {
     try {
       // Mock API call - replace with actual API
       // const response = await fetch('/api/appointments/check-conflict', {
@@ -147,7 +147,7 @@ export default function Appointment() {
         setConflictWarning({
           hasConflict: true,
           message: 'This time slot is already booked',
-          nextAvailableSlot: availableSlots.find(s => s.isAvailable)?.start || null,
+          nextAvailableSlot: availableSlots.find(s => s.isAvailable)?.start,
           conflicts: [{ appointmentId: 'mock-1', patientName: 'John Doe', time }]
         });
       } else {

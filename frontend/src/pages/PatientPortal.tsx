@@ -5,8 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import {
-  User, Calendar, FileText, Pill, TestTube, Receipt,
-  Download, LogOut, Clock, CheckCircle, AlertCircle
+  User, Calendar, Pill, TestTube, Receipt,
+  Download, LogOut, Clock, CheckCircle
 } from 'lucide-react';
 import api from '../services/api';
 

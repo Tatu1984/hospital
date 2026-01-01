@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Plus, TestTube, Barcode, CheckCircle, FileText, AlertTriangle } from 'lucide-react';
+import { Plus, Barcode, CheckCircle, FileText, AlertTriangle } from 'lucide-react';
 import api from '../services/api';
 import { generateLabReportPDF } from '../utils/pdfGenerator';
 
@@ -204,34 +204,6 @@ export default function Laboratory() {
     } catch (error) {
       console.error('Error updating sample status:', error);
       alert('Failed to update sample status');
-    }
-  };
-
-  const openResultDialog = (order: LabOrder) => {
-    setSelectedOrder(order);
-    setResultFormData({
-      orderId: order.id,
-      resultData: {},
-      isCritical: false,
-      remarks: ''
-    });
-    setIsResultDialogOpen(true);
-  };
-
-  const handleQuickSubmitResults = async (orderId: string) => {
-    try {
-      await api.post('/api/lab-results', {
-        orderId: orderId,
-        resultData: { status: 'completed', submittedBy: 'lab-assistant' },
-        isCritical: false,
-        remarks: 'Quick submit'
-      });
-
-      await fetchOrders();
-      alert('Results submitted successfully');
-    } catch (error) {
-      console.error('Error submitting results:', error);
-      alert('Failed to submit results');
     }
   };
 

@@ -264,21 +264,6 @@ export default function OperationTheatre() {
     }
   };
 
-  const handleCompleteSurgery = async (surgeryId: string) => {
-    setLoading(true);
-    try {
-      await api.post(`/api/surgeries/${surgeryId}/complete`);
-      await fetchSurgeries();
-      await fetchOTRooms();
-      alert('Surgery completed successfully');
-    } catch (error) {
-      console.error('Error completing surgery:', error);
-      alert('Failed to complete surgery');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleCancelSurgeryClick = (surgery: Surgery) => {
     setSelectedSurgery(surgery);
     setCancelReason('');
@@ -297,22 +282,6 @@ export default function OperationTheatre() {
       await api.post(`/api/surgeries/${selectedSurgery.id}/cancel`, { reason: cancelReason });
       await fetchSurgeries();
       setIsCancelDialogOpen(false);
-      alert('Surgery cancelled');
-    } catch (error) {
-      console.error('Error cancelling surgery:', error);
-      alert('Failed to cancel surgery');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleCancelSurgery = async (surgeryId: string) => {
-    if (!confirm('Are you sure you want to cancel this surgery?')) return;
-
-    setLoading(true);
-    try {
-      await api.post(`/api/surgeries/${surgeryId}/cancel`);
-      await fetchSurgeries();
       alert('Surgery cancelled');
     } catch (error) {
       console.error('Error cancelling surgery:', error);

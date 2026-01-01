@@ -268,7 +268,7 @@ export default function Pharmacy() {
   const filteredDrugs = drugs.filter(drug =>
     drug.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     drug.genericName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    drug.code.toLowerCase().includes(searchTerm.toLowerCase())
+    (drug.code?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false)
   );
 
   const cartTotal = cart.reduce((sum, item) => sum + item.total, 0);
