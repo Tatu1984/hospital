@@ -447,65 +447,74 @@ export default function PatientRegistration() {
 
       {/* View Patient Dialog */}
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Patient Details</DialogTitle>
             <DialogDescription>Complete patient information</DialogDescription>
           </DialogHeader>
           {selectedPatient && (
             <div className="grid grid-cols-2 gap-4 py-4">
-              <div>
-                <Label className="text-sm font-semibold">MRN</Label>
-                <p className="text-sm">{selectedPatient.mrn}</p>
+              <div className="p-3 bg-slate-50 rounded">
+                <Label className="text-xs font-semibold text-slate-500">MRN</Label>
+                <p className="text-sm font-medium">{selectedPatient.mrn || 'N/A'}</p>
               </div>
-              <div>
-                <Label className="text-sm font-semibold">Name</Label>
-                <p className="text-sm">{selectedPatient.name}</p>
+              <div className="p-3 bg-slate-50 rounded">
+                <Label className="text-xs font-semibold text-slate-500">Name</Label>
+                <p className="text-sm font-medium">{selectedPatient.name || 'N/A'}</p>
               </div>
-              <div>
-                <Label className="text-sm font-semibold">Age</Label>
-                <p className="text-sm">{selectedPatient.age} years</p>
+              <div className="p-3 bg-slate-50 rounded">
+                <Label className="text-xs font-semibold text-slate-500">Age</Label>
+                <p className="text-sm font-medium">{selectedPatient.age ? `${selectedPatient.age} years` : 'N/A'}</p>
               </div>
-              <div>
-                <Label className="text-sm font-semibold">Gender</Label>
-                <p className="text-sm">{selectedPatient.gender}</p>
+              <div className="p-3 bg-slate-50 rounded">
+                <Label className="text-xs font-semibold text-slate-500">Gender</Label>
+                <p className="text-sm font-medium">{selectedPatient.gender || 'N/A'}</p>
               </div>
-              <div>
-                <Label className="text-sm font-semibold">Phone</Label>
-                <p className="text-sm">{selectedPatient.phone}</p>
+              <div className="p-3 bg-slate-50 rounded">
+                <Label className="text-xs font-semibold text-slate-500">Phone Number</Label>
+                <p className="text-sm font-medium">{selectedPatient.phone || 'N/A'}</p>
               </div>
-              <div>
-                <Label className="text-sm font-semibold">Email</Label>
-                <p className="text-sm">{selectedPatient.email || 'N/A'}</p>
+              <div className="p-3 bg-slate-50 rounded">
+                <Label className="text-xs font-semibold text-slate-500">Email</Label>
+                <p className="text-sm font-medium">{selectedPatient.email || 'N/A'}</p>
               </div>
-              <div className="col-span-2">
-                <Label className="text-sm font-semibold">Address</Label>
-                <p className="text-sm">{selectedPatient.address || 'N/A'}</p>
+              <div className="col-span-2 p-3 bg-slate-50 rounded">
+                <Label className="text-xs font-semibold text-slate-500">Address</Label>
+                <p className="text-sm font-medium">{selectedPatient.address || 'N/A'}</p>
               </div>
-              <div>
-                <Label className="text-sm font-semibold">Blood Group</Label>
-                <p className="text-sm">{selectedPatient.bloodGroup || 'N/A'}</p>
+              <div className="p-3 bg-slate-50 rounded">
+                <Label className="text-xs font-semibold text-slate-500">Blood Group</Label>
+                <p className="text-sm font-medium">{selectedPatient.bloodGroup || 'N/A'}</p>
               </div>
-              <div>
-                <Label className="text-sm font-semibold">Registration Date</Label>
-                <p className="text-sm">{selectedPatient.registrationDate}</p>
+              <div className="p-3 bg-slate-50 rounded">
+                <Label className="text-xs font-semibold text-slate-500">Registration Date</Label>
+                <p className="text-sm font-medium">{selectedPatient.registrationDate || 'N/A'}</p>
+              </div>
+              <div className="p-3 bg-slate-50 rounded">
+                <Label className="text-xs font-semibold text-slate-500">Status</Label>
+                <p className="text-sm font-medium">{selectedPatient.status || 'N/A'}</p>
               </div>
             </div>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsViewDialogOpen(false)}>Close</Button>
+            <Button onClick={() => { setIsViewDialogOpen(false); if (selectedPatient) handleEditPatient(selectedPatient); }}>Edit</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* Edit Patient Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Edit Patient Information</DialogTitle>
-            <DialogDescription>Update patient demographics</DialogDescription>
+            <DialogDescription>Update patient demographics and information</DialogDescription>
           </DialogHeader>
           <div className="grid grid-cols-2 gap-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit-mrn">MRN (Read Only)</Label>
+              <Input id="edit-mrn" value={formData.mrn} disabled className="bg-slate-100" />
+            </div>
             <div className="space-y-2">
               <Label htmlFor="edit-firstName">First Name *</Label>
               <Input id="edit-firstName" name="firstName" value={formData.firstName} onChange={handleInputChange} required />
@@ -513,6 +522,14 @@ export default function PatientRegistration() {
             <div className="space-y-2">
               <Label htmlFor="edit-lastName">Last Name *</Label>
               <Input id="edit-lastName" name="lastName" value={formData.lastName} onChange={handleInputChange} required />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-dateOfBirth">Date of Birth</Label>
+              <Input id="edit-dateOfBirth" name="dateOfBirth" type="date" value={formData.dateOfBirth} onChange={handleInputChange} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-age">Age</Label>
+              <Input id="edit-age" name="age" type="number" value={formData.age} onChange={handleInputChange} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="edit-gender">Gender *</Label>
@@ -535,6 +552,26 @@ export default function PatientRegistration() {
               <Label htmlFor="edit-email">Email</Label>
               <Input id="edit-email" name="email" type="email" value={formData.email} onChange={handleInputChange} />
             </div>
+            <div className="col-span-2 space-y-2">
+              <Label htmlFor="edit-address">Address</Label>
+              <Input id="edit-address" name="address" value={formData.address} onChange={handleInputChange} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-city">City</Label>
+              <Input id="edit-city" name="city" value={formData.city} onChange={handleInputChange} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-state">State</Label>
+              <Input id="edit-state" name="state" value={formData.state} onChange={handleInputChange} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-zipCode">Zip Code</Label>
+              <Input id="edit-zipCode" name="zipCode" value={formData.zipCode} onChange={handleInputChange} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-country">Country</Label>
+              <Input id="edit-country" name="country" value={formData.country} onChange={handleInputChange} />
+            </div>
             <div className="space-y-2">
               <Label htmlFor="edit-bloodGroup">Blood Group</Label>
               <Select value={formData.bloodGroup} onValueChange={(value) => setFormData(prev => ({ ...prev, bloodGroup: value }))}>
@@ -553,9 +590,47 @@ export default function PatientRegistration() {
                 </SelectContent>
               </Select>
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-emergencyContact">Emergency Contact Name</Label>
+              <Input id="edit-emergencyContact" name="emergencyContact" value={formData.emergencyContact} onChange={handleInputChange} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-emergencyPhone">Emergency Contact Phone</Label>
+              <Input id="edit-emergencyPhone" name="emergencyPhone" type="tel" value={formData.emergencyPhone} onChange={handleInputChange} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-idProofType">ID Proof Type</Label>
+              <Select value={formData.idProofType} onValueChange={(value) => setFormData(prev => ({ ...prev, idProofType: value }))}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select ID type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="passport">Passport</SelectItem>
+                  <SelectItem value="drivers-license">Driver's License</SelectItem>
+                  <SelectItem value="national-id">National ID</SelectItem>
+                  <SelectItem value="ssn">SSN</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-idProofNumber">ID Proof Number</Label>
+              <Input id="edit-idProofNumber" name="idProofNumber" value={formData.idProofNumber} onChange={handleInputChange} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-insuranceProvider">Insurance Provider</Label>
+              <Input id="edit-insuranceProvider" name="insuranceProvider" value={formData.insuranceProvider} onChange={handleInputChange} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-insuranceNumber">Insurance Number</Label>
+              <Input id="edit-insuranceNumber" name="insuranceNumber" value={formData.insuranceNumber} onChange={handleInputChange} />
+            </div>
             <div className="col-span-2 space-y-2">
-              <Label htmlFor="edit-address">Address</Label>
-              <Input id="edit-address" name="address" value={formData.address} onChange={handleInputChange} />
+              <Label htmlFor="edit-allergies">Known Allergies</Label>
+              <Input id="edit-allergies" name="allergies" value={formData.allergies} onChange={handleInputChange} placeholder="e.g., Penicillin, Peanuts" />
+            </div>
+            <div className="col-span-2 space-y-2">
+              <Label htmlFor="edit-chronicConditions">Chronic Conditions</Label>
+              <Input id="edit-chronicConditions" name="chronicConditions" value={formData.chronicConditions} onChange={handleInputChange} placeholder="e.g., Diabetes, Hypertension" />
             </div>
           </div>
           <DialogFooter>
