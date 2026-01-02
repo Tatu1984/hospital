@@ -373,8 +373,8 @@ export const icuBedAssignmentSchema = z.object({
   attendingDoctorId: idSchema,
 });
 
-// Radiology validators
-export const createRadiologyOrderSchema = z.object({
+// Radiology validators (legacy/simple version)
+export const createRadiologyOrderSchemaSimple = z.object({
   patientId: idSchema,
   encounterId: idSchema.optional(),
   admissionId: idSchema.optional(),

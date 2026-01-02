@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { PrismaClient } from '@prisma/client';
-import { sendNotification } from './notification';
+import { SMSService } from './notification';
 
 const prisma = new PrismaClient();
 
@@ -193,14 +193,13 @@ export async function sendSmsOtp(phone: string, userId: string): Promise<{ succe
       // Table might not exist, fall back to notification service
     });
 
-    // Send via notification service
-    await sendNotification({
-      type: 'sms',
-      recipients: [phone],
-      subject: 'HospitalERP Login Code',
-      message: `Your HospitalERP verification code is: ${otp}. Valid for 5 minutes.`,
-      priority: 'high',
-    });
+    // Send via SMS service
+    const smsService = new SMSService();
+    await smsService.send(
+      phone,
+      `Your HospitalERP verification code is: ${otp}. Valid for 5 minutes.`,
+      'HIGH'
+    );
 
     return { success: true, message: 'OTP sent successfully' };
   } catch (error) {

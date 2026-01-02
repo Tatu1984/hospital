@@ -5089,7 +5089,7 @@ app.get('/api/queue/display/:department', async (req: Request, res: Response) =>
       waiting: appointments.filter(a => a.status === 'checked_in').map((apt, i) => ({
         tokenNumber: `${department.slice(0, 3).toUpperCase()}-${String(i + 2).padStart(3, '0')}`,
         patientName: apt.patient.name.split(' ')[0], // First name only for privacy
-        doctorName: apt.doctor.name,
+        doctorName: apt.doctor?.name || 'Doctor',
       })),
       timestamp: new Date(),
     };
@@ -5481,7 +5481,7 @@ app.post('/api/lab-orders', authenticateToken, validateBody(createLabOrderSchema
     // Auto-create billing for the lab order with pricing based on payment mode
     try {
       const { createLabOrderBilling } = await import('./services/billing');
-      await createLabOrderBilling(order.id, patientId, encounterId, activeAdmissionId, testIds, paymentMode, tpaId);
+      await createLabOrderBilling(order.id, patientId, encounterId, activeAdmissionId, testIds);
     } catch (billingError) {
       logger.warn('Auto-billing failed for lab order:', billingError);
       // Continue - order is created, billing can be done manually
@@ -5872,7 +5872,7 @@ app.post('/api/radiology-orders', authenticateToken, validateBody(createRadiolog
     // Auto-create billing for the radiology order with pricing based on payment mode
     try {
       const { createRadiologyOrderBilling } = await import('./services/billing');
-      await createRadiologyOrderBilling(order.id, patientId, encounterId, activeAdmissionId, testIds, paymentMode, tpaId);
+      await createRadiologyOrderBilling(order.id, patientId, encounterId, activeAdmissionId, testIds);
     } catch (billingError) {
       logger.warn('Auto-billing failed for radiology order:', billingError);
       // Continue - order is created, billing can be done manually
