@@ -58,6 +58,15 @@ interface SurgeryFormData {
   anesthesiaType: string;
   anesthetistId: string;
   notes: string;
+  // Equipment and machinery
+  equipmentRequired: string[];
+  specialEquipment: string;
+  equipmentOwnership: string;
+  equipmentCost: string;
+  // Additional details
+  assistantSurgeons: string;
+  expectedBloodLoss: string;
+  bloodUnitsRequired: string;
 }
 
 interface ChecklistItem {
@@ -101,8 +110,34 @@ export default function OperationTheatre() {
     priority: 'ELECTIVE',
     anesthesiaType: '',
     anesthetistId: '',
-    notes: ''
+    notes: '',
+    equipmentRequired: [],
+    specialEquipment: '',
+    equipmentOwnership: 'HOSPITAL',
+    equipmentCost: '',
+    assistantSurgeons: '',
+    expectedBloodLoss: '',
+    bloodUnitsRequired: ''
   });
+
+  // Common OT equipment list
+  const commonEquipment = [
+    'Electrosurgical Unit',
+    'Suction Machine',
+    'Cautery Machine',
+    'Laparoscope',
+    'Arthroscope',
+    'C-Arm Fluoroscopy',
+    'Surgical Microscope',
+    'Harmonic Scalpel',
+    'Laser Unit',
+    'Defibrillator',
+    'Ventilator',
+    'Patient Monitor',
+    'Anesthesia Machine',
+    'Infusion Pumps',
+    'Blood Warmer'
+  ];
 
   useEffect(() => {
     fetchSurgeries();
@@ -169,7 +204,16 @@ export default function OperationTheatre() {
         priority: surgeryFormData.priority,
         anesthesiaType: surgeryFormData.anesthesiaType,
         anesthetistId: surgeryFormData.anesthetistId,
-        notes: surgeryFormData.notes
+        notes: surgeryFormData.notes,
+        // Equipment and machinery details
+        equipmentRequired: surgeryFormData.equipmentRequired,
+        specialEquipment: surgeryFormData.specialEquipment || undefined,
+        equipmentOwnership: surgeryFormData.equipmentOwnership,
+        equipmentCost: surgeryFormData.equipmentCost ? parseFloat(surgeryFormData.equipmentCost) : undefined,
+        // Additional surgery details
+        assistantSurgeons: surgeryFormData.assistantSurgeons || undefined,
+        expectedBloodLoss: surgeryFormData.expectedBloodLoss || undefined,
+        bloodUnitsRequired: surgeryFormData.bloodUnitsRequired ? parseInt(surgeryFormData.bloodUnitsRequired) : undefined
       });
 
       await fetchSurgeries();
@@ -313,8 +357,24 @@ export default function OperationTheatre() {
       priority: 'ELECTIVE',
       anesthesiaType: '',
       anesthetistId: '',
-      notes: ''
+      notes: '',
+      equipmentRequired: [],
+      specialEquipment: '',
+      equipmentOwnership: 'HOSPITAL',
+      equipmentCost: '',
+      assistantSurgeons: '',
+      expectedBloodLoss: '',
+      bloodUnitsRequired: ''
     });
+  };
+
+  const toggleEquipment = (equipment: string) => {
+    setSurgeryFormData(prev => ({
+      ...prev,
+      equipmentRequired: prev.equipmentRequired.includes(equipment)
+        ? prev.equipmentRequired.filter(e => e !== equipment)
+        : [...prev.equipmentRequired, equipment]
+    }));
   };
 
   const openDetailsDialog = (surgery: Surgery) => {
@@ -836,6 +896,108 @@ export default function OperationTheatre() {
                   placeholder="Anesthetist ID"
                   value={surgeryFormData.anesthetistId}
                   onChange={(e) => setSurgeryFormData({ ...surgeryFormData, anesthetistId: e.target.value })}
+                />
+              </div>
+            </div>
+
+            {/* Equipment & Machinery Section */}
+            <div className="border rounded-lg p-4 bg-slate-50 space-y-4">
+              <h4 className="font-semibold text-slate-900">Equipment & Machinery</h4>
+
+              <div className="space-y-2">
+                <Label>Required Equipment (select all that apply)</Label>
+                <div className="grid grid-cols-3 gap-2 max-h-40 overflow-y-auto p-2 bg-white rounded border">
+                  {commonEquipment.map((equipment) => (
+                    <div key={equipment} className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id={`eq-${equipment}`}
+                        checked={surgeryFormData.equipmentRequired.includes(equipment)}
+                        onChange={() => toggleEquipment(equipment)}
+                        className="w-4 h-4"
+                      />
+                      <label htmlFor={`eq-${equipment}`} className="text-sm cursor-pointer">
+                        {equipment}
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Special Equipment/Machinery</Label>
+                <Input
+                  placeholder="Any specialized equipment not listed above..."
+                  value={surgeryFormData.specialEquipment}
+                  onChange={(e) => setSurgeryFormData({ ...surgeryFormData, specialEquipment: e.target.value })}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Equipment Ownership *</Label>
+                  <Select
+                    value={surgeryFormData.equipmentOwnership}
+                    onValueChange={(value) => setSurgeryFormData({ ...surgeryFormData, equipmentOwnership: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="HOSPITAL">Hospital Owned</SelectItem>
+                      <SelectItem value="DOCTOR">Doctor Owned</SelectItem>
+                      <SelectItem value="RENTED">Rented Equipment</SelectItem>
+                      <SelectItem value="PATIENT">Patient Provided</SelectItem>
+                      <SelectItem value="VENDOR">Vendor Consignment</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Equipment Cost (Rs.)</Label>
+                  <Input
+                    type="number"
+                    placeholder="Additional equipment charges"
+                    value={surgeryFormData.equipmentCost}
+                    onChange={(e) => setSurgeryFormData({ ...surgeryFormData, equipmentCost: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Additional Surgery Details */}
+            <div className="grid grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label>Assistant Surgeons</Label>
+                <Input
+                  placeholder="Names or IDs"
+                  value={surgeryFormData.assistantSurgeons}
+                  onChange={(e) => setSurgeryFormData({ ...surgeryFormData, assistantSurgeons: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Expected Blood Loss</Label>
+                <Select
+                  value={surgeryFormData.expectedBloodLoss}
+                  onValueChange={(value) => setSurgeryFormData({ ...surgeryFormData, expectedBloodLoss: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="MINIMAL">Minimal (&lt;100ml)</SelectItem>
+                    <SelectItem value="LOW">Low (100-500ml)</SelectItem>
+                    <SelectItem value="MODERATE">Moderate (500-1000ml)</SelectItem>
+                    <SelectItem value="HIGH">High (&gt;1000ml)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Blood Units Required</Label>
+                <Input
+                  type="number"
+                  placeholder="0"
+                  value={surgeryFormData.bloodUnitsRequired}
+                  onChange={(e) => setSurgeryFormData({ ...surgeryFormData, bloodUnitsRequired: e.target.value })}
                 />
               </div>
             </div>

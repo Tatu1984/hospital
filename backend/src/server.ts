@@ -5361,9 +5361,21 @@ app.get('/api/reminders/pending', authenticateToken, requireRole('ADMIN', 'FRONT
 // LABORATORY APIs
 // ===========================
 
+// Helper function to normalize tests array (handle both string IDs and objects)
+function normalizeTestIds(tests: any[]): string[] {
+  return tests.map((t: any) => typeof t === 'string' ? t : t.testId);
+}
+
 app.post('/api/lab-orders', authenticateToken, validateBody(createLabOrderSchema), async (req: any, res: Response) => {
   try {
-    const { patientId, encounterId, tests, admissionId } = req.body;
+    const {
+      patientId, encounterId, tests, admissionId,
+      patientType, paymentMode, tpaId, insuranceId, preAuthRequired, preAuthNumber,
+      clinicalNotes, clinicalInfo
+    } = req.body;
+
+    // Normalize test IDs (handle both string IDs and objects)
+    const testIds = normalizeTestIds(tests);
 
     // Check if patient is admitted (IPD)
     let activeAdmissionId = admissionId || null;
@@ -5377,6 +5389,7 @@ app.post('/api/lab-orders', authenticateToken, validateBody(createLabOrderSchema
       }
     }
 
+    // Create order with extended details
     const order = await prisma.order.create({
       data: {
         patientId,
@@ -5385,15 +5398,28 @@ app.post('/api/lab-orders', authenticateToken, validateBody(createLabOrderSchema
         orderType: 'lab',
         orderedBy: req.user.userId,
         priority: req.body.priority || 'routine',
-        details: { tests },
+        details: {
+          tests: testIds,
+          patientType: patientType || 'opd',
+          paymentMode: paymentMode || 'cash',
+          tpaId,
+          insuranceId,
+          preAuthRequired,
+          preAuthNumber,
+          clinicalNotes: clinicalNotes || clinicalInfo,
+        },
         status: 'pending',
       },
     });
 
-    // Auto-create billing for the lab order
-    const testIds = tests.map((t: any) => t.testId);
-    const { createLabOrderBilling } = await import('./services/billing');
-    await createLabOrderBilling(order.id, patientId, encounterId, activeAdmissionId, testIds);
+    // Auto-create billing for the lab order with pricing based on payment mode
+    try {
+      const { createLabOrderBilling } = await import('./services/billing');
+      await createLabOrderBilling(order.id, patientId, encounterId, activeAdmissionId, testIds, paymentMode, tpaId);
+    } catch (billingError) {
+      logger.warn('Auto-billing failed for lab order:', billingError);
+      // Continue - order is created, billing can be done manually
+    }
 
     // Fetch the updated order with billing info
     const updatedOrder = await prisma.order.findUnique({
@@ -5733,7 +5759,14 @@ app.post('/api/lab/critical-alerts/:id/acknowledge', authenticateToken, async (r
 
 app.post('/api/radiology-orders', authenticateToken, validateBody(createRadiologyOrderSchema), async (req: any, res: Response) => {
   try {
-    const { patientId, encounterId, tests, admissionId } = req.body;
+    const {
+      patientId, encounterId, tests, admissionId,
+      patientType, paymentMode, tpaId, insuranceId, preAuthRequired, preAuthNumber,
+      clinicalIndication, specialInstructions
+    } = req.body;
+
+    // Normalize test IDs (handle both string IDs and objects)
+    const testIds = normalizeTestIds(tests);
 
     // Check if patient is admitted (IPD)
     let activeAdmissionId = admissionId || null;
@@ -5755,15 +5788,29 @@ app.post('/api/radiology-orders', authenticateToken, validateBody(createRadiolog
         orderType: 'radiology',
         orderedBy: req.user.userId,
         priority: req.body.priority || 'routine',
-        details: { tests },
+        details: {
+          tests: testIds,
+          patientType: patientType || 'opd',
+          paymentMode: paymentMode || 'cash',
+          tpaId,
+          insuranceId,
+          preAuthRequired,
+          preAuthNumber,
+          clinicalIndication,
+          specialInstructions,
+        },
         status: 'pending',
       },
     });
 
-    // Auto-create billing for the radiology order
-    const testIds = tests.map((t: any) => t.testId);
-    const { createRadiologyOrderBilling } = await import('./services/billing');
-    await createRadiologyOrderBilling(order.id, patientId, encounterId, activeAdmissionId, testIds);
+    // Auto-create billing for the radiology order with pricing based on payment mode
+    try {
+      const { createRadiologyOrderBilling } = await import('./services/billing');
+      await createRadiologyOrderBilling(order.id, patientId, encounterId, activeAdmissionId, testIds, paymentMode, tpaId);
+    } catch (billingError) {
+      logger.warn('Auto-billing failed for radiology order:', billingError);
+      // Continue - order is created, billing can be done manually
+    }
 
     // Fetch the updated order with billing info
     const updatedOrder = await prisma.order.findUnique({

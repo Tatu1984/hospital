@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Scan, FileImage, CheckCircle, Calendar } from 'lucide-react';
+import { Plus, Scan, FileImage, CheckCircle, Calendar, Search, CreditCard, Building2, Wallet, X, AlertCircle } from 'lucide-react';
 import api from '../services/api';
 
 interface RadiologyOrder {
@@ -23,6 +23,8 @@ interface RadiologyOrder {
   orderedAt: string;
   details: any;
   results?: any[];
+  patientType?: string;
+  paymentMode?: string;
 }
 
 interface RadiologyTest {
@@ -39,16 +41,32 @@ interface Patient {
   mrn: string;
   name: string;
   contact: string;
+  gender?: string;
+  dateOfBirth?: string;
+}
+
+interface TPA {
+  id: string;
+  name: string;
+  code: string;
+  discountPercent?: number;
 }
 
 export default function Radiology() {
   const [orders, setOrders] = useState<RadiologyOrder[]>([]);
   const [radiologyTests, setRadiologyTests] = useState<RadiologyTest[]>([]);
-  const [patients, setPatients] = useState<Patient[]>([]);
+  const [_patients, setPatients] = useState<Patient[]>([]);
+  const [tpas, setTpas] = useState<TPA[]>([]);
   const [isOrderDialogOpen, setIsOrderDialogOpen] = useState(false);
   const [isReportDialogOpen, setIsReportDialogOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<RadiologyOrder | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Patient search
+  const [patientSearch, setPatientSearch] = useState('');
+  const [searchResults, setSearchResults] = useState<Patient[]>([]);
+  const [showSearchResults, setShowSearchResults] = useState(false);
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
 
   const [orderFormData, setOrderFormData] = useState({
     patientId: '',
@@ -56,7 +74,12 @@ export default function Radiology() {
     selectedTests: [] as string[],
     priority: 'routine',
     clinicalIndication: '',
-    specialInstructions: ''
+    specialInstructions: '',
+    patientType: 'opd' as 'opd' | 'ipd' | 'icu' | 'emergency' | 'walk-in',
+    paymentMode: 'cash' as 'cash' | 'card' | 'upi' | 'tpa' | 'credit',
+    tpaId: '',
+    preAuthRequired: false,
+    preAuthNumber: '',
   });
 
   const [reportFormData, setReportFormData] = useState({
@@ -71,7 +94,31 @@ export default function Radiology() {
     fetchOrders();
     fetchRadiologyTests();
     fetchPatients();
+    fetchTPAs();
   }, []);
+
+  // Debounced patient search
+  const searchPatients = useCallback(async (query: string) => {
+    if (query.length < 2) {
+      setSearchResults([]);
+      setShowSearchResults(false);
+      return;
+    }
+    try {
+      const response = await api.get(`/api/patients?search=${encodeURIComponent(query)}&limit=10`);
+      setSearchResults(response.data);
+      setShowSearchResults(true);
+    } catch (error) {
+      console.error('Error searching patients:', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      searchPatients(patientSearch);
+    }, 300);
+    return () => clearTimeout(timeoutId);
+  }, [patientSearch, searchPatients]);
 
   const fetchOrders = async () => {
     try {
@@ -88,7 +135,9 @@ export default function Radiology() {
         priority: order.priority,
         orderedAt: new Date(order.orderedAt).toLocaleDateString(),
         details: order.details,
-        results: order.results || []
+        results: order.results || [],
+        patientType: order.details?.patientType,
+        paymentMode: order.details?.paymentMode,
       }));
 
       setOrders(transformedOrders);
@@ -115,34 +164,82 @@ export default function Radiology() {
     }
   };
 
+  const fetchTPAs = async () => {
+    try {
+      const response = await api.get('/api/tpas');
+      setTpas(response.data);
+    } catch (error) {
+      console.error('Error fetching TPAs:', error);
+    }
+  };
+
+  const selectPatient = (patient: Patient) => {
+    setSelectedPatient(patient);
+    setOrderFormData(prev => ({ ...prev, patientId: patient.id }));
+    setPatientSearch(`${patient.name} - ${patient.mrn}`);
+    setShowSearchResults(false);
+  };
+
+  const clearPatient = () => {
+    setSelectedPatient(null);
+    setOrderFormData(prev => ({ ...prev, patientId: '' }));
+    setPatientSearch('');
+  };
+
   const handleOrderSubmit = async () => {
+    if (!orderFormData.patientId) {
+      alert('Please select a patient');
+      return;
+    }
+    if (orderFormData.selectedTests.length === 0) {
+      alert('Please select at least one imaging study');
+      return;
+    }
+
     setLoading(true);
     try {
       await api.post('/api/radiology-orders', {
         patientId: orderFormData.patientId,
-        encounterId: orderFormData.encounterId || null,
+        encounterId: orderFormData.encounterId || undefined,
         tests: orderFormData.selectedTests,
         priority: orderFormData.priority,
         clinicalIndication: orderFormData.clinicalIndication,
-        specialInstructions: orderFormData.specialInstructions
+        specialInstructions: orderFormData.specialInstructions,
+        patientType: orderFormData.patientType,
+        paymentMode: orderFormData.paymentMode,
+        tpaId: orderFormData.paymentMode === 'tpa' ? orderFormData.tpaId : undefined,
+        preAuthRequired: orderFormData.preAuthRequired,
+        preAuthNumber: orderFormData.preAuthNumber || undefined,
       });
 
       await fetchOrders();
       setIsOrderDialogOpen(false);
-      setOrderFormData({
-        patientId: '',
-        encounterId: '',
-        selectedTests: [],
-        priority: 'routine',
-        clinicalIndication: '',
-        specialInstructions: ''
-      });
-    } catch (error) {
+      resetOrderForm();
+    } catch (error: any) {
       console.error('Error creating radiology order:', error);
-      alert('Failed to create radiology order');
+      const errorMessage = error.response?.data?.error || error.response?.data?.message || 'Failed to create imaging order';
+      alert(errorMessage);
     } finally {
       setLoading(false);
     }
+  };
+
+  const resetOrderForm = () => {
+    setOrderFormData({
+      patientId: '',
+      encounterId: '',
+      selectedTests: [],
+      priority: 'routine',
+      clinicalIndication: '',
+      specialInstructions: '',
+      patientType: 'opd',
+      paymentMode: 'cash',
+      tpaId: '',
+      preAuthRequired: false,
+      preAuthNumber: '',
+    });
+    setSelectedPatient(null);
+    setPatientSearch('');
   };
 
   const handleReportSubmit = async () => {
@@ -249,10 +346,54 @@ export default function Radiology() {
     return colors[priority] || 'secondary';
   };
 
+  const getPaymentModeLabel = (mode?: string) => {
+    const labels: Record<string, string> = {
+      'cash': 'Cash',
+      'card': 'Card',
+      'upi': 'UPI',
+      'tpa': 'TPA/Insurance',
+      'credit': 'Credit'
+    };
+    return labels[mode || ''] || mode || '-';
+  };
+
+  const getPatientTypeLabel = (type?: string) => {
+    const labels: Record<string, string> = {
+      'opd': 'OPD',
+      'ipd': 'IPD',
+      'icu': 'ICU',
+      'emergency': 'Emergency',
+      'walk-in': 'Walk-in'
+    };
+    return labels[type || ''] || type || '-';
+  };
+
+  // Calculate order total
+  const calculateOrderTotal = () => {
+    let total = 0;
+    orderFormData.selectedTests.forEach(testId => {
+      const test = radiologyTests.find(t => t.id === testId);
+      if (test) {
+        total += test.price;
+      }
+    });
+
+    // Apply TPA discount if applicable
+    if (orderFormData.paymentMode === 'tpa' && orderFormData.tpaId) {
+      const tpa = tpas.find(t => t.id === orderFormData.tpaId);
+      if (tpa?.discountPercent) {
+        total = total * (1 - tpa.discountPercent / 100);
+      }
+    }
+
+    return total;
+  };
+
   const stats = {
     total: orders.length,
     pending: orders.filter(o => o.status === 'pending').length,
     scheduled: orders.filter(o => o.status === 'scheduled').length,
+    imagingComplete: orders.filter(o => o.status === 'imaging-complete').length,
     completed: orders.filter(o => o.status === 'completed').length
   };
 
@@ -271,37 +412,231 @@ export default function Radiology() {
           <h1 className="text-3xl font-bold text-slate-900">Radiology Information System</h1>
           <p className="text-slate-600">Medical imaging, PACS integration, and radiology workflow</p>
         </div>
-        <Dialog open={isOrderDialogOpen} onOpenChange={setIsOrderDialogOpen}>
+        <Dialog open={isOrderDialogOpen} onOpenChange={(open) => {
+          setIsOrderDialogOpen(open);
+          if (!open) resetOrderForm();
+        }}>
           <DialogTrigger asChild>
             <Button className="gap-2">
               <Plus className="w-4 h-4" />
               Order Imaging Study
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Order Imaging Study</DialogTitle>
-              <DialogDescription>Select patient and imaging studies to order</DialogDescription>
+              <DialogDescription>Select patient, imaging studies, and payment details</DialogDescription>
             </DialogHeader>
-            <div className="grid gap-4 py-4">
+            <div className="grid gap-6 py-4">
+              {/* Patient Search Section */}
               <div className="space-y-2">
-                <Label htmlFor="patient">Patient *</Label>
-                <Select value={orderFormData.patientId} onValueChange={(value) => setOrderFormData(prev => ({ ...prev, patientId: value }))}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select patient" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {patients.map((patient) => (
-                      <SelectItem key={patient.id} value={patient.id}>
-                        {patient.name} - {patient.mrn}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label className="text-base font-semibold">Patient Information</Label>
+                <div className="relative">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
+                    <Input
+                      placeholder="Search by name, MRN, or phone..."
+                      value={patientSearch}
+                      onChange={(e) => setPatientSearch(e.target.value)}
+                      className="pl-10 pr-10"
+                      disabled={!!selectedPatient}
+                    />
+                    {selectedPatient && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="absolute right-1 top-1/2 transform -translate-y-1/2 h-7 w-7 p-0"
+                        onClick={clearPatient}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                  {showSearchResults && searchResults.length > 0 && (
+                    <div className="absolute z-10 w-full mt-1 bg-white border rounded-md shadow-lg max-h-60 overflow-auto">
+                      {searchResults.map((patient) => (
+                        <div
+                          key={patient.id}
+                          className="p-3 hover:bg-slate-50 cursor-pointer border-b last:border-b-0"
+                          onClick={() => selectPatient(patient)}
+                        >
+                          <div className="font-medium">{patient.name}</div>
+                          <div className="text-sm text-slate-500">
+                            MRN: {patient.mrn} | {patient.contact}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {selectedPatient && (
+                  <div className="p-3 bg-blue-50 rounded-md border border-blue-200">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <p className="font-semibold text-blue-900">{selectedPatient.name}</p>
+                        <p className="text-sm text-blue-700">MRN: {selectedPatient.mrn}</p>
+                        {selectedPatient.contact && (
+                          <p className="text-sm text-blue-700">Contact: {selectedPatient.contact}</p>
+                        )}
+                      </div>
+                      <Badge variant="outline" className="bg-blue-100">Selected</Badge>
+                    </div>
+                  </div>
+                )}
               </div>
 
+              {/* Patient Type & Payment Section */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Patient Type *</Label>
+                  <Select
+                    value={orderFormData.patientType}
+                    onValueChange={(value: any) => setOrderFormData(prev => ({ ...prev, patientType: value }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="walk-in">
+                        <div className="flex items-center gap-2">
+                          <span>Walk-in Patient</span>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="opd">
+                        <div className="flex items-center gap-2">
+                          <span>OPD Patient</span>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="ipd">
+                        <div className="flex items-center gap-2">
+                          <span>IPD Patient (Admitted)</span>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="icu">
+                        <div className="flex items-center gap-2">
+                          <span>ICU Patient</span>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="emergency">
+                        <div className="flex items-center gap-2">
+                          <AlertCircle className="w-4 h-4 text-red-500" />
+                          <span>Emergency</span>
+                        </div>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Payment Mode *</Label>
+                  <Select
+                    value={orderFormData.paymentMode}
+                    onValueChange={(value: any) => setOrderFormData(prev => ({
+                      ...prev,
+                      paymentMode: value,
+                      tpaId: value !== 'tpa' ? '' : prev.tpaId
+                    }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="cash">
+                        <div className="flex items-center gap-2">
+                          <Wallet className="w-4 h-4" />
+                          <span>Cash</span>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="card">
+                        <div className="flex items-center gap-2">
+                          <CreditCard className="w-4 h-4" />
+                          <span>Card</span>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="upi">
+                        <div className="flex items-center gap-2">
+                          <span>UPI</span>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="tpa">
+                        <div className="flex items-center gap-2">
+                          <Building2 className="w-4 h-4" />
+                          <span>TPA / Insurance</span>
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="credit">
+                        <div className="flex items-center gap-2">
+                          <span>Credit (Bill Later)</span>
+                        </div>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {/* TPA Selection - shown when TPA payment is selected */}
+              {orderFormData.paymentMode === 'tpa' && (
+                <div className="space-y-4 p-4 bg-amber-50 rounded-lg border border-amber-200">
+                  <div className="flex items-center gap-2 text-amber-800">
+                    <Building2 className="w-5 h-5" />
+                    <Label className="text-base font-semibold">Insurance / TPA Details</Label>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Select TPA / Insurance *</Label>
+                      <Select
+                        value={orderFormData.tpaId}
+                        onValueChange={(value) => setOrderFormData(prev => ({ ...prev, tpaId: value }))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select TPA/Insurance" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {tpas.map((tpa) => (
+                            <SelectItem key={tpa.id} value={tpa.id}>
+                              {tpa.name} {tpa.discountPercent ? `(${tpa.discountPercent}% discount)` : ''}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Pre-Auth Number</Label>
+                      <Input
+                        placeholder="Enter pre-authorization number"
+                        value={orderFormData.preAuthNumber}
+                        onChange={(e) => setOrderFormData(prev => ({ ...prev, preAuthNumber: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="preAuthRequired"
+                      checked={orderFormData.preAuthRequired}
+                      onChange={(e) => setOrderFormData(prev => ({ ...prev, preAuthRequired: e.target.checked }))}
+                      className="w-4 h-4"
+                    />
+                    <Label htmlFor="preAuthRequired" className="cursor-pointer text-sm">
+                      Pre-authorization required before proceeding
+                    </Label>
+                  </div>
+                </div>
+              )}
+
+              {/* IPD Billing Notice */}
+              {orderFormData.patientType === 'ipd' && (
+                <div className="p-3 bg-blue-50 rounded-md border border-blue-200 flex items-start gap-2">
+                  <AlertCircle className="w-5 h-5 text-blue-600 mt-0.5" />
+                  <div className="text-sm text-blue-800">
+                    <strong>IPD Patient:</strong> Charges will be added to the patient's admission bill and settled at discharge.
+                  </div>
+                </div>
+              )}
+
+              {/* Priority */}
               <div className="space-y-2">
-                <Label htmlFor="priority">Priority</Label>
+                <Label>Priority</Label>
                 <Select value={orderFormData.priority} onValueChange={(value) => setOrderFormData(prev => ({ ...prev, priority: value }))}>
                   <SelectTrigger>
                     <SelectValue />
@@ -309,17 +644,18 @@ export default function Radiology() {
                   <SelectContent>
                     <SelectItem value="routine">Routine</SelectItem>
                     <SelectItem value="urgent">Urgent</SelectItem>
-                    <SelectItem value="stat">STAT</SelectItem>
+                    <SelectItem value="stat">STAT (Emergency)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
+              {/* Test Selection */}
               <div className="space-y-2">
-                <Label>Select Imaging Studies *</Label>
-                <div className="border rounded-md p-4 max-h-96 overflow-y-auto space-y-4">
+                <Label className="text-base font-semibold">Select Imaging Studies *</Label>
+                <div className="border rounded-md p-4 max-h-64 overflow-y-auto space-y-4">
                   {Object.entries(groupedByModality).map(([modality, tests]) => (
                     <div key={modality} className="space-y-2">
-                      <h4 className="font-semibold text-sm text-slate-700 uppercase">{modality}</h4>
+                      <h4 className="font-semibold text-sm text-slate-700 uppercase bg-slate-100 px-2 py-1 rounded">{modality}</h4>
                       <div className="space-y-2 ml-2">
                         {tests.map((test) => (
                           <div key={test.id} className="flex items-center gap-2">
@@ -336,7 +672,7 @@ export default function Radiology() {
                                   <span className="font-medium">{test.name}</span>
                                   <span className="text-sm text-slate-500 ml-2">({test.bodyPart})</span>
                                 </div>
-                                <span className="text-sm text-slate-600">Rs. {test.price}</span>
+                                <span className="text-sm font-medium text-slate-700">Rs. {test.price.toLocaleString()}</span>
                               </div>
                             </label>
                           </div>
@@ -344,9 +680,42 @@ export default function Radiology() {
                       </div>
                     </div>
                   ))}
+                  {Object.keys(groupedByModality).length === 0 && (
+                    <p className="text-center text-slate-500 py-4">No imaging studies available</p>
+                  )}
                 </div>
               </div>
 
+              {/* Order Summary */}
+              {orderFormData.selectedTests.length > 0 && (
+                <div className="p-4 bg-slate-50 rounded-lg border">
+                  <h4 className="font-semibold mb-3">Order Summary</h4>
+                  <div className="space-y-2">
+                    {orderFormData.selectedTests.map(testId => {
+                      const test = radiologyTests.find(t => t.id === testId);
+                      return test ? (
+                        <div key={testId} className="flex justify-between text-sm">
+                          <span>{test.name}</span>
+                          <span>Rs. {test.price.toLocaleString()}</span>
+                        </div>
+                      ) : null;
+                    })}
+                    <div className="border-t pt-2 mt-2">
+                      <div className="flex justify-between font-semibold">
+                        <span>Total Amount</span>
+                        <span className="text-lg">Rs. {calculateOrderTotal().toLocaleString()}</span>
+                      </div>
+                      {orderFormData.paymentMode === 'tpa' && orderFormData.tpaId && (
+                        <p className="text-xs text-amber-600 mt-1">
+                          * TPA discount applied based on contract rates
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Clinical Details */}
               <div className="space-y-2">
                 <Label htmlFor="clinicalIndication">Clinical Indication *</Label>
                 <Input
@@ -371,15 +740,18 @@ export default function Radiology() {
               <Button variant="outline" onClick={() => setIsOrderDialogOpen(false)} disabled={loading}>
                 Cancel
               </Button>
-              <Button onClick={handleOrderSubmit} disabled={loading || orderFormData.selectedTests.length === 0}>
-                {loading ? 'Creating...' : 'Create Imaging Order'}
+              <Button
+                onClick={handleOrderSubmit}
+                disabled={loading || !orderFormData.patientId || orderFormData.selectedTests.length === 0 || (orderFormData.paymentMode === 'tpa' && !orderFormData.tpaId)}
+              >
+                {loading ? 'Creating...' : `Create Order (Rs. ${calculateOrderTotal().toLocaleString()})`}
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium">Total Studies</CardTitle>
@@ -406,6 +778,14 @@ export default function Radiology() {
         </Card>
         <Card>
           <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium">Imaging Done</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-purple-600">{stats.imagingComplete}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium">Completed</CardTitle>
           </CardHeader>
           <CardContent>
@@ -423,9 +803,10 @@ export default function Radiology() {
           <Tabs defaultValue="all" className="w-full">
             <TabsList>
               <TabsTrigger value="all">All Studies</TabsTrigger>
-              <TabsTrigger value="pending">Pending</TabsTrigger>
-              <TabsTrigger value="scheduled">Scheduled</TabsTrigger>
-              <TabsTrigger value="completed">Completed</TabsTrigger>
+              <TabsTrigger value="pending">Pending ({stats.pending})</TabsTrigger>
+              <TabsTrigger value="scheduled">Scheduled ({stats.scheduled})</TabsTrigger>
+              <TabsTrigger value="imaging-complete">Awaiting Report ({stats.imagingComplete})</TabsTrigger>
+              <TabsTrigger value="completed">Completed ({stats.completed})</TabsTrigger>
             </TabsList>
             <TabsContent value="all" className="space-y-4">
               <Table>
@@ -434,17 +815,19 @@ export default function Radiology() {
                     <TableHead>Order ID</TableHead>
                     <TableHead>Patient</TableHead>
                     <TableHead>MRN</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Payment</TableHead>
                     <TableHead>Studies</TableHead>
                     <TableHead>Priority</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Ordered Date</TableHead>
+                    <TableHead>Date</TableHead>
                     <TableHead>Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {orders.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center py-8 text-slate-500">
+                      <TableCell colSpan={10} className="text-center py-8 text-slate-500">
                         No radiology orders found
                       </TableCell>
                     </TableRow>
@@ -454,6 +837,12 @@ export default function Radiology() {
                         <TableCell className="font-medium">{order.orderId}</TableCell>
                         <TableCell>{order.patientName}</TableCell>
                         <TableCell>{order.patientMRN}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{getPatientTypeLabel(order.patientType)}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="secondary">{getPaymentModeLabel(order.paymentMode)}</Badge>
+                        </TableCell>
                         <TableCell>
                           <div className="text-sm">
                             {order.details?.tests?.length || 0} study(ies)
@@ -522,6 +911,8 @@ export default function Radiology() {
                   <TableRow>
                     <TableHead>Order ID</TableHead>
                     <TableHead>Patient</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Payment</TableHead>
                     <TableHead>Studies</TableHead>
                     <TableHead>Priority</TableHead>
                     <TableHead>Actions</TableHead>
@@ -532,6 +923,12 @@ export default function Radiology() {
                     <TableRow key={order.id}>
                       <TableCell className="font-medium">{order.orderId}</TableCell>
                       <TableCell>{order.patientName}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline">{getPatientTypeLabel(order.patientType)}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="secondary">{getPaymentModeLabel(order.paymentMode)}</Badge>
+                      </TableCell>
                       <TableCell>{order.details?.tests?.length || 0} study(ies)</TableCell>
                       <TableCell>
                         <Badge variant={getPriorityColor(order.priority)}>
@@ -559,6 +956,7 @@ export default function Radiology() {
                   <TableRow>
                     <TableHead>Order ID</TableHead>
                     <TableHead>Patient</TableHead>
+                    <TableHead>Type</TableHead>
                     <TableHead>Studies</TableHead>
                     <TableHead>Actions</TableHead>
                   </TableRow>
@@ -568,6 +966,9 @@ export default function Radiology() {
                     <TableRow key={order.id}>
                       <TableCell className="font-medium">{order.orderId}</TableCell>
                       <TableCell>{order.patientName}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline">{getPatientTypeLabel(order.patientType)}</Badge>
+                      </TableCell>
                       <TableCell>{order.details?.tests?.length || 0} study(ies)</TableCell>
                       <TableCell>
                         <Button
@@ -577,6 +978,37 @@ export default function Radiology() {
                         >
                           <FileImage className="w-4 h-4 mr-1" />
                           Complete Imaging
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TabsContent>
+            <TabsContent value="imaging-complete">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Order ID</TableHead>
+                    <TableHead>Patient</TableHead>
+                    <TableHead>Studies</TableHead>
+                    <TableHead>Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {orders.filter(o => o.status === 'imaging-complete').map((order) => (
+                    <TableRow key={order.id}>
+                      <TableCell className="font-medium">{order.orderId}</TableCell>
+                      <TableCell>{order.patientName}</TableCell>
+                      <TableCell>{order.details?.tests?.length || 0} study(ies)</TableCell>
+                      <TableCell>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => openReportDialog(order)}
+                        >
+                          <Scan className="w-4 h-4 mr-1" />
+                          Enter Report
                         </Button>
                       </TableCell>
                     </TableRow>

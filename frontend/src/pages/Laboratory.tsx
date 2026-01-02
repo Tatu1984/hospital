@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Plus, Barcode, CheckCircle, FileText, AlertTriangle } from 'lucide-react';
+import { Plus, Barcode, CheckCircle, FileText, AlertTriangle, RefreshCw, Search, CreditCard, Building2 } from 'lucide-react';
 import api from '../services/api';
 import { generateLabReportPDF } from '../utils/pdfGenerator';
 
@@ -63,10 +63,17 @@ interface Patient {
   contact: string;
 }
 
+interface TPA {
+  id: string;
+  name: string;
+  code: string;
+}
+
 export default function Laboratory() {
   const [orders, setOrders] = useState<LabOrder[]>([]);
   const [labTests, setLabTests] = useState<LabTest[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
+  const [tpaList, setTpaList] = useState<TPA[]>([]);
   const [isOrderDialogOpen, setIsOrderDialogOpen] = useState(false);
   const [isResultDialogOpen, setIsResultDialogOpen] = useState(false);
   const [isSubmitResultsDialogOpen, setIsSubmitResultsDialogOpen] = useState(false);
@@ -75,13 +82,22 @@ export default function Laboratory() {
   const [criticalAlerts, setCriticalAlerts] = useState<CriticalAlert[]>([]);
   const [testResults, setTestResults] = useState<TestResult[]>([]);
   const [loading, setLoading] = useState(false);
+  const [patientSearch, setPatientSearch] = useState('');
+  const [showPatientDropdown, setShowPatientDropdown] = useState(false);
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
 
   const [orderFormData, setOrderFormData] = useState({
     patientId: '',
     encounterId: '',
     selectedTests: [] as string[],
     priority: 'routine',
-    clinicalNotes: ''
+    clinicalNotes: '',
+    // Patient type and payment
+    patientType: 'opd' as 'opd' | 'ipd' | 'icu' | 'emergency' | 'walk-in',
+    paymentMode: 'cash' as 'cash' | 'card' | 'upi' | 'tpa' | 'credit',
+    tpaId: '',
+    preAuthRequired: false,
+    preAuthNumber: '',
   });
 
   const [resultFormData, setResultFormData] = useState({
@@ -96,7 +112,17 @@ export default function Laboratory() {
     fetchLabTests();
     fetchPatients();
     fetchCriticalAlerts();
+    fetchTpaList();
   }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (patientSearch.length >= 2) {
+        fetchPatients(patientSearch);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [patientSearch]);
 
   const fetchOrders = async () => {
     try {
@@ -131,41 +157,70 @@ export default function Laboratory() {
     }
   };
 
-  const fetchPatients = async () => {
+  const fetchPatients = async (search?: string) => {
     try {
-      const response = await api.get('/api/patients');
-      setPatients(response.data);
+      const params = search ? `?search=${encodeURIComponent(search)}` : '';
+      const response = await api.get(`/api/patients${params}`);
+      const data = Array.isArray(response.data) ? response.data : response.data.patients || [];
+      setPatients(data);
     } catch (error) {
       console.error('Error fetching patients:', error);
+    }
+  };
+
+  const fetchTpaList = async () => {
+    try {
+      const response = await api.get('/api/tpa');
+      setTpaList(response.data || []);
+    } catch (error) {
+      console.error('Error fetching TPA list:', error);
     }
   };
 
   const handleOrderSubmit = async () => {
     setLoading(true);
     try {
+      // Send test IDs directly as strings (backend will normalize)
       await api.post('/api/lab-orders', {
         patientId: orderFormData.patientId,
-        encounterId: orderFormData.encounterId || null,
-        tests: orderFormData.selectedTests,
+        encounterId: orderFormData.encounterId || undefined,
+        tests: orderFormData.selectedTests, // Array of string IDs
         priority: orderFormData.priority,
-        clinicalNotes: orderFormData.clinicalNotes
+        clinicalNotes: orderFormData.clinicalNotes,
+        patientType: orderFormData.patientType,
+        paymentMode: orderFormData.paymentMode,
+        tpaId: orderFormData.paymentMode === 'tpa' ? orderFormData.tpaId : undefined,
+        preAuthRequired: orderFormData.preAuthRequired,
+        preAuthNumber: orderFormData.preAuthNumber || undefined,
       });
 
       await fetchOrders();
       setIsOrderDialogOpen(false);
-      setOrderFormData({
-        patientId: '',
-        encounterId: '',
-        selectedTests: [],
-        priority: 'routine',
-        clinicalNotes: ''
-      });
-    } catch (error) {
+      resetOrderForm();
+      alert('Lab order created successfully!');
+    } catch (error: any) {
       console.error('Error creating lab order:', error);
-      alert('Failed to create lab order');
+      alert(error.response?.data?.error || 'Failed to create lab order');
     } finally {
       setLoading(false);
     }
+  };
+
+  const resetOrderForm = () => {
+    setOrderFormData({
+      patientId: '',
+      encounterId: '',
+      selectedTests: [],
+      priority: 'routine',
+      clinicalNotes: '',
+      patientType: 'opd',
+      paymentMode: 'cash',
+      tpaId: '',
+      preAuthRequired: false,
+      preAuthNumber: '',
+    });
+    setSelectedPatient(null);
+    setPatientSearch('');
   };
 
   const handleResultSubmit = async () => {
@@ -237,7 +292,7 @@ export default function Laboratory() {
     const initialResults = testsFromOrder.map((testId: string) => {
       const test = labTests.find(t => t.id === testId);
       return {
-        testName: test?.name || '',
+        testName: test?.name || testId,
         value: '',
         unit: '',
         normalRange: '',
@@ -318,22 +373,30 @@ export default function Laboratory() {
   };
 
   const getStatusColor = (status: string) => {
-    const colors: Record<string, any> = {
-      'pending': 'secondary',
-      'sample-collected': 'default',
-      'in-process': 'default',
-      'completed': 'default'
+    const colors: Record<string, string> = {
+      'pending': 'bg-orange-100 text-orange-700',
+      'sample-collected': 'bg-blue-100 text-blue-700',
+      'in-process': 'bg-yellow-100 text-yellow-700',
+      'completed': 'bg-green-100 text-green-700'
     };
-    return colors[status] || 'secondary';
+    return colors[status] || 'bg-gray-100 text-gray-700';
   };
 
   const getPriorityColor = (priority: string) => {
-    const colors: Record<string, any> = {
-      'routine': 'secondary',
-      'urgent': 'default',
-      'stat': 'destructive'
+    const colors: Record<string, string> = {
+      'routine': 'bg-gray-100 text-gray-700',
+      'urgent': 'bg-orange-100 text-orange-700',
+      'stat': 'bg-red-100 text-red-700'
     };
-    return colors[priority] || 'secondary';
+    return colors[priority] || 'bg-gray-100 text-gray-700';
+  };
+
+  // Calculate total price for selected tests
+  const calculateTotal = () => {
+    return orderFormData.selectedTests.reduce((sum, testId) => {
+      const test = labTests.find(t => t.id === testId);
+      return sum + (test?.price || 0);
+    }, 0);
   };
 
   const stats = {
@@ -361,6 +424,10 @@ export default function Laboratory() {
               {criticalAlerts.filter(a => a.status === 'unacknowledged').length} Critical Alerts
             </Button>
           )}
+          <Button variant="outline" onClick={fetchOrders} className="gap-2">
+            <RefreshCw className="w-4 h-4" />
+            Refresh
+          </Button>
           <Dialog open={isOrderDialogOpen} onOpenChange={setIsOrderDialogOpen}>
             <DialogTrigger asChild>
               <Button className="gap-2">
@@ -368,84 +435,208 @@ export default function Laboratory() {
                 Order Lab Test
               </Button>
             </DialogTrigger>
-          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Order Laboratory Tests</DialogTitle>
-              <DialogDescription>Select patient and tests to order</DialogDescription>
+              <DialogDescription>Select patient, tests, and payment details</DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-4">
-              <div className="space-y-2">
-                <Label htmlFor="patient">Patient *</Label>
-                <Select value={orderFormData.patientId} onValueChange={(value) => setOrderFormData(prev => ({ ...prev, patientId: value }))}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select patient" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {patients.map((patient) => (
-                      <SelectItem key={patient.id} value={patient.id}>
-                        {patient.name} - {patient.mrn}
-                      </SelectItem>
+              {/* Patient Search */}
+              <div className="space-y-2 relative">
+                <Label>Patient *</Label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <Input
+                    placeholder="Search patient by name or MRN..."
+                    value={selectedPatient ? `${selectedPatient.name} (${selectedPatient.mrn})` : patientSearch}
+                    onChange={(e) => {
+                      setPatientSearch(e.target.value);
+                      setSelectedPatient(null);
+                      setShowPatientDropdown(true);
+                    }}
+                    onFocus={() => setShowPatientDropdown(true)}
+                    className="pl-10"
+                  />
+                </div>
+                {showPatientDropdown && !selectedPatient && patients.length > 0 && (
+                  <div className="absolute z-50 w-full mt-1 bg-white border rounded-md shadow-lg max-h-48 overflow-y-auto">
+                    {patients.slice(0, 10).map(patient => (
+                      <div
+                        key={patient.id}
+                        className="px-4 py-2 hover:bg-gray-100 cursor-pointer"
+                        onClick={() => {
+                          setSelectedPatient(patient);
+                          setOrderFormData(prev => ({ ...prev, patientId: patient.id }));
+                          setShowPatientDropdown(false);
+                        }}
+                      >
+                        <div className="font-medium">{patient.name}</div>
+                        <div className="text-sm text-gray-500">MRN: {patient.mrn} | {patient.contact || 'No contact'}</div>
+                      </div>
                     ))}
-                  </SelectContent>
-                </Select>
+                  </div>
+                )}
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="priority">Priority</Label>
-                <Select value={orderFormData.priority} onValueChange={(value) => setOrderFormData(prev => ({ ...prev, priority: value }))}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="routine">Routine</SelectItem>
-                    <SelectItem value="urgent">Urgent</SelectItem>
-                    <SelectItem value="stat">STAT</SelectItem>
-                  </SelectContent>
-                </Select>
+              {/* Patient Type & Payment Mode */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Patient Type *</Label>
+                  <Select value={orderFormData.patientType} onValueChange={(value: any) => setOrderFormData(prev => ({ ...prev, patientType: value }))}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="walk-in">Walk-in (Direct)</SelectItem>
+                      <SelectItem value="opd">OPD Patient</SelectItem>
+                      <SelectItem value="ipd">IPD Patient</SelectItem>
+                      <SelectItem value="icu">ICU Patient</SelectItem>
+                      <SelectItem value="emergency">Emergency</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Payment Mode *</Label>
+                  <Select value={orderFormData.paymentMode} onValueChange={(value: any) => setOrderFormData(prev => ({ ...prev, paymentMode: value, tpaId: '' }))}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="cash">
+                        <span className="flex items-center gap-2"><CreditCard className="w-4 h-4" /> Cash</span>
+                      </SelectItem>
+                      <SelectItem value="card">Card</SelectItem>
+                      <SelectItem value="upi">UPI</SelectItem>
+                      <SelectItem value="tpa">
+                        <span className="flex items-center gap-2"><Building2 className="w-4 h-4" /> TPA/Insurance</span>
+                      </SelectItem>
+                      <SelectItem value="credit">Credit (IPD)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
 
-              <div className="space-y-2">
-                <Label>Select Tests *</Label>
-                <div className="border rounded-md p-4 max-h-64 overflow-y-auto space-y-2">
-                  {labTests.map((test) => (
-                    <div key={test.id} className="flex items-center gap-2">
+              {/* TPA Selection - shown when TPA payment is selected */}
+              {orderFormData.paymentMode === 'tpa' && (
+                <div className="grid grid-cols-2 gap-4 p-4 bg-blue-50 rounded-lg">
+                  <div className="space-y-2">
+                    <Label>TPA/Insurance Company *</Label>
+                    <Select value={orderFormData.tpaId || "none"} onValueChange={(value) => setOrderFormData(prev => ({ ...prev, tpaId: value === "none" ? "" : value }))}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select TPA" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Select TPA</SelectItem>
+                        {tpaList.map(tpa => (
+                          <SelectItem key={tpa.id} value={tpa.id}>{tpa.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Pre-Authorization Number</Label>
+                    <Input
+                      value={orderFormData.preAuthNumber}
+                      onChange={(e) => setOrderFormData(prev => ({ ...prev, preAuthNumber: e.target.value }))}
+                      placeholder="Enter if available"
+                    />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="flex items-center gap-2 cursor-pointer">
                       <input
                         type="checkbox"
-                        id={`test-${test.id}`}
-                        checked={orderFormData.selectedTests.includes(test.id)}
-                        onChange={() => handleTestSelection(test.id)}
+                        checked={orderFormData.preAuthRequired}
+                        onChange={(e) => setOrderFormData(prev => ({ ...prev, preAuthRequired: e.target.checked }))}
                         className="w-4 h-4"
                       />
-                      <label htmlFor={`test-${test.id}`} className="flex-1 cursor-pointer">
-                        <div className="flex justify-between items-center">
-                          <div>
-                            <span className="font-medium">{test.name}</span>
-                            <span className="text-sm text-slate-500 ml-2">({test.category})</span>
-                          </div>
-                          <span className="text-sm text-slate-600">Rs. {test.price}</span>
-                        </div>
-                        <div className="text-xs text-slate-500">Sample: {test.sampleType}</div>
-                      </label>
-                    </div>
-                  ))}
+                      <span className="text-sm">Pre-authorization required before processing</span>
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="priority">Priority</Label>
+                  <Select value={orderFormData.priority} onValueChange={(value) => setOrderFormData(prev => ({ ...prev, priority: value }))}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="routine">Routine</SelectItem>
+                      <SelectItem value="urgent">Urgent</SelectItem>
+                      <SelectItem value="stat">STAT (Emergency)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="clinicalNotes">Clinical Notes</Label>
+                  <Input
+                    id="clinicalNotes"
+                    value={orderFormData.clinicalNotes}
+                    onChange={(e) => setOrderFormData(prev => ({ ...prev, clinicalNotes: e.target.value }))}
+                    placeholder="Clinical history, suspected diagnosis..."
+                  />
                 </div>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="clinicalNotes">Clinical Notes</Label>
-                <Input
-                  id="clinicalNotes"
-                  value={orderFormData.clinicalNotes}
-                  onChange={(e) => setOrderFormData(prev => ({ ...prev, clinicalNotes: e.target.value }))}
-                  placeholder="Clinical history, suspected diagnosis..."
-                />
+                <Label>Select Tests * ({orderFormData.selectedTests.length} selected)</Label>
+                <div className="border rounded-md p-4 max-h-64 overflow-y-auto space-y-2">
+                  {labTests.length === 0 ? (
+                    <p className="text-gray-500 text-center py-4">No lab tests available. Add tests in Master Data.</p>
+                  ) : (
+                    labTests.map((test) => (
+                      <div key={test.id} className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id={`test-${test.id}`}
+                          checked={orderFormData.selectedTests.includes(test.id)}
+                          onChange={() => handleTestSelection(test.id)}
+                          className="w-4 h-4"
+                        />
+                        <label htmlFor={`test-${test.id}`} className="flex-1 cursor-pointer">
+                          <div className="flex justify-between items-center">
+                            <div>
+                              <span className="font-medium">{test.name}</span>
+                              <span className="text-sm text-slate-500 ml-2">({test.category})</span>
+                            </div>
+                            <span className="text-sm font-medium text-slate-700">Rs. {test.price}</span>
+                          </div>
+                          <div className="text-xs text-slate-500">Sample: {test.sampleType || 'Blood'}</div>
+                        </label>
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
+
+              {/* Order Summary */}
+              {orderFormData.selectedTests.length > 0 && (
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <h4 className="font-semibold mb-2">Order Summary</h4>
+                  <div className="flex justify-between">
+                    <span>Total Tests:</span>
+                    <span>{orderFormData.selectedTests.length}</span>
+                  </div>
+                  <div className="flex justify-between font-semibold text-lg mt-2 pt-2 border-t">
+                    <span>Total Amount:</span>
+                    <span>Rs. {calculateTotal().toLocaleString()}</span>
+                  </div>
+                  {orderFormData.paymentMode === 'tpa' && (
+                    <p className="text-sm text-blue-600 mt-2">* Pricing may vary based on TPA contract rates</p>
+                  )}
+                </div>
+              )}
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setIsOrderDialogOpen(false)} disabled={loading}>
+              <Button variant="outline" onClick={() => { setIsOrderDialogOpen(false); resetOrderForm(); }} disabled={loading}>
                 Cancel
               </Button>
-              <Button onClick={handleOrderSubmit} disabled={loading || orderFormData.selectedTests.length === 0}>
+              <Button
+                onClick={handleOrderSubmit}
+                disabled={loading || orderFormData.selectedTests.length === 0 || !orderFormData.patientId || (orderFormData.paymentMode === 'tpa' && !orderFormData.tpaId)}
+              >
                 {loading ? 'Creating...' : 'Create Lab Order'}
               </Button>
             </DialogFooter>
@@ -491,16 +682,16 @@ export default function Laboratory() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Lab Tests Management</CardTitle>
-          <CardDescription>Track and manage laboratory tests</CardDescription>
+          <CardTitle>Lab Tests Queue</CardTitle>
+          <CardDescription>Track and manage laboratory test orders</CardDescription>
         </CardHeader>
         <CardContent>
           <Tabs defaultValue="all" className="w-full">
             <TabsList>
-              <TabsTrigger value="all">All Tests</TabsTrigger>
-              <TabsTrigger value="pending">Pending Collection</TabsTrigger>
-              <TabsTrigger value="inprocess">In Process</TabsTrigger>
-              <TabsTrigger value="completed">Completed</TabsTrigger>
+              <TabsTrigger value="all">All Tests ({stats.total})</TabsTrigger>
+              <TabsTrigger value="pending">Pending ({stats.pending})</TabsTrigger>
+              <TabsTrigger value="inprocess">In Process ({stats.inProcess})</TabsTrigger>
+              <TabsTrigger value="completed">Completed ({stats.completed})</TabsTrigger>
             </TabsList>
             <TabsContent value="all" className="space-y-4">
               <Table>
@@ -510,16 +701,18 @@ export default function Laboratory() {
                     <TableHead>Patient</TableHead>
                     <TableHead>MRN</TableHead>
                     <TableHead>Tests</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Payment</TableHead>
                     <TableHead>Priority</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Ordered Date</TableHead>
+                    <TableHead>Ordered</TableHead>
                     <TableHead>Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {orders.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center py-8 text-slate-500">
+                      <TableCell colSpan={10} className="text-center py-8 text-slate-500">
                         No lab orders found
                       </TableCell>
                     </TableRow>
@@ -535,12 +728,22 @@ export default function Laboratory() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Badge variant={getPriorityColor(order.priority)}>
+                          <Badge variant="outline" className="capitalize">
+                            {order.details?.patientType || 'OPD'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="capitalize">
+                            {order.details?.paymentMode || 'Cash'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge className={getPriorityColor(order.priority)}>
                             {order.priority.toUpperCase()}
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          <Badge variant={getStatusColor(order.status)}>
+                          <Badge className={getStatusColor(order.status)}>
                             {order.status}
                           </Badge>
                         </TableCell>
@@ -564,7 +767,7 @@ export default function Laboratory() {
                                 onClick={() => openSubmitResultsDialog(order)}
                               >
                                 <CheckCircle className="w-4 h-4 mr-1" />
-                                Submit Results
+                                Results
                               </Button>
                             )}
                             {order.status === 'completed' && order.results && order.results.length > 0 && (
@@ -586,7 +789,7 @@ export default function Laboratory() {
                                 })}
                               >
                                 <FileText className="w-4 h-4 mr-1" />
-                                View Report
+                                Report
                               </Button>
                             )}
                           </div>
@@ -617,7 +820,7 @@ export default function Laboratory() {
                       <TableCell>{order.patientMRN}</TableCell>
                       <TableCell>{order.details?.tests?.length || 0} test(s)</TableCell>
                       <TableCell>
-                        <Badge variant={getPriorityColor(order.priority)}>
+                        <Badge className={getPriorityColor(order.priority)}>
                           {order.priority.toUpperCase()}
                         </Badge>
                       </TableCell>
@@ -736,8 +939,7 @@ export default function Laboratory() {
                   try {
                     const parsed = JSON.parse(e.target.value);
                     setResultFormData(prev => ({ ...prev, resultData: parsed }));
-                  } catch (err) {
-                    // Invalid JSON, update anyway for user to fix
+                  } catch {
                     setResultFormData(prev => ({ ...prev, resultData: e.target.value as any }));
                   }
                 }}

@@ -175,26 +175,65 @@ export const dischargeSchema = z.object({
   followUpInstructions: z.string().max(2000).optional(),
 });
 
-// Lab order validators
+// Lab order validators - flexible format accepts both string IDs and objects
 export const createLabOrderSchema = z.object({
   patientId: idSchema,
   encounterId: idSchema.optional(),
   admissionId: idSchema.optional(),
-  tests: z.array(z.object({
-    testId: idSchema,
-    priority: z.enum(['ROUTINE', 'URGENT', 'STAT']).default('ROUTINE'),
-    notes: z.string().max(500).optional(),
-  })).min(1),
+  // Accept either array of test IDs (strings) or objects with testId
+  tests: z.array(z.union([
+    z.string().uuid(),
+    z.object({
+      testId: idSchema,
+      priority: z.enum(['ROUTINE', 'URGENT', 'STAT']).default('ROUTINE'),
+      notes: z.string().max(500).optional(),
+    })
+  ])).min(1),
+  priority: z.enum(['routine', 'urgent', 'stat']).default('routine'),
+  clinicalNotes: z.string().max(1000).optional(),
   clinicalInfo: z.string().max(1000).optional(),
+  // Patient type and payment
+  patientType: z.enum(['opd', 'ipd', 'icu', 'emergency', 'walk-in']).optional(),
+  paymentMode: z.enum(['cash', 'card', 'upi', 'tpa', 'credit', 'package']).optional(),
+  tpaId: idSchema.optional(),
+  insuranceId: idSchema.optional(),
+  preAuthRequired: z.boolean().optional(),
+  preAuthNumber: z.string().optional(),
+});
+
+// Radiology order validators
+export const createRadiologyOrderSchema = z.object({
+  patientId: idSchema,
+  encounterId: idSchema.optional(),
+  admissionId: idSchema.optional(),
+  tests: z.array(z.union([
+    z.string().uuid(),
+    z.object({
+      testId: idSchema,
+      priority: z.enum(['ROUTINE', 'URGENT', 'STAT']).default('ROUTINE'),
+    })
+  ])).min(1),
+  priority: z.enum(['routine', 'urgent', 'stat']).default('routine'),
+  clinicalIndication: z.string().max(1000).optional(),
+  specialInstructions: z.string().max(1000).optional(),
+  // Patient type and payment
+  patientType: z.enum(['opd', 'ipd', 'icu', 'emergency', 'walk-in']).optional(),
+  paymentMode: z.enum(['cash', 'card', 'upi', 'tpa', 'credit', 'package']).optional(),
+  tpaId: idSchema.optional(),
+  insuranceId: idSchema.optional(),
+  preAuthRequired: z.boolean().optional(),
+  preAuthNumber: z.string().optional(),
 });
 
 export const labResultSchema = z.object({
   orderId: idSchema,
-  testId: idSchema,
-  result: z.string().max(5000),
+  testId: idSchema.optional(),
+  resultData: z.any().optional(),
+  result: z.string().max(5000).optional(),
   unit: z.string().max(50).optional(),
   referenceRange: z.string().max(100).optional(),
   isCritical: z.boolean().default(false),
+  remarks: z.string().max(1000).optional(),
   notes: z.string().max(1000).optional(),
 });
 
@@ -765,6 +804,7 @@ export type CreatePrescriptionInput = z.infer<typeof createPrescriptionSchema>;
 export type CreateAdmissionInput = z.infer<typeof createAdmissionSchema>;
 export type DischargeInput = z.infer<typeof dischargeSchema>;
 export type CreateLabOrderInput = z.infer<typeof createLabOrderSchema>;
+export type CreateRadiologyOrderInput = z.infer<typeof createRadiologyOrderSchema>;
 export type LabResultInput = z.infer<typeof labResultSchema>;
 export type CreateInvoiceInput = z.infer<typeof createInvoiceSchema>;
 export type PaymentInput = z.infer<typeof paymentSchema>;
