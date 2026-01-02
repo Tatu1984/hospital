@@ -45,26 +45,28 @@ import CSSD from './pages/CSSD';
 import MRD from './pages/MRD';
 import LiveDashboard from './pages/LiveDashboard';
 
-// Import all remaining modules from AllModules
+// Import completed module pages
+import HealthCheckup from './pages/HealthCheckup';
+import Phlebotomy from './pages/Phlebotomy';
+import DoctorAssistant from './pages/DoctorAssistant';
+import OPDClinical from './pages/OPDClinical';
+import Tally from './pages/Tally';
+import DoctorAccounting from './pages/DoctorAccounting';
+import AssetManagement from './pages/AssetManagement';
+import VideoConversation from './pages/VideoConversation';
+import EquipmentMaintenance from './pages/EquipmentMaintenance';
+import Physiotherapy from './pages/Physiotherapy';
+import Mortuary from './pages/Mortuary';
+import BiometricAttendance from './pages/BiometricAttendance';
+import DICOMPACS from './pages/DICOMPACS';
+import MedicalDevice from './pages/MedicalDevice';
+import Pathology from './pages/Pathology';
+
+// Import remaining modules from AllModules (templates)
 import {
-  HealthCheckup,
   SoftwareManagement,
-  Phlebotomy,
-  DoctorAssistant,
   StoreManagement,
-  OPDClinical,
-  Tally,
-  DoctorAccounting,
-  AssetManagement,
-  VideoConversation,
-  EquipmentMaintenance,
-  Physiotherapy,
-  Mortuary,
-  BiometricAttendance,
-  DICOMPACS,
-  MedicalDevice,
   PayrollManagement,
-  Pathology,
   DoctorRegistration,
   InpatientBilling
 } from './pages/AllModules';
