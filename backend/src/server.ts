@@ -4321,7 +4321,7 @@ app.get('/api/packages', authenticateToken, async (req: any, res: Response) => {
 
 app.get('/api/appointments', authenticateToken, async (req: any, res: Response) => {
   try {
-    const { date, patientId, doctorId, status } = req.query;
+    const { date, patientId, doctorId, status, type, category, priority } = req.query;
 
     // Generate cache key based on query parameters
     const cacheKey = redisService.generateKey('appointments', {
@@ -4330,6 +4330,9 @@ app.get('/api/appointments', authenticateToken, async (req: any, res: Response) 
       patientId: patientId || '',
       doctorId: doctorId || '',
       status: status || '',
+      type: type || '',
+      category: category || '',
+      priority: priority || '',
     });
 
     // Try to get from cache first, or fetch from database
@@ -4348,6 +4351,9 @@ app.get('/api/appointments', authenticateToken, async (req: any, res: Response) 
         if (patientId) where.patientId = patientId;
         if (doctorId) where.doctorId = doctorId;
         if (status) where.status = status;
+        if (type) where.type = type;
+        if (category) where.category = category;
+        if (priority) where.priority = priority;
 
         return await prisma.appointment.findMany({
           where,
@@ -4369,24 +4375,49 @@ app.get('/api/appointments', authenticateToken, async (req: any, res: Response) 
 
 app.post('/api/appointments', authenticateToken, validateBody(createAppointmentSchema), async (req: any, res: Response) => {
   try {
-    const { patientId, doctorId, appointmentDate, appointmentTime, type, reason, notes, department } = req.body;
+    const {
+      patientId, doctorId, appointmentDate, appointmentTime, endTime,
+      type, category, reason, notes, department, priority,
+      testIds, testNames, modality, preparationInstructions,
+      estimatedDuration, roomNumber, machineId, technicianId,
+      referredBy, referralNotes
+    } = req.body;
 
-    if (!patientId || !doctorId || !appointmentDate || !appointmentTime) {
-      return res.status(400).json({ error: 'Missing required fields' });
+    // For lab/radiology, doctorId is optional
+    const appointmentType = type || 'consultation';
+    if (appointmentType === 'consultation' && !doctorId) {
+      return res.status(400).json({ error: 'Doctor is required for consultation appointments' });
+    }
+    if (!patientId || !appointmentDate || !appointmentTime) {
+      return res.status(400).json({ error: 'Patient, date and time are required' });
     }
 
     const appointment = await prisma.appointment.create({
       data: {
         tenantId: req.user.tenantId,
+        branchId: req.user.branchId,
         patientId,
-        doctorId,
+        doctorId: doctorId || null,
         appointmentDate: new Date(appointmentDate),
         appointmentTime,
-        type: type || 'consultation',
+        endTime,
+        type: appointmentType,
+        category,
         status: 'scheduled',
+        priority: priority || 'normal',
         reason,
         notes,
         department,
+        testIds: testIds || [],
+        testNames: testNames || [],
+        modality,
+        preparationInstructions,
+        estimatedDuration,
+        roomNumber,
+        machineId,
+        technicianId,
+        referredBy,
+        referralNotes,
         createdBy: req.user.userId,
       },
       include: {
@@ -4400,6 +4431,14 @@ app.post('/api/appointments', authenticateToken, validateBody(createAppointmentS
 
     // Send appointment confirmation notification (async - don't wait)
     if (appointment.patient.contact || appointment.patient.email) {
+      const appointmentTypeLabel: Record<string, string> = {
+        consultation: 'Consultation',
+        lab: 'Lab Test',
+        radiology: 'Radiology',
+        procedure: 'Procedure',
+        health_checkup: 'Health Checkup'
+      };
+
       notificationService.send({
         type: 'APPOINTMENT_CONFIRMATION',
         recipientPhone: appointment.patient.contact || undefined,
@@ -4407,10 +4446,13 @@ app.post('/api/appointments', authenticateToken, validateBody(createAppointmentS
         message: '',
         data: {
           patientName: appointment.patient.name,
-          doctorName: appointment.doctor.name,
+          doctorName: appointment.doctor?.name || 'N/A',
           date: new Date(appointmentDate).toLocaleDateString('en-IN'),
           time: appointmentTime,
           department: department || 'General',
+          appointmentType: appointmentTypeLabel[appointmentType] || 'Appointment',
+          tests: testNames?.join(', ') || '',
+          preparationInstructions: preparationInstructions || '',
           appointmentId: appointment.id.slice(0, 8).toUpperCase(),
           hospitalName: 'Hospital ERP',
           hospitalAddress: 'Hospital Address',
@@ -4429,18 +4471,40 @@ app.post('/api/appointments', authenticateToken, validateBody(createAppointmentS
 app.put('/api/appointments/:id', authenticateToken, validateBody(updateAppointmentSchema), async (req: any, res: Response) => {
   try {
     const { id } = req.params;
-    const { appointmentDate, appointmentTime, type, reason, notes, status, department } = req.body;
+    const {
+      appointmentDate, appointmentTime, endTime, type, category,
+      reason, notes, status, department, priority,
+      testIds, testNames, modality, preparationInstructions,
+      estimatedDuration, roomNumber, machineId, technicianId,
+      referredBy, referralNotes, reportReady, reportUrl, isPaid
+    } = req.body;
 
     const appointment = await prisma.appointment.update({
       where: { id },
       data: {
         ...(appointmentDate && { appointmentDate: new Date(appointmentDate) }),
         ...(appointmentTime && { appointmentTime }),
+        ...(endTime !== undefined && { endTime }),
         ...(type && { type }),
+        ...(category !== undefined && { category }),
         ...(reason !== undefined && { reason }),
         ...(notes !== undefined && { notes }),
         ...(status && { status }),
         ...(department !== undefined && { department }),
+        ...(priority && { priority }),
+        ...(testIds !== undefined && { testIds }),
+        ...(testNames !== undefined && { testNames }),
+        ...(modality !== undefined && { modality }),
+        ...(preparationInstructions !== undefined && { preparationInstructions }),
+        ...(estimatedDuration !== undefined && { estimatedDuration }),
+        ...(roomNumber !== undefined && { roomNumber }),
+        ...(machineId !== undefined && { machineId }),
+        ...(technicianId !== undefined && { technicianId }),
+        ...(referredBy !== undefined && { referredBy }),
+        ...(referralNotes !== undefined && { referralNotes }),
+        ...(reportReady !== undefined && { reportReady }),
+        ...(reportUrl !== undefined && { reportUrl }),
+        ...(isPaid !== undefined && { isPaid }),
       },
       include: {
         patient: { select: { id: true, name: true, mrn: true, contact: true } },

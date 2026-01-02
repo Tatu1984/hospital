@@ -165,26 +165,52 @@ model Patient {
 model Appointment {
   id              String      @id @default(uuid())
   tenantId        String
+  branchId        String?
   patientId       String
-  doctorId        String
+  doctorId        String?     // Optional - not needed for lab/radiology
   appointmentDate DateTime
   appointmentTime String
-  type            String      @default("consultation")
-  status          String      @default("scheduled")
+  endTime         String?     // For appointments with duration
+  type            String      @default("consultation") // consultation, lab, radiology, procedure, health_checkup
+  category        String?     // sub-category: blood_test, urine_test, xray, ct_scan, mri, ultrasound, ecg, etc.
+  status          String      @default("scheduled") // scheduled, confirmed, in_progress, completed, cancelled, no_show
+  priority        String      @default("normal") // normal, urgent, emergency
   reason          String?
   notes           String?
   department      String?
+  // Lab/Radiology specific
+  testIds         String[]    // Array of test IDs (lab tests, radiology tests)
+  testNames       String[]    // Array of test names for display
+  modality        String?     // For radiology: X-Ray, CT, MRI, Ultrasound, etc.
+  preparationInstructions String? // Fasting, etc.
+  // Scheduling
+  estimatedDuration Int?      // In minutes
+  roomNumber      String?
+  machineId       String?     // For equipment-based tests
+  technicianId    String?     // Lab technician or radiographer
+  // Referral
+  referredBy      String?     // Doctor who referred
+  referralNotes   String?
+  // Results
+  reportReady     Boolean     @default(false)
+  reportUrl       String?
+  // Billing
+  invoiceId       String?
+  isPaid          Boolean     @default(false)
+  // Metadata
   createdBy       String?
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
   patient         Patient     @relation(fields: [patientId], references: [id])
-  doctor          User        @relation("DoctorAppointments", fields: [doctorId], references: [id])
+  doctor          User?       @relation("DoctorAppointments", fields: [doctorId], references: [id])
   encounters      Encounter[]
 
   @@index([patientId])
   @@index([doctorId])
   @@index([appointmentDate])
   @@index([status])
+  @@index([type])
+  @@index([tenantId, branchId, appointmentDate])
   @@map("appointments")
 }
 

@@ -62,17 +62,55 @@ export const updatePatientSchema = createPatientSchema.partial();
 // Appointment validators
 export const createAppointmentSchema = z.object({
   patientId: idSchema,
-  doctorId: idSchema,
-  scheduledAt: z.string().datetime('Invalid date/time format'),
-  type: z.enum(['NEW', 'FOLLOW_UP', 'EMERGENCY', 'CONSULTATION']).default('NEW'),
+  doctorId: idSchema.optional().nullable(), // Optional for lab/radiology
+  appointmentDate: z.string(),
+  appointmentTime: z.string(),
+  endTime: z.string().optional(),
+  type: z.enum(['consultation', 'lab', 'radiology', 'procedure', 'health_checkup']).default('consultation'),
+  category: z.string().optional(), // blood_test, urine_test, xray, ct_scan, mri, ultrasound, ecg
+  reason: z.string().max(1000).optional(),
   notes: z.string().max(1000).optional(),
-  duration: z.number().int().min(5).max(240).default(30),
+  department: z.string().optional(),
+  priority: z.enum(['normal', 'urgent', 'emergency']).default('normal'),
+  // Lab/Radiology specific
+  testIds: z.array(z.string()).optional(),
+  testNames: z.array(z.string()).optional(),
+  modality: z.string().optional(), // X-Ray, CT, MRI, Ultrasound
+  preparationInstructions: z.string().optional(),
+  // Scheduling
+  estimatedDuration: z.number().int().min(5).max(480).optional(),
+  roomNumber: z.string().optional(),
+  machineId: z.string().optional(),
+  technicianId: z.string().optional(),
+  // Referral
+  referredBy: z.string().optional(),
+  referralNotes: z.string().optional(),
 });
 
 export const updateAppointmentSchema = z.object({
-  scheduledAt: z.string().datetime().optional(),
-  status: z.enum(['SCHEDULED', 'CONFIRMED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'NO_SHOW']).optional(),
+  appointmentDate: z.string().optional(),
+  appointmentTime: z.string().optional(),
+  endTime: z.string().optional(),
+  type: z.enum(['consultation', 'lab', 'radiology', 'procedure', 'health_checkup']).optional(),
+  category: z.string().optional(),
+  status: z.enum(['scheduled', 'confirmed', 'in_progress', 'completed', 'cancelled', 'no_show']).optional(),
+  priority: z.enum(['normal', 'urgent', 'emergency']).optional(),
+  reason: z.string().max(1000).optional(),
   notes: z.string().max(1000).optional(),
+  department: z.string().optional(),
+  testIds: z.array(z.string()).optional(),
+  testNames: z.array(z.string()).optional(),
+  modality: z.string().optional(),
+  preparationInstructions: z.string().optional(),
+  estimatedDuration: z.number().int().optional(),
+  roomNumber: z.string().optional(),
+  machineId: z.string().optional(),
+  technicianId: z.string().optional(),
+  referredBy: z.string().optional(),
+  referralNotes: z.string().optional(),
+  reportReady: z.boolean().optional(),
+  reportUrl: z.string().optional(),
+  isPaid: z.boolean().optional(),
 });
 
 // Encounter/OPD validators
