@@ -734,6 +734,8 @@ model InventoryItem {
   isActive           Boolean             @default(true)
   purchaseOrderItems PurchaseOrderItem[]
   stocks             Stock[]
+  grnItems           GoodsReceiptItem[]
+  transferItems      StockTransferItem[]
 
   @@map("inventory_items")
 }
@@ -742,12 +744,13 @@ model Stock {
   id          String        @id @default(uuid())
   itemId      String
   storeId     String
-  batchNumber String?
+  batchNumber String        @default("")
   expiryDate  DateTime?
   quantity    Int
   lastUpdated DateTime      @updatedAt
   item        InventoryItem @relation(fields: [itemId], references: [id])
 
+  @@unique([itemId, storeId, batchNumber], name: "itemId_storeId_batchNumber")
   @@map("stocks")
 }
 
@@ -780,6 +783,72 @@ model PurchaseOrderItem {
   purchaseOrder PurchaseOrder @relation(fields: [poId], references: [id])
 
   @@map("purchase_order_items")
+}
+
+model GoodsReceipt {
+  id              String              @id @default(uuid())
+  grnNumber       String              @unique
+  poId            String?             // Link to PO if applicable
+  vendorName      String
+  vendorInvoice   String?
+  invoiceDate     DateTime?
+  receivedDate    DateTime            @default(now())
+  receivedBy      String?
+  status          String              @default("draft") // draft, verified, posted
+  totalAmount     Decimal             @db.Decimal(12, 2)
+  remarks         String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  items           GoodsReceiptItem[]
+
+  @@map("goods_receipts")
+}
+
+model GoodsReceiptItem {
+  id              String        @id @default(uuid())
+  grnId           String
+  itemId          String
+  quantityOrdered Int           @default(0)
+  quantityReceived Int
+  unitPrice       Decimal       @db.Decimal(10, 2)
+  amount          Decimal       @db.Decimal(10, 2)
+  batchNumber     String?
+  expiryDate      DateTime?
+  remarks         String?
+  grn             GoodsReceipt  @relation(fields: [grnId], references: [id])
+  item            InventoryItem @relation(fields: [itemId], references: [id])
+
+  @@map("goods_receipt_items")
+}
+
+model StockTransfer {
+  id              String              @id @default(uuid())
+  transferNumber  String              @unique
+  fromStoreId     String
+  toStoreId       String
+  transferDate    DateTime            @default(now())
+  transferredBy   String?
+  receivedBy      String?
+  receivedAt      DateTime?
+  status          String              @default("pending") // pending, in_transit, received, cancelled
+  remarks         String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  items           StockTransferItem[]
+
+  @@map("stock_transfers")
+}
+
+model StockTransferItem {
+  id              String        @id @default(uuid())
+  transferId      String
+  itemId          String
+  quantity        Int
+  batchNumber     String?
+  transfer        StockTransfer @relation(fields: [transferId], references: [id])
+  item            InventoryItem @relation(fields: [itemId], references: [id])
+
+  @@map("stock_transfer_items")
 }
 
 model HousekeepingTask {
@@ -1323,6 +1392,31 @@ model LeaveRequest {
   employee    Employee  @relation(fields: [employeeId], references: [id])
 
   @@map("leave_requests")
+}
+
+model Payroll {
+  id              String    @id @default(uuid())
+  employeeId      String
+  month           Int       // 1-12
+  year            Int
+  basicSalary     Decimal   @db.Decimal(12, 2)
+  allowances      Decimal   @default(0) @db.Decimal(12, 2)
+  deductions      Decimal   @default(0) @db.Decimal(12, 2)
+  overtime        Decimal   @default(0) @db.Decimal(12, 2)
+  netSalary       Decimal   @db.Decimal(12, 2)
+  workingDays     Int       @default(0)
+  presentDays     Int       @default(0)
+  leaveDays       Int       @default(0)
+  status          String    @default("draft") // draft, processed, paid
+  processedBy     String?
+  processedAt     DateTime?
+  paidAt          DateTime?
+  remarks         String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([employeeId, month, year])
+  @@map("payroll")
 }
 
 // ===========================
@@ -2372,4 +2466,331 @@ model DoctorLicense {
   @@index([status])
   @@index([expiryDate])
   @@map("doctor_licenses")
+}
+
+// ============================================
+// CSSD (Central Sterilization Services Department)
+// ============================================
+
+model Instrument {
+  id                String    @id @default(uuid())
+  tenantId          String
+  branchId          String
+  instrumentCode    String    @unique
+  name              String
+  type              String    // surgical, dental, diagnostic, laboratory, etc.
+  category          String    // scalpel, forceps, retractor, scissors, etc.
+  manufacturer      String?
+  model             String?
+  serialNumber      String?
+  purchaseDate      DateTime?
+  purchasePrice     Decimal?  @db.Decimal(10, 2)
+  lastSterilizedAt  DateTime?
+  lastUsedAt        DateTime?
+  nextMaintenanceAt DateTime?
+  condition         String    @default("good") // good, fair, needs_repair, condemned
+  status            String    @default("available") // available, in_use, sterilizing, maintenance, disposed
+  location          String?   // Storage location
+  notes             String?
+  isActive          Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  sterilizationRecords InstrumentSterilization[]
+  usageRecords         InstrumentUsage[]
+
+  @@index([tenantId, branchId])
+  @@index([type])
+  @@index([status])
+  @@index([lastSterilizedAt])
+  @@map("cssd_instruments")
+}
+
+model SterilizationCycle {
+  id                String    @id @default(uuid())
+  tenantId          String
+  branchId          String
+  cycleNumber       String    @unique
+  autoclaveName     String    // Autoclave A, B, etc.
+  autoclaveId       String?
+  operatorId        String
+  operatorName      String
+  cycleType         String    // gravity, prevacuum, flash, ETO, plasma, etc.
+  loadType          String    // wrapped, unwrapped, mixed
+  startTime         DateTime
+  endTime           DateTime?
+  temperature       Decimal   @db.Decimal(5, 2) // in Celsius
+  temperatureUnit   String    @default("C")
+  pressure          Decimal   @db.Decimal(5, 2) // in PSI or bar
+  pressureUnit      String    @default("PSI")
+  duration          Int       // in minutes
+  status            String    @default("in_progress") // in_progress, completed, failed, aborted
+  result            String?   // pass, fail, incomplete
+  failureReason     String?
+  biologicalIndicator Boolean @default(false)
+  biologicalResult  String?   // positive, negative, pending
+  chemicalIndicator Boolean   @default(false)
+  chemicalResult    String?   // pass, fail
+  notes             String?
+  verifiedBy        String?
+  verifiedAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  instruments       InstrumentSterilization[]
+  packs             SterilizationPack[]
+
+  @@index([tenantId, branchId])
+  @@index([status])
+  @@index([result])
+  @@index([startTime])
+  @@map("cssd_sterilization_cycles")
+}
+
+model InstrumentSterilization {
+  id              String   @id @default(uuid())
+  instrumentId    String
+  cycleId         String
+  packId          String?
+  position        String?  // Position in the autoclave load
+  createdAt       DateTime @default(now())
+
+  instrument      Instrument        @relation(fields: [instrumentId], references: [id])
+  cycle           SterilizationCycle @relation(fields: [cycleId], references: [id])
+  pack            SterilizationPack? @relation(fields: [packId], references: [id])
+
+  @@index([instrumentId])
+  @@index([cycleId])
+  @@map("cssd_instrument_sterilizations")
+}
+
+model SterilizationPack {
+  id              String    @id @default(uuid())
+  tenantId        String
+  branchId        String
+  packCode        String    @unique
+  packType        String    // general_surgery, ortho, dental, delivery, minor_procedure, etc.
+  packName        String
+  description     String?
+  contents        Json      // [{instrumentId, name, quantity}]
+  cycleId         String
+  sterilizedAt    DateTime
+  expiryDate      DateTime
+  expiryDays      Int       @default(30) // Days until expiry from sterilization
+  status          String    @default("available") // available, issued, used, expired, recalled
+  issuedTo        String?   // Ward, OT, Department
+  issuedAt        DateTime?
+  issuedBy        String?
+  usedFor         String?   // Surgery ID, Procedure ID
+  usedAt          DateTime?
+  usedBy          String?
+  returnedAt      DateTime?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  cycle           SterilizationCycle @relation(fields: [cycleId], references: [id])
+  instruments     InstrumentSterilization[]
+
+  @@index([tenantId, branchId])
+  @@index([status])
+  @@index([expiryDate])
+  @@index([packType])
+  @@map("cssd_sterilization_packs")
+}
+
+model InstrumentUsage {
+  id              String    @id @default(uuid())
+  instrumentId    String
+  usedBy          String    // User ID
+  usedByName      String
+  usedFor         String?   // Surgery ID, Procedure ID
+  usedAt          DateTime  @default(now())
+  returnedAt      DateTime?
+  condition       String?   // Condition after use
+  needsCleaning   Boolean   @default(true)
+  needsRepair     Boolean   @default(false)
+  notes           String?
+  createdAt       DateTime  @default(now())
+
+  instrument      Instrument @relation(fields: [instrumentId], references: [id])
+
+  @@index([instrumentId])
+  @@index([usedAt])
+  @@map("cssd_instrument_usage")
+}
+
+// ============================================
+// MRD (Medical Records Department)
+// ============================================
+
+model MedicalRecord {
+  id              String    @id @default(uuid())
+  tenantId        String
+  branchId        String
+  patientId       String
+  encounterId     String?
+  admissionId     String?
+  recordType      String    // admission, discharge_summary, opd_note, lab_report, radiology, surgery, etc.
+  recordCategory  String    // clinical, administrative, legal, research
+  documentId      String?   // Link to Document model
+  documentUrl     String?   // Direct URL if external
+  title           String
+  description     String?
+  icdCodes        String[]  // ICD-10 codes
+  cptCodes        String[]  // CPT procedure codes
+  createdBy       String
+  createdByName   String
+  reviewedBy      String?
+  reviewedByName  String?
+  reviewedAt      DateTime?
+  status          String    @default("active") // active, archived, restricted, deleted
+  isConfidential  Boolean   @default(false)
+  retentionYears  Int       @default(7) // Retention period in years
+  archivedAt      DateTime?
+  archivedBy      String?
+  deletedAt       DateTime?
+  deletedBy       String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  accessLogs      MRDAccessLog[]
+  codingRecords   MRDCoding[]
+
+  @@index([tenantId, branchId])
+  @@index([patientId])
+  @@index([encounterId])
+  @@index([recordType])
+  @@index([status])
+  @@map("mrd_medical_records")
+}
+
+model MRDAccessLog {
+  id              String   @id @default(uuid())
+  medicalRecordId String
+  userId          String
+  userName        String
+  accessType      String   // view, download, print, copy, edit, release
+  accessReason    String?  // Treatment, billing, research, legal, audit
+  ipAddress       String?
+  userAgent       String?
+  accessedAt      DateTime @default(now())
+
+  medicalRecord   MedicalRecord @relation(fields: [medicalRecordId], references: [id])
+
+  @@index([medicalRecordId])
+  @@index([userId])
+  @@index([accessedAt])
+  @@map("mrd_access_logs")
+}
+
+model MRDCoding {
+  id              String   @id @default(uuid())
+  medicalRecordId String
+  codeType        String   // icd10, icd9, cpt, hcpcs, drg
+  code            String
+  description     String
+  isPrimary       Boolean  @default(false)
+  codedBy         String
+  codedByName     String
+  codedAt         DateTime @default(now())
+  verifiedBy      String?
+  verifiedAt      DateTime?
+  notes           String?
+
+  medicalRecord   MedicalRecord @relation(fields: [medicalRecordId], references: [id])
+
+  @@index([medicalRecordId])
+  @@index([codeType])
+  @@index([code])
+  @@map("mrd_coding")
+}
+
+model ICD10Code {
+  code            String   @id
+  shortDescription String
+  longDescription String?
+  category        String   // Chapter or category
+  subcategory     String?
+  isActive        Boolean  @default(true)
+
+  @@index([category])
+  @@map("mrd_icd10_codes")
+}
+
+model MRDArchive {
+  id              String   @id @default(uuid())
+  tenantId        String
+  branchId        String
+  archiveBatchId  String
+  totalRecords    Int
+  archivedBy      String
+  archivedByName  String
+  archivedAt      DateTime @default(now())
+  archiveLocation String?  // Physical or digital storage location
+  retentionUntil  DateTime
+  status          String   @default("active") // active, destroyed
+  destroyedAt     DateTime?
+  destroyedBy     String?
+  notes           String?
+
+  @@index([tenantId, branchId])
+  @@index([archiveBatchId])
+  @@index([retentionUntil])
+  @@map("mrd_archives")
+}
+
+model MRDReleaseRequest {
+  id              String    @id @default(uuid())
+  tenantId        String
+  branchId        String
+  patientId       String
+  requestedBy     String
+  requestedByName String
+  requestedByType String    // patient, family, legal, insurance, employer, other
+  relationship    String?   // Relationship to patient if not patient
+  purpose         String    // treatment, legal, insurance, employment, research, personal
+  recordTypes     String[]  // Types of records requested
+  dateRange       Json?     // {from, to} - date range of records
+  deliveryMethod  String    // email, mail, pickup, portal
+  deliveryAddress String?
+  email           String?
+  phone           String?
+  status          String    @default("pending") // pending, approved, partially_approved, denied, completed
+  reviewedBy      String?
+  reviewedByName  String?
+  reviewedAt      DateTime?
+  completedBy     String?
+  completedAt     DateTime?
+  denialReason    String?
+  authorizationDoc String?  // Uploaded authorization document
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([tenantId, branchId])
+  @@index([patientId])
+  @@index([status])
+  @@map("mrd_release_requests")
+}
+
+// ============================================
+// User Two-Factor Authentication
+// ============================================
+
+model UserTwoFactor {
+  id              String    @id @default(uuid())
+  userId          String    @unique
+  method          String    // totp, sms, both
+  totpSecret      String?   // Encrypted TOTP secret
+  totpVerified    Boolean   @default(false)
+  smsEnabled      Boolean   @default(false)
+  smsPhone        String?
+  backupCodes     String[]  // Hashed backup codes
+  enabledAt       DateTime?
+  lastUsedAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@map("user_two_factor")
 }

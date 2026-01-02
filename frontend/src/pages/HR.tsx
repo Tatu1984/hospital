@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { UserPlus, Clock, CheckCircle, XCircle, Users } from 'lucide-react';
+import { UserPlus, Clock, CheckCircle, XCircle, Users, DollarSign, Loader2 } from 'lucide-react';
 import api from '../services/api';
 
 interface Employee {
@@ -58,13 +58,39 @@ interface EmployeeFormData {
   salary: string;
 }
 
+interface PayrollRecord {
+  id: string;
+  employeeId: string;
+  employee?: {
+    name: string;
+    employeeId: string;
+    department: string;
+    designation: string;
+  };
+  month: number;
+  year: number;
+  basicSalary: number;
+  allowances: number;
+  deductions: number;
+  overtime: number;
+  netSalary: number;
+  workingDays: number;
+  presentDays: number;
+  leaveDays: number;
+  status: string;
+}
+
 export default function HR() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
   const [leaves, setLeaves] = useState<Leave[]>([]);
+  const [payroll, setPayroll] = useState<PayrollRecord[]>([]);
   const [isEmployeeDialogOpen, setIsEmployeeDialogOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [payrollLoading, setPayrollLoading] = useState(false);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [payrollMonth, setPayrollMonth] = useState(new Date().getMonth() + 1);
+  const [payrollYear, setPayrollYear] = useState(new Date().getFullYear());
 
   const [employeeFormData, setEmployeeFormData] = useState<EmployeeFormData>({
     name: '',
@@ -82,6 +108,10 @@ export default function HR() {
     fetchAttendance();
     fetchLeaves();
   }, [selectedDate]);
+
+  useEffect(() => {
+    fetchPayroll();
+  }, [payrollMonth, payrollYear]);
 
   const fetchEmployees = async () => {
     try {
@@ -107,6 +137,49 @@ export default function HR() {
       setLeaves(response.data);
     } catch (error) {
       console.error('Error fetching leaves:', error);
+    }
+  };
+
+  const fetchPayroll = async () => {
+    try {
+      const response = await api.get(`/api/hr/payroll?month=${payrollMonth}&year=${payrollYear}`);
+      setPayroll(response.data);
+    } catch (error) {
+      console.error('Error fetching payroll:', error);
+    }
+  };
+
+  const handleGeneratePayroll = async () => {
+    setPayrollLoading(true);
+    try {
+      await api.post('/api/hr/payroll/generate', { month: payrollMonth, year: payrollYear });
+      await fetchPayroll();
+      alert('Payroll generated successfully');
+    } catch (error) {
+      console.error('Error generating payroll:', error);
+      alert('Failed to generate payroll');
+    } finally {
+      setPayrollLoading(false);
+    }
+  };
+
+  const handleProcessPayroll = async (id: string) => {
+    try {
+      await api.post(`/api/hr/payroll/${id}/process`);
+      await fetchPayroll();
+    } catch (error) {
+      console.error('Error processing payroll:', error);
+      alert('Failed to process payroll');
+    }
+  };
+
+  const handlePayPayroll = async (id: string) => {
+    try {
+      await api.post(`/api/hr/payroll/${id}/pay`);
+      await fetchPayroll();
+    } catch (error) {
+      console.error('Error marking payroll as paid:', error);
+      alert('Failed to mark payroll as paid');
     }
   };
 
@@ -269,6 +342,7 @@ export default function HR() {
               <TabsTrigger value="employees">Employees ({stats.totalEmployees})</TabsTrigger>
               <TabsTrigger value="attendance">Attendance</TabsTrigger>
               <TabsTrigger value="leaves">Leave Requests ({stats.pendingLeaves})</TabsTrigger>
+              <TabsTrigger value="payroll">Payroll</TabsTrigger>
             </TabsList>
 
             <TabsContent value="employees">
@@ -431,6 +505,181 @@ export default function HR() {
                   )}
                 </TableBody>
               </Table>
+            </TabsContent>
+
+            {/* Payroll Tab */}
+            <TabsContent value="payroll">
+              <div className="space-y-4">
+                {/* Payroll Controls */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                      <Label>Month:</Label>
+                      <Select
+                        value={payrollMonth.toString()}
+                        onValueChange={(value) => setPayrollMonth(parseInt(value))}
+                      >
+                        <SelectTrigger className="w-32">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {[
+                            'January', 'February', 'March', 'April', 'May', 'June',
+                            'July', 'August', 'September', 'October', 'November', 'December'
+                          ].map((month, idx) => (
+                            <SelectItem key={idx + 1} value={(idx + 1).toString()}>
+                              {month}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Label>Year:</Label>
+                      <Select
+                        value={payrollYear.toString()}
+                        onValueChange={(value) => setPayrollYear(parseInt(value))}
+                      >
+                        <SelectTrigger className="w-24">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {[2023, 2024, 2025, 2026].map((year) => (
+                            <SelectItem key={year} value={year.toString()}>
+                              {year}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <Button onClick={handleGeneratePayroll} disabled={payrollLoading}>
+                    {payrollLoading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <DollarSign className="w-4 h-4 mr-2" />
+                        Generate Payroll
+                      </>
+                    )}
+                  </Button>
+                </div>
+
+                {/* Payroll Summary */}
+                {payroll.length > 0 && (
+                  <div className="grid grid-cols-4 gap-4">
+                    <Card>
+                      <CardContent className="pt-4">
+                        <div className="text-sm text-slate-500">Total Employees</div>
+                        <div className="text-2xl font-bold">{payroll.length}</div>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardContent className="pt-4">
+                        <div className="text-sm text-slate-500">Total Salaries</div>
+                        <div className="text-2xl font-bold text-green-600">
+                          ${payroll.reduce((sum, p) => sum + Number(p.netSalary), 0).toLocaleString()}
+                        </div>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardContent className="pt-4">
+                        <div className="text-sm text-slate-500">Processed</div>
+                        <div className="text-2xl font-bold text-blue-600">
+                          {payroll.filter(p => p.status === 'processed').length}
+                        </div>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardContent className="pt-4">
+                        <div className="text-sm text-slate-500">Paid</div>
+                        <div className="text-2xl font-bold text-purple-600">
+                          {payroll.filter(p => p.status === 'paid').length}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                )}
+
+                {/* Payroll Table */}
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Employee</TableHead>
+                      <TableHead>Department</TableHead>
+                      <TableHead className="text-right">Basic</TableHead>
+                      <TableHead className="text-right">Allowances</TableHead>
+                      <TableHead className="text-right">Deductions</TableHead>
+                      <TableHead className="text-right">Net Salary</TableHead>
+                      <TableHead>Days</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {payroll.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={9} className="text-center py-8 text-slate-500">
+                          No payroll records for this month. Click "Generate Payroll" to create records.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      payroll.map((record) => (
+                        <TableRow key={record.id}>
+                          <TableCell className="font-medium">
+                            {record.employee?.name || 'Unknown'}
+                            <div className="text-xs text-slate-500">{record.employee?.employeeId}</div>
+                          </TableCell>
+                          <TableCell>{record.employee?.department || '-'}</TableCell>
+                          <TableCell className="text-right">${Number(record.basicSalary).toLocaleString()}</TableCell>
+                          <TableCell className="text-right text-green-600">
+                            +${Number(record.allowances).toLocaleString()}
+                          </TableCell>
+                          <TableCell className="text-right text-red-600">
+                            -${Number(record.deductions).toLocaleString()}
+                          </TableCell>
+                          <TableCell className="text-right font-bold">
+                            ${Number(record.netSalary).toLocaleString()}
+                          </TableCell>
+                          <TableCell>
+                            <span className="text-sm">
+                              {record.presentDays}/{record.workingDays}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={
+                                record.status === 'paid' ? 'default' :
+                                record.status === 'processed' ? 'secondary' :
+                                'outline'
+                              }
+                            >
+                              {record.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex gap-2">
+                              {record.status === 'draft' && (
+                                <Button size="sm" onClick={() => handleProcessPayroll(record.id)}>
+                                  Process
+                                </Button>
+                              )}
+                              {record.status === 'processed' && (
+                                <Button size="sm" variant="outline" onClick={() => handlePayPayroll(record.id)}>
+                                  Mark Paid
+                                </Button>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
             </TabsContent>
           </Tabs>
         </CardContent>

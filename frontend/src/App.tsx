@@ -1,7 +1,13 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { WebSocketProvider } from './contexts/WebSocketContext';
+import { NotificationProvider } from './contexts/NotificationContext';
 import { ToastProvider } from './components/Toast';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import Login from './pages/Login';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
+import UserProfile from './pages/UserProfile';
 import PatientPortalLogin from './pages/PatientPortalLogin';
 import PatientPortal from './pages/PatientPortal';
 import NewDashboard from './pages/NewDashboard';
@@ -35,6 +41,9 @@ import TPA from './pages/TPA';
 import MasterData from './pages/MasterData';
 import SystemControl from './pages/SystemControl';
 import DoctorManagement from './pages/DoctorManagement';
+import CSSD from './pages/CSSD';
+import MRD from './pages/MRD';
+import LiveDashboard from './pages/LiveDashboard';
 
 // Import all remaining modules from AllModules
 import {
@@ -45,11 +54,9 @@ import {
   StoreManagement,
   OPDClinical,
   Tally,
-  MRDManagement,
   DoctorAccounting,
   AssetManagement,
   VideoConversation,
-  CSSD,
   EquipmentMaintenance,
   Physiotherapy,
   Mortuary,
@@ -107,6 +114,8 @@ const AppRoutes = () => {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
 
       {/* Patient Portal Routes */}
       <Route path="/patient-portal/login" element={<PatientPortalLogin />} />
@@ -171,7 +180,7 @@ const AppRoutes = () => {
         {/* Clinical Support */}
         <Route path="opd-clinical" element={<RoleProtectedRoute path="opd-clinical"><OPDClinical /></RoleProtectedRoute>} />
         <Route path="doctor-assistant" element={<RoleProtectedRoute path="doctor-assistant"><DoctorAssistant /></RoleProtectedRoute>} />
-        <Route path="mrd-management" element={<RoleProtectedRoute path="mrd-management"><MRDManagement /></RoleProtectedRoute>} />
+        <Route path="mrd-management" element={<RoleProtectedRoute path="mrd-management"><MRD /></RoleProtectedRoute>} />
 
         {/* Technology Integration */}
         <Route path="video-conversation" element={<RoleProtectedRoute path="video-conversation"><VideoConversation /></RoleProtectedRoute>} />
@@ -184,11 +193,13 @@ const AppRoutes = () => {
         <Route path="doctor-registration" element={<RoleProtectedRoute path="doctor-registration"><DoctorRegistration /></RoleProtectedRoute>} />
 
         {/* System & Reports */}
+        <Route path="live-dashboard" element={<RoleProtectedRoute path="live-dashboard"><LiveDashboard /></RoleProtectedRoute>} />
         <Route path="mis-report" element={<RoleProtectedRoute path="mis-report"><MISReport /></RoleProtectedRoute>} />
         <Route path="master-data" element={<RoleProtectedRoute path="master-data"><MasterData /></RoleProtectedRoute>} />
         <Route path="software-management" element={<RoleProtectedRoute path="software-management"><SoftwareManagement /></RoleProtectedRoute>} />
         <Route path="system-control" element={<RoleProtectedRoute path="system-control"><SystemControl /></RoleProtectedRoute>} />
         <Route path="doctor-management" element={<RoleProtectedRoute path="doctor-management"><DoctorManagement /></RoleProtectedRoute>} />
+        <Route path="profile" element={<UserProfile />} />
       </Route>
     </Routes>
   );
@@ -196,11 +207,17 @@ const AppRoutes = () => {
 
 function App() {
   return (
-    <AuthProvider>
-      <ToastProvider>
-        <AppRoutes />
-      </ToastProvider>
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <WebSocketProvider>
+          <NotificationProvider>
+            <ToastProvider>
+              <AppRoutes />
+            </ToastProvider>
+          </NotificationProvider>
+        </WebSocketProvider>
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }
 

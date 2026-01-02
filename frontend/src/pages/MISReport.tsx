@@ -61,16 +61,36 @@ interface ReportData {
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#82CA9D'];
 
 const reportTemplates: ReportData[] = [
+  // Daily Reports
   { id: '1', name: 'Daily Collection Report', type: 'Financial', lastGenerated: '2024-01-15', frequency: 'Daily' },
   { id: '2', name: 'OPD Statistics', type: 'Clinical', lastGenerated: '2024-01-15', frequency: 'Daily' },
   { id: '3', name: 'IPD Census Report', type: 'Clinical', lastGenerated: '2024-01-15', frequency: 'Daily' },
   { id: '4', name: 'Laboratory Summary', type: 'Diagnostic', lastGenerated: '2024-01-15', frequency: 'Daily' },
-  { id: '5', name: 'Revenue Analysis', type: 'Financial', lastGenerated: '2024-01-14', frequency: 'Weekly' },
-  { id: '6', name: 'Doctor Performance', type: 'Administrative', lastGenerated: '2024-01-14', frequency: 'Weekly' },
-  { id: '7', name: 'Department Comparison', type: 'Administrative', lastGenerated: '2024-01-10', frequency: 'Monthly' },
-  { id: '8', name: 'Inventory Usage Report', type: 'Inventory', lastGenerated: '2024-01-10', frequency: 'Monthly' },
-  { id: '9', name: 'Quality Indicators', type: 'Clinical', lastGenerated: '2024-01-01', frequency: 'Monthly' },
-  { id: '10', name: 'Financial Statement', type: 'Financial', lastGenerated: '2024-01-01', frequency: 'Monthly' },
+  { id: '5', name: 'Emergency Room Log', type: 'Clinical', lastGenerated: '2024-01-15', frequency: 'Daily' },
+  { id: '6', name: 'Admission-Discharge Summary', type: 'Clinical', lastGenerated: '2024-01-15', frequency: 'Daily' },
+  { id: '7', name: 'Pharmacy Dispensing Report', type: 'Operational', lastGenerated: '2024-01-15', frequency: 'Daily' },
+
+  // Weekly Reports
+  { id: '8', name: 'Revenue Analysis', type: 'Financial', lastGenerated: '2024-01-14', frequency: 'Weekly' },
+  { id: '9', name: 'Doctor Performance', type: 'Administrative', lastGenerated: '2024-01-14', frequency: 'Weekly' },
+  { id: '10', name: 'OT Utilization Report', type: 'Operational', lastGenerated: '2024-01-14', frequency: 'Weekly' },
+  { id: '11', name: 'Bed Turnover Report', type: 'Operational', lastGenerated: '2024-01-14', frequency: 'Weekly' },
+  { id: '12', name: 'Outstanding Bills Report', type: 'Financial', lastGenerated: '2024-01-14', frequency: 'Weekly' },
+  { id: '13', name: 'Nursing Shift Summary', type: 'Clinical', lastGenerated: '2024-01-14', frequency: 'Weekly' },
+
+  // Monthly Reports
+  { id: '14', name: 'Department Comparison', type: 'Administrative', lastGenerated: '2024-01-10', frequency: 'Monthly' },
+  { id: '15', name: 'Inventory Usage Report', type: 'Inventory', lastGenerated: '2024-01-10', frequency: 'Monthly' },
+  { id: '16', name: 'Quality Indicators', type: 'Clinical', lastGenerated: '2024-01-01', frequency: 'Monthly' },
+  { id: '17', name: 'Financial Statement', type: 'Financial', lastGenerated: '2024-01-01', frequency: 'Monthly' },
+  { id: '18', name: 'TPA Claims Summary', type: 'Financial', lastGenerated: '2024-01-01', frequency: 'Monthly' },
+  { id: '19', name: 'Mortality & Morbidity Report', type: 'Clinical', lastGenerated: '2024-01-01', frequency: 'Monthly' },
+  { id: '20', name: 'Infection Control Report', type: 'Clinical', lastGenerated: '2024-01-01', frequency: 'Monthly' },
+  { id: '21', name: 'Staff Attendance Summary', type: 'HR', lastGenerated: '2024-01-01', frequency: 'Monthly' },
+  { id: '22', name: 'Payroll Summary', type: 'HR', lastGenerated: '2024-01-01', frequency: 'Monthly' },
+  { id: '23', name: 'Equipment Maintenance Log', type: 'Operational', lastGenerated: '2024-01-01', frequency: 'Monthly' },
+  { id: '24', name: 'Length of Stay Analysis', type: 'Clinical', lastGenerated: '2024-01-01', frequency: 'Monthly' },
+  { id: '25', name: 'Referral Source Analysis', type: 'Administrative', lastGenerated: '2024-01-01', frequency: 'Monthly' },
 ];
 
 export default function MISReport() {

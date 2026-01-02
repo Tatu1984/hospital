@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from '@/components/ui/button';
+import { NotificationBell } from './NotificationBell';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -107,6 +108,7 @@ const MainLayout = () => {
       items: [
         { path: '/pharmacy', icon: Pill, label: 'Pharmacy' },
         { path: '/nurse-station', icon: Activity, label: 'Nursing' },
+        { path: '/cssd', icon: Scissors, label: 'CSSD' },
         { path: '/ambulance', icon: Ambulance, label: 'Transport' },
       ]
     },
@@ -131,8 +133,10 @@ const MainLayout = () => {
     {
       title: 'Admin & Reports',
       items: [
+        { path: '/live-dashboard', icon: Activity, label: 'Live Dashboard' },
         { path: '/mis-report', icon: BarChart3, label: 'Analytics' },
         { path: '/quality', icon: Star, label: 'Quality' },
+        { path: '/mrd-management', icon: ClipboardList, label: 'MRD' },
         { path: '/doctor-management', icon: UserCog, label: 'Doctor Management' },
         { path: '/master-data', icon: Settings, label: 'Master Data' },
         { path: '/system-control', icon: ShieldCheck, label: 'System Control' },
@@ -297,6 +301,7 @@ const MainLayout = () => {
             </div>
 
             <div className="flex items-center gap-4">
+              <NotificationBell />
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="outline" className="flex items-center gap-2 h-10">
@@ -314,7 +319,7 @@ const MainLayout = () => {
                 <DropdownMenuContent align="end" className="w-56 bg-white">
                   <DropdownMenuLabel>My Account</DropdownMenuLabel>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => navigate('/profile')}>
                     <User className="mr-2 h-4 w-4" />
                     <span>Profile</span>
                   </DropdownMenuItem>

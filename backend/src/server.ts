@@ -2,6 +2,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import bcrypt from 'bcryptjs';
+import { createServer } from 'http';
 
 // Import centralized database client (supports NeonDB serverless)
 import { prisma, disconnectPrisma } from './lib/db';
@@ -58,6 +59,9 @@ import { otpService } from './services/otpService';
 
 // Import IPD charge capture service
 import { ipdChargeCaptureService } from './services/ipdChargeCapture';
+
+// Import WebSocket service
+import { wsService } from './services/websocket';
 
 // Import patient deduplication service
 import { findPotentialDuplicates, mergePatients, getDuplicateStats } from './services/patientDeduplication';
@@ -158,6 +162,15 @@ import inventoryRoutes from './routes/inventory';
 
 // Import billing routes
 import billingRoutes from './routes/billing';
+
+// Import MRD routes
+import mrdRoutes from './routes/mrd';
+
+// Import CSSD routes
+import cssdRoutes from './routes/cssd';
+
+// Import Two-Factor Auth routes
+import twoFactorRoutes from './routes/twoFactor';
 
 // Import logger
 import { logger, auditLogger } from './utils/logger';
@@ -379,6 +392,44 @@ app.get('/api/ready', async (req: Request, res: Response) => {
 // Liveness probe (for Kubernetes/Docker)
 app.get('/api/live', (req: Request, res: Response) => {
   res.json({ alive: true, timestamp: new Date().toISOString() });
+});
+
+// WebSocket status endpoint
+app.get('/api/websocket/status', authenticateToken, requirePermission('system:manage'), (req: any, res: Response) => {
+  res.json({
+    status: 'ok',
+    connectedClients: wsService.getConnectedClientsCount(),
+    clients: wsService.getConnectedClients(),
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// Broadcast message via WebSocket (admin only)
+app.post('/api/websocket/broadcast', authenticateToken, requirePermission('system:manage'), (req: any, res: Response) => {
+  const { type, payload, targetRole, targetDepartment } = req.body;
+
+  let sent = 0;
+  if (targetRole) {
+    sent = wsService.sendToRole(targetRole, {
+      type: type || 'notification',
+      payload,
+      timestamp: new Date().toISOString(),
+    });
+  } else if (targetDepartment) {
+    sent = wsService.sendToDepartment(targetDepartment, {
+      type: type || 'notification',
+      payload,
+      timestamp: new Date().toISOString(),
+    });
+  } else {
+    sent = wsService.broadcast({
+      type: type || 'notification',
+      payload,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  res.json({ success: true, sentTo: sent });
 });
 
 // Auth routes - with rate limiting and validation
@@ -633,9 +684,24 @@ app.use('/api/radiology', authenticateToken, radiologyRoutes);
 app.use('/api/inventory', authenticateToken, inventoryRoutes);
 
 // ============================================
+// MRD (Medical Records Department) ROUTES
+// ============================================
+app.use('/api/mrd', authenticateToken, mrdRoutes);
+
+// ============================================
+// CSSD (Central Sterilization) ROUTES
+// ============================================
+app.use('/api/cssd', authenticateToken, cssdRoutes);
+
+// ============================================
 // BILLING ROUTES
 // ============================================
 app.use('/api/billing', authenticateToken, billingRoutes);
+
+// ============================================
+// TWO-FACTOR AUTH ROUTES
+// ============================================
+app.use('/api/2fa', authenticateToken, twoFactorRoutes);
 
 // Patient routes - with validation and RBAC
 app.get('/api/patients', authenticateToken, requirePermission('patients:view'), validateQuery(searchSchema), async (req: any, res: Response) => {
@@ -7314,6 +7380,238 @@ app.post('/api/hr/leaves/:id/reject', authenticateToken, async (req: any, res: R
 });
 
 // ===========================
+// PAYROLL APIs
+// ===========================
+
+// Get payroll records
+app.get('/api/hr/payroll', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { month, year, status } = req.query;
+    const where: any = {};
+
+    if (month) where.month = parseInt(month as string);
+    if (year) where.year = parseInt(year as string);
+    if (status) where.status = status;
+
+    const payroll = await prisma.payroll.findMany({
+      where,
+      orderBy: [{ year: 'desc' }, { month: 'desc' }],
+    });
+
+    // Get employee details for each payroll record
+    const employeeIds = [...new Set(payroll.map(p => p.employeeId))];
+    const employees = await prisma.employee.findMany({
+      where: { id: { in: employeeIds } },
+      select: { id: true, name: true, employeeId: true, department: true, designation: true },
+    });
+
+    const employeeMap = new Map(employees.map(e => [e.id, e]));
+    const payrollWithEmployees = payroll.map(p => ({
+      ...p,
+      employee: employeeMap.get(p.employeeId),
+    }));
+
+    res.json(payrollWithEmployees);
+  } catch (error) {
+    logger.error('Get payroll error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Generate payroll for a month
+app.post('/api/hr/payroll/generate', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { month, year } = req.body;
+
+    // Get all active employees
+    const employees = await prisma.employee.findMany({
+      where: { status: 'active' },
+    });
+
+    // Calculate working days in the month
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 0);
+    let workingDays = 0;
+    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+      const day = d.getDay();
+      if (day !== 0) workingDays++; // Exclude Sundays
+    }
+
+    const payrollRecords = [];
+
+    for (const employee of employees) {
+      // Get attendance for the month
+      const attendance = await prisma.employeeAttendance.findMany({
+        where: {
+          employeeId: employee.id,
+          date: {
+            gte: startDate,
+            lte: endDate,
+          },
+        },
+      });
+
+      const presentDays = attendance.filter(a => a.status === 'present').length;
+      const halfDays = attendance.filter(a => a.status === 'half_day').length;
+      const leaveDays = attendance.filter(a => a.status === 'on_leave').length;
+
+      const effectivePresentDays = presentDays + (halfDays * 0.5);
+      const basicSalary = Number(employee.salary || 0);
+      const perDaySalary = basicSalary / workingDays;
+      const deductions = (workingDays - effectivePresentDays - leaveDays) * perDaySalary;
+      const netSalary = basicSalary - deductions;
+
+      // Upsert payroll record
+      const payroll = await prisma.payroll.upsert({
+        where: {
+          employeeId_month_year: {
+            employeeId: employee.id,
+            month,
+            year,
+          },
+        },
+        update: {
+          basicSalary,
+          deductions,
+          netSalary,
+          workingDays,
+          presentDays: Math.floor(effectivePresentDays),
+          leaveDays,
+          status: 'draft',
+        },
+        create: {
+          employeeId: employee.id,
+          month,
+          year,
+          basicSalary,
+          allowances: 0,
+          deductions,
+          overtime: 0,
+          netSalary,
+          workingDays,
+          presentDays: Math.floor(effectivePresentDays),
+          leaveDays,
+          status: 'draft',
+        },
+      });
+
+      payrollRecords.push(payroll);
+    }
+
+    res.json({
+      message: `Generated payroll for ${payrollRecords.length} employees`,
+      count: payrollRecords.length,
+    });
+  } catch (error) {
+    logger.error('Generate payroll error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Process payroll (finalize)
+app.post('/api/hr/payroll/:id/process', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const payroll = await prisma.payroll.update({
+      where: { id },
+      data: {
+        status: 'processed',
+        processedBy: req.user.userId,
+        processedAt: new Date(),
+      },
+    });
+
+    res.json({ message: 'Payroll processed', payroll });
+  } catch (error) {
+    logger.error('Process payroll error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Mark payroll as paid
+app.post('/api/hr/payroll/:id/pay', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const payroll = await prisma.payroll.update({
+      where: { id },
+      data: {
+        status: 'paid',
+        paidAt: new Date(),
+      },
+    });
+
+    res.json({ message: 'Payroll marked as paid', payroll });
+  } catch (error) {
+    logger.error('Pay payroll error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update payroll record
+app.put('/api/hr/payroll/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { allowances, deductions, overtime, remarks } = req.body;
+
+    const existing = await prisma.payroll.findUnique({ where: { id } });
+    if (!existing) {
+      return res.status(404).json({ error: 'Payroll record not found' });
+    }
+
+    const netSalary = Number(existing.basicSalary) + Number(allowances || 0) + Number(overtime || 0) - Number(deductions || 0);
+
+    const payroll = await prisma.payroll.update({
+      where: { id },
+      data: {
+        allowances: allowances || existing.allowances,
+        deductions: deductions || existing.deductions,
+        overtime: overtime || existing.overtime,
+        netSalary,
+        remarks,
+      },
+    });
+
+    res.json(payroll);
+  } catch (error) {
+    logger.error('Update payroll error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get payroll summary for a month
+app.get('/api/hr/payroll/summary', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { month, year } = req.query;
+
+    const payroll = await prisma.payroll.findMany({
+      where: {
+        month: parseInt(month as string),
+        year: parseInt(year as string),
+      },
+    });
+
+    const summary = {
+      totalEmployees: payroll.length,
+      totalBasicSalary: payroll.reduce((sum, p) => sum + Number(p.basicSalary), 0),
+      totalAllowances: payroll.reduce((sum, p) => sum + Number(p.allowances), 0),
+      totalDeductions: payroll.reduce((sum, p) => sum + Number(p.deductions), 0),
+      totalOvertime: payroll.reduce((sum, p) => sum + Number(p.overtime), 0),
+      totalNetSalary: payroll.reduce((sum, p) => sum + Number(p.netSalary), 0),
+      draft: payroll.filter(p => p.status === 'draft').length,
+      processed: payroll.filter(p => p.status === 'processed').length,
+      paid: payroll.filter(p => p.status === 'paid').length,
+    };
+
+    res.json(summary);
+  } catch (error) {
+    logger.error('Get payroll summary error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ===========================
 // INVENTORY & PROCUREMENT APIs
 // ===========================
 
@@ -7469,6 +7767,273 @@ app.put('/api/inventory/purchase-orders/:id', authenticateToken, async (req: any
     res.json(order);
   } catch (error) {
     logger.error('Update purchase order error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ===========================
+// GOODS RECEIPT NOTE (GRN) APIs
+// ===========================
+
+// Get all GRNs
+app.get('/api/inventory/grn', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { status, vendor } = req.query;
+    const where: any = {};
+
+    if (status) where.status = status;
+    if (vendor) where.vendorName = { contains: vendor as string, mode: 'insensitive' };
+
+    const grns = await prisma.goodsReceipt.findMany({
+      where,
+      include: {
+        items: {
+          include: { item: { select: { name: true, code: true, unit: true } } }
+        }
+      },
+      orderBy: { receivedDate: 'desc' },
+    });
+
+    res.json(grns);
+  } catch (error) {
+    logger.error('Get GRNs error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Create GRN
+app.post('/api/inventory/grn', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { vendorName, vendorInvoice, invoiceDate, items, poId, remarks } = req.body;
+
+    // Generate GRN number
+    const lastGrn = await prisma.goodsReceipt.findFirst({
+      orderBy: { createdAt: 'desc' },
+    });
+    const grnNumber = `GRN-${String((lastGrn ? parseInt(lastGrn.grnNumber.split('-')[1] || '0') : 0) + 1).padStart(6, '0')}`;
+
+    const totalAmount = items.reduce((sum: number, item: any) => sum + (item.quantity * item.unitPrice), 0);
+
+    const grn = await prisma.goodsReceipt.create({
+      data: {
+        grnNumber,
+        poId,
+        vendorName,
+        vendorInvoice,
+        invoiceDate: invoiceDate ? new Date(invoiceDate) : null,
+        receivedBy: req.user.userId,
+        totalAmount,
+        remarks,
+        items: {
+          create: items.map((item: any) => ({
+            itemId: item.itemId,
+            quantityOrdered: item.quantityOrdered || 0,
+            quantityReceived: item.quantity,
+            unitPrice: item.unitPrice,
+            amount: item.quantity * item.unitPrice,
+            batchNumber: item.batchNumber,
+            expiryDate: item.expiryDate ? new Date(item.expiryDate) : null,
+          })),
+        },
+      },
+      include: { items: true },
+    });
+
+    res.status(201).json(grn);
+  } catch (error) {
+    logger.error('Create GRN error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Post GRN (update stock)
+app.post('/api/inventory/grn/:id/post', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const grn = await prisma.goodsReceipt.findUnique({
+      where: { id },
+      include: { items: true },
+    });
+
+    if (!grn) {
+      return res.status(404).json({ error: 'GRN not found' });
+    }
+
+    if (grn.status === 'posted') {
+      return res.status(400).json({ error: 'GRN already posted' });
+    }
+
+    // Update stock for each item
+    for (const item of grn.items) {
+      await prisma.stock.upsert({
+        where: {
+          itemId_storeId_batchNumber: {
+            itemId: item.itemId,
+            storeId: 'main', // Default store
+            batchNumber: item.batchNumber || '',
+          }
+        },
+        update: {
+          quantity: { increment: item.quantityReceived },
+          expiryDate: item.expiryDate,
+        },
+        create: {
+          itemId: item.itemId,
+          storeId: 'main',
+          batchNumber: item.batchNumber || '',
+          quantity: item.quantityReceived,
+          expiryDate: item.expiryDate,
+        },
+      });
+    }
+
+    // Update GRN status
+    await prisma.goodsReceipt.update({
+      where: { id },
+      data: { status: 'posted' },
+    });
+
+    res.json({ message: 'GRN posted and stock updated' });
+  } catch (error) {
+    logger.error('Post GRN error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ===========================
+// STOCK TRANSFER APIs
+// ===========================
+
+// Get all stock transfers
+app.get('/api/inventory/transfers', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { status, fromStore, toStore } = req.query;
+    const where: any = {};
+
+    if (status) where.status = status;
+    if (fromStore) where.fromStoreId = fromStore;
+    if (toStore) where.toStoreId = toStore;
+
+    const transfers = await prisma.stockTransfer.findMany({
+      where,
+      include: {
+        items: {
+          include: { item: { select: { name: true, code: true, unit: true } } }
+        }
+      },
+      orderBy: { transferDate: 'desc' },
+    });
+
+    res.json(transfers);
+  } catch (error) {
+    logger.error('Get stock transfers error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Create stock transfer
+app.post('/api/inventory/transfers', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { fromStoreId, toStoreId, items, remarks } = req.body;
+
+    // Generate transfer number
+    const lastTransfer = await prisma.stockTransfer.findFirst({
+      orderBy: { createdAt: 'desc' },
+    });
+    const transferNumber = `TRF-${String((lastTransfer ? parseInt(lastTransfer.transferNumber.split('-')[1] || '0') : 0) + 1).padStart(6, '0')}`;
+
+    const transfer = await prisma.stockTransfer.create({
+      data: {
+        transferNumber,
+        fromStoreId,
+        toStoreId,
+        transferredBy: req.user.userId,
+        remarks,
+        items: {
+          create: items.map((item: any) => ({
+            itemId: item.itemId,
+            quantity: item.quantity,
+            batchNumber: item.batchNumber,
+          })),
+        },
+      },
+      include: { items: true },
+    });
+
+    res.status(201).json(transfer);
+  } catch (error) {
+    logger.error('Create stock transfer error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Complete stock transfer (receive at destination)
+app.post('/api/inventory/transfers/:id/receive', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const transfer = await prisma.stockTransfer.findUnique({
+      where: { id },
+      include: { items: true },
+    });
+
+    if (!transfer) {
+      return res.status(404).json({ error: 'Transfer not found' });
+    }
+
+    if (transfer.status === 'received') {
+      return res.status(400).json({ error: 'Transfer already received' });
+    }
+
+    // Deduct from source store and add to destination store
+    for (const item of transfer.items) {
+      // Deduct from source
+      await prisma.stock.updateMany({
+        where: {
+          itemId: item.itemId,
+          storeId: transfer.fromStoreId,
+          batchNumber: item.batchNumber || '',
+        },
+        data: {
+          quantity: { decrement: item.quantity },
+        },
+      });
+
+      // Add to destination
+      await prisma.stock.upsert({
+        where: {
+          itemId_storeId_batchNumber: {
+            itemId: item.itemId,
+            storeId: transfer.toStoreId,
+            batchNumber: item.batchNumber || '',
+          }
+        },
+        update: {
+          quantity: { increment: item.quantity },
+        },
+        create: {
+          itemId: item.itemId,
+          storeId: transfer.toStoreId,
+          batchNumber: item.batchNumber || '',
+          quantity: item.quantity,
+        },
+      });
+    }
+
+    // Update transfer status
+    await prisma.stockTransfer.update({
+      where: { id },
+      data: {
+        status: 'received',
+        receivedBy: req.user.userId,
+        receivedAt: new Date(),
+      },
+    });
+
+    res.json({ message: 'Transfer received and stock updated' });
+  } catch (error) {
+    logger.error('Receive stock transfer error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -12874,10 +13439,17 @@ export { app };
 // Only start the server if not in Vercel serverless environment
 const isVercel = process.env.VERCEL === '1';
 
+// Create HTTP server (needed for WebSocket)
+const httpServer = createServer(app);
+
 if (!isVercel) {
-  app.listen(PORT, () => {
+  // Initialize WebSocket server
+  wsService.initialize(httpServer);
+
+  httpServer.listen(PORT, () => {
     logger.info(`Hospital ERP Backend running on http://localhost:${PORT}`);
     logger.info(`API Health: http://localhost:${PORT}/api/health`);
+    logger.info(`WebSocket: ws://localhost:${PORT}/ws`);
 
     // Start appointment reminder service (checks every 15 minutes)
     // Note: In serverless, use Vercel Cron Jobs instead
@@ -12891,6 +13463,7 @@ if (!isVercel) {
   process.on('SIGTERM', async () => {
     logger.info('SIGTERM received, shutting down gracefully');
     reminderService.stop();
+    wsService.shutdown();
     await disconnectPrisma();
     process.exit(0);
   });
@@ -12898,6 +13471,7 @@ if (!isVercel) {
   process.on('SIGINT', async () => {
     logger.info('SIGINT received, shutting down gracefully');
     reminderService.stop();
+    wsService.shutdown();
     await disconnectPrisma();
     process.exit(0);
   });

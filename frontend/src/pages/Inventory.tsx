@@ -209,6 +209,8 @@ export default function Inventory() {
               <TabsTrigger value="lowstock">Low Stock ({stats.lowStock})</TabsTrigger>
               <TabsTrigger value="outofstock">Out of Stock ({stats.outOfStock})</TabsTrigger>
               <TabsTrigger value="orders">Purchase Orders</TabsTrigger>
+              <TabsTrigger value="grn">Goods Receipt</TabsTrigger>
+              <TabsTrigger value="transfers">Stock Transfers</TabsTrigger>
             </TabsList>
 
             <TabsContent value="all">
@@ -381,6 +383,73 @@ export default function Inventory() {
                   )}
                 </TableBody>
               </Table>
+            </TabsContent>
+
+            {/* Goods Receipt Tab */}
+            <TabsContent value="grn">
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-lg font-semibold">Goods Receipt Notes</h3>
+                  <Button onClick={() => alert('GRN form coming soon')}>
+                    <Plus className="w-4 h-4 mr-2" />
+                    New GRN
+                  </Button>
+                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>GRN #</TableHead>
+                      <TableHead>Vendor</TableHead>
+                      <TableHead>Invoice #</TableHead>
+                      <TableHead>Received Date</TableHead>
+                      <TableHead>Items</TableHead>
+                      <TableHead>Total Amount</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    <TableRow>
+                      <TableCell colSpan={8} className="text-center py-8 text-slate-500">
+                        No goods receipts found. Create a new GRN to receive goods.
+                      </TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
+            </TabsContent>
+
+            {/* Stock Transfers Tab */}
+            <TabsContent value="transfers">
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-lg font-semibold">Stock Transfers</h3>
+                  <Button onClick={() => alert('Transfer form coming soon')}>
+                    <Plus className="w-4 h-4 mr-2" />
+                    New Transfer
+                  </Button>
+                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Transfer #</TableHead>
+                      <TableHead>From Store</TableHead>
+                      <TableHead>To Store</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Items</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center py-8 text-slate-500">
+                        No stock transfers found. Create a new transfer to move stock between stores.
+                      </TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
             </TabsContent>
           </Tabs>
         </CardContent>
