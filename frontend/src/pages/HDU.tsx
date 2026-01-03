@@ -113,7 +113,7 @@ export default function HDU() {
         id: bed.id,
         bedNumber: bed.bedNumber,
         hduUnit: bed.ward?.name || 'HDU',
-        status: bed.status === 'occupied' ? 'OCCUPIED' : 'AVAILABLE',
+        status: bed.status === 'occupied' ? 'occupied' : 'vacant',
         patient: bed.currentAdmission?.patient ? {
           id: bed.currentAdmission.patient.id,
           name: bed.currentAdmission.patient.name,
@@ -146,19 +146,19 @@ export default function HDU() {
           id: 'hdu-1',
           bedNumber: 'HDU-01',
           hduUnit: 'High Dependency Unit',
-          status: 'AVAILABLE'
+          status: 'vacant'
         },
         {
           id: 'hdu-2',
           bedNumber: 'HDU-02',
           hduUnit: 'High Dependency Unit',
-          status: 'AVAILABLE'
+          status: 'vacant'
         },
         {
           id: 'hdu-3',
           bedNumber: 'HDU-03',
           hduUnit: 'High Dependency Unit',
-          status: 'AVAILABLE'
+          status: 'vacant'
         }
       ]);
     }
@@ -276,8 +276,8 @@ export default function HDU() {
     fetchAvailableBeds(wardType);
   };
 
-  const occupiedBeds = hduBeds.filter(b => b.status === 'OCCUPIED');
-  const availableBedsList = hduBeds.filter(b => b.status === 'AVAILABLE');
+  const occupiedBeds = hduBeds.filter(b => b.status === 'occupied');
+  const availableBedsList = hduBeds.filter(b => b.status === 'vacant');
 
   const stats = {
     totalBeds: hduBeds.length,
@@ -394,20 +394,20 @@ export default function HDU() {
             <TabsContent value="all">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {hduBeds.map((bed) => (
-                  <Card key={bed.id} className={bed.status === 'OCCUPIED' ? 'border-purple-200 bg-purple-50' : ''}>
+                  <Card key={bed.id} className={bed.status === 'occupied' ? 'border-purple-200 bg-purple-50' : ''}>
                     <CardHeader className="pb-3">
                       <div className="flex justify-between items-start">
                         <div>
                           <CardTitle className="text-lg">{bed.bedNumber}</CardTitle>
                           <p className="text-sm text-slate-500">{bed.hduUnit}</p>
                         </div>
-                        <Badge variant={bed.status === 'OCCUPIED' ? 'default' : 'secondary'}>
+                        <Badge variant={bed.status === 'occupied' ? 'default' : 'secondary'}>
                           {bed.status}
                         </Badge>
                       </div>
                     </CardHeader>
                     <CardContent>
-                      {bed.status === 'OCCUPIED' && bed.patient ? (
+                      {bed.status === 'occupied' && bed.patient ? (
                         <div className="space-y-3">
                           <div>
                             <div className="font-medium">{bed.patient.name}</div>
