@@ -6139,6 +6139,54 @@ app.get('/api/admissions', authenticateToken, async (req: any, res: Response) =>
   }
 });
 
+// Get single admission by ID
+app.get('/api/admissions/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const admission = await prisma.admission.findUnique({
+      where: { id },
+      include: {
+        patient: {
+          select: {
+            id: true,
+            name: true,
+            mrn: true,
+            dob: true,
+            gender: true,
+            bloodGroup: true,
+            contact: true,
+            email: true,
+            address: true,
+            city: true,
+            state: true,
+            emergencyContact: true,
+            allergies: true
+          }
+        },
+        bed: {
+          include: {
+            ward: true
+          }
+        },
+        admittingDoctor: {
+          select: { id: true, name: true, email: true }
+        },
+        encounter: true
+      }
+    });
+
+    if (!admission) {
+      return res.status(404).json({ error: 'Admission not found' });
+    }
+
+    res.json(admission);
+  } catch (error) {
+    logger.error('Get admission by ID error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.post('/api/admissions/:id/discharge', authenticateToken, validateBody(dischargeSchema), async (req: any, res: Response) => {
   try {
     const { id } = req.params;
