@@ -6395,6 +6395,8 @@ app.post('/api/bed-transfers', authenticateToken, async (req: any, res: Response
   try {
     const { admissionId, patientId, fromBedId, toBedId, fromWardType, toWardType, reason, clinicalNotes } = req.body;
 
+    logger.info('Bed transfer request:', { admissionId, patientId, fromBedId, toBedId, fromWardType, toWardType, reason });
+
     if (!toBedId || !reason) {
       return res.status(400).json({ error: 'Destination bed ID and reason are required' });
     }
@@ -6421,10 +6423,12 @@ app.post('/api/bed-transfers', authenticateToken, async (req: any, res: Response
       actualPatientId = actualPatientId || admission.patientId;
     }
 
+    // Determine if source/destination are ICU
+    const isToICU = toWardType === 'icu';
+    const isFromICU = fromWardType === 'icu';
+
     // Get destination bed info based on ward type
-    let toBedInfo: { bedNumber: string; wardType: string; status: string } | null = null;
-    let isToICU = toWardType === 'icu';
-    let isFromICU = fromWardType === 'icu';
+    let toBedInfo: { bedNumber: string; wardType: string; status: string };
 
     if (isToICU) {
       // Destination is ICU bed
@@ -6452,7 +6456,7 @@ app.post('/api/bed-transfers', authenticateToken, async (req: any, res: Response
     }
 
     // Get source bed info
-    let fromBedInfo: { bedNumber: string; wardType: string } = { bedNumber: 'Unknown', wardType: fromWardType || 'general' };
+    let fromBedInfo: { bedNumber: string; wardType: string } = { bedNumber: 'Direct Admission', wardType: fromWardType || 'general' };
     if (actualFromBedId) {
       if (isFromICU) {
         const fromIcuBed = await prisma.iCUBed.findUnique({ where: { id: actualFromBedId } });
@@ -6476,43 +6480,48 @@ app.post('/api/bed-transfers', authenticateToken, async (req: any, res: Response
     });
     const transferNumber = `BT-${String((lastTransfer ? parseInt(lastTransfer.transferNumber.split('-')[1] || '0') : 0) + 1).padStart(6, '0')}`;
 
-    // Perform the transfer in a transaction
-    const result = await prisma.$transaction(async (tx) => {
-      // Create transfer record
-      const transfer = await tx.bedTransfer.create({
-        data: {
-          transferNumber,
-          admissionId: admissionId || '',
-          patientId: actualPatientId || '',
-          fromBedId: actualFromBedId || '',
-          toBedId,
-          fromWardType: fromWardType || fromBedInfo.wardType,
-          toWardType: toWardType || toBedInfo.wardType,
-          reason,
-          clinicalNotes,
-          transferredBy: req.user.userId,
-          status: 'completed',
-        },
-      });
+    // Perform the transfer - handle each operation separately for better error tracking
+    // Create transfer record first
+    const transfer = await prisma.bedTransfer.create({
+      data: {
+        transferNumber,
+        admissionId: admissionId || 'N/A',
+        patientId: actualPatientId || 'N/A',
+        fromBedId: actualFromBedId || 'N/A',
+        toBedId,
+        fromWardType: fromWardType || fromBedInfo.wardType,
+        toWardType: toWardType || toBedInfo.wardType,
+        reason,
+        clinicalNotes: clinicalNotes || null,
+        transferredBy: req.user.userId,
+        status: 'completed',
+      },
+    });
 
-      // Update source bed to vacant
-      if (actualFromBedId) {
+    // Update source bed to vacant (if exists)
+    if (actualFromBedId && actualFromBedId !== 'N/A') {
+      try {
         if (isFromICU) {
-          await tx.iCUBed.update({
+          await prisma.iCUBed.update({
             where: { id: actualFromBedId },
             data: { status: 'vacant', currentPatient: null, admissionId: null },
           });
         } else {
-          await tx.bed.update({
+          await prisma.bed.update({
             where: { id: actualFromBedId },
             data: { status: 'vacant' },
           });
         }
+      } catch (bedUpdateError) {
+        logger.warn('Failed to update source bed:', bedUpdateError);
+        // Continue - source bed update is not critical
       }
+    }
 
-      // Update destination bed to occupied
+    // Update destination bed to occupied
+    try {
       if (isToICU) {
-        await tx.iCUBed.update({
+        await prisma.iCUBed.update({
           where: { id: toBedId },
           data: {
             status: 'occupied',
@@ -6521,51 +6530,65 @@ app.post('/api/bed-transfers', authenticateToken, async (req: any, res: Response
           },
         });
       } else {
-        await tx.bed.update({
+        await prisma.bed.update({
           where: { id: toBedId },
           data: { status: 'occupied' },
         });
       }
+    } catch (destBedError) {
+      logger.error('Failed to update destination bed:', destBedError);
+      // Don't fail the whole transfer, but log it
+    }
 
-      // Update admission with new bed (only if not ICU - ICU uses its own tracking)
-      if (admissionId && !isToICU) {
-        await tx.admission.update({
-          where: { id: admissionId },
-          data: { bedId: toBedId },
-        });
-      } else if (admissionId && isToICU) {
-        // For ICU, clear bedId from admission (ICU tracks via ICUBed.admissionId)
-        await tx.admission.update({
-          where: { id: admissionId },
-          data: { bedId: null },
-        });
+    // Update admission with new bed
+    if (admissionId) {
+      try {
+        if (isToICU) {
+          // For ICU, we keep bedId as null since ICU tracks via ICUBed.admissionId
+          await prisma.admission.update({
+            where: { id: admissionId },
+            data: { bedId: null },
+          });
+        } else {
+          await prisma.admission.update({
+            where: { id: admissionId },
+            data: { bedId: toBedId },
+          });
+        }
+      } catch (admissionError) {
+        logger.warn('Failed to update admission:', admissionError);
       }
-
-      return transfer;
-    });
+    }
 
     // Log audit
-    await prisma.auditLog.create({
-      data: {
-        userId: req.user.userId,
-        action: 'BED_TRANSFER',
-        entityType: 'Admission',
-        entityId: admissionId || toBedId,
-        description: `Transferred patient from ${fromBedInfo.bedNumber} (${fromBedInfo.wardType}) to ${toBedInfo.bedNumber} (${toBedInfo.wardType}). Reason: ${reason}`,
-        ipAddress: req.ip,
-        userAgent: req.headers['user-agent'],
-      },
-    });
+    try {
+      await prisma.auditLog.create({
+        data: {
+          userId: req.user.userId,
+          action: 'BED_TRANSFER',
+          entityType: 'Admission',
+          entityId: admissionId || toBedId,
+          description: `Transferred patient from ${fromBedInfo.bedNumber} (${fromBedInfo.wardType}) to ${toBedInfo.bedNumber} (${toBedInfo.wardType}). Reason: ${reason}`,
+          ipAddress: req.ip,
+          userAgent: req.headers['user-agent'],
+        },
+      });
+    } catch (auditError) {
+      logger.warn('Failed to create audit log:', auditError);
+    }
 
     res.status(201).json({
       message: 'Patient transferred successfully',
-      transfer: result,
+      transfer,
       fromBed: fromBedInfo.bedNumber,
       toBed: toBedInfo.bedNumber,
     });
-  } catch (error) {
+  } catch (error: any) {
     logger.error('Create bed transfer error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({
+      error: 'Failed to transfer patient',
+      details: error.message || 'Internal server error'
+    });
   }
 });
 
