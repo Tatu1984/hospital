@@ -6395,7 +6395,8 @@ app.post('/api/bed-transfers', authenticateToken, async (req: any, res: Response
   try {
     const { admissionId, patientId, fromBedId, toBedId, fromWardType, toWardType, reason, clinicalNotes } = req.body;
 
-    logger.info('Bed transfer request:', { admissionId, patientId, fromBedId, toBedId, fromWardType, toWardType, reason });
+    logger.info('=== BED TRANSFER REQUEST START ===');
+    logger.info('Request body:', JSON.stringify({ admissionId, patientId, fromBedId, toBedId, fromWardType, toWardType, reason }));
 
     if (!toBedId || !reason) {
       return res.status(400).json({ error: 'Destination bed ID and reason are required' });
@@ -6426,13 +6427,16 @@ app.post('/api/bed-transfers', authenticateToken, async (req: any, res: Response
     // Determine if source/destination are ICU
     const isToICU = toWardType === 'icu';
     const isFromICU = fromWardType === 'icu';
+    logger.info('Ward types:', { isToICU, isFromICU, toWardType, fromWardType });
 
     // Get destination bed info based on ward type
     let toBedInfo: { bedNumber: string; wardType: string; status: string };
 
     if (isToICU) {
       // Destination is ICU bed
+      logger.info('Looking up ICU bed:', toBedId);
       const icuBed = await prisma.iCUBed.findUnique({ where: { id: toBedId } });
+      logger.info('ICU bed result:', icuBed ? 'found' : 'not found');
       if (!icuBed) {
         return res.status(404).json({ error: 'ICU bed not found' });
       }
@@ -6482,6 +6486,7 @@ app.post('/api/bed-transfers', authenticateToken, async (req: any, res: Response
 
     // Perform the transfer - handle each operation separately for better error tracking
     // Create transfer record first
+    logger.info('Creating bed transfer record with number:', transferNumber);
     const transfer = await prisma.bedTransfer.create({
       data: {
         transferNumber,
@@ -6577,6 +6582,8 @@ app.post('/api/bed-transfers', authenticateToken, async (req: any, res: Response
       logger.warn('Failed to create audit log:', auditError);
     }
 
+    logger.info('=== BED TRANSFER SUCCESS ===');
+    logger.info('Transfer created:', transfer.transferNumber);
     res.status(201).json({
       message: 'Patient transferred successfully',
       transfer,
@@ -6584,10 +6591,15 @@ app.post('/api/bed-transfers', authenticateToken, async (req: any, res: Response
       toBed: toBedInfo.bedNumber,
     });
   } catch (error: any) {
-    logger.error('Create bed transfer error:', error);
+    logger.error('=== BED TRANSFER ERROR ===');
+    logger.error('Error name:', error.name);
+    logger.error('Error message:', error.message);
+    logger.error('Error code:', error.code);
+    logger.error('Error stack:', error.stack);
     res.status(500).json({
       error: 'Failed to transfer patient',
-      details: error.message || 'Internal server error'
+      details: error.message || 'Internal server error',
+      code: error.code
     });
   }
 });
