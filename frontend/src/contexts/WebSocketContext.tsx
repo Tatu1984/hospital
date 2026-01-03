@@ -47,9 +47,9 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   const [lastMessage, setLastMessage] = useState<WSMessage | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const subscribersRef = useRef<Map<WSEventType, Set<(payload: any) => void>>>(new Map());
-  const pingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Get WebSocket URL from environment or construct from current location
   const getWebSocketUrl = useCallback(() => {
