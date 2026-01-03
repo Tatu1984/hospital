@@ -6316,15 +6316,41 @@ app.get('/api/bed-transfers/available-beds', authenticateToken, async (req: any,
   try {
     const { wardType, excludeBedId } = req.query;
 
+    // For ICU transfers, query the ICUBed table
+    if (wardType === 'icu') {
+      const icuBeds = await prisma.iCUBed.findMany({
+        where: {
+          status: 'vacant',
+          ...(excludeBedId ? { id: { not: excludeBedId as string } } : {}),
+        },
+        orderBy: { bedNumber: 'asc' },
+      });
+
+      // Transform ICU beds to match expected format
+      const transformedBeds = icuBeds.map(bed => ({
+        id: bed.id,
+        bedNumber: bed.bedNumber,
+        wardName: bed.icuUnit,
+        wardType: 'icu',
+        category: 'icu',
+        status: bed.status,
+      }));
+
+      return res.json(transformedBeds);
+    }
+
+    // For other ward types, query regular Bed table
+    // Check both ward.type AND bed.category for flexibility
     const beds = await prisma.bed.findMany({
       where: {
         branchId: req.user.branchId,
         status: 'vacant',
         ...(excludeBedId ? { id: { not: excludeBedId as string } } : {}),
         ...(wardType ? {
-          ward: {
-            type: wardType as string,
-          },
+          OR: [
+            { ward: { type: wardType as string } },
+            { category: wardType as string },
+          ],
         } : {}),
       },
       include: {
@@ -6345,7 +6371,19 @@ app.get('/api/bed-transfers/available-beds', authenticateToken, async (req: any,
       ],
     });
 
-    res.json(beds);
+    // Transform to expected format
+    const transformedBeds = beds.map(bed => ({
+      id: bed.id,
+      bedNumber: bed.bedNumber,
+      wardName: bed.ward?.name || 'Unassigned',
+      wardType: bed.ward?.type || bed.category,
+      category: bed.category,
+      status: bed.status,
+      floor: bed.floor || bed.ward?.floor,
+      dailyRate: bed.dailyRate || bed.ward?.tariffPerDay,
+    }));
+
+    res.json(transformedBeds);
   } catch (error) {
     logger.error('Get available beds error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -6355,43 +6393,81 @@ app.get('/api/bed-transfers/available-beds', authenticateToken, async (req: any,
 // Create bed transfer (transfer patient between beds/wards)
 app.post('/api/bed-transfers', authenticateToken, async (req: any, res: Response) => {
   try {
-    const { admissionId, toBedId, reason, clinicalNotes } = req.body;
+    const { admissionId, patientId, fromBedId, toBedId, fromWardType, toWardType, reason, clinicalNotes } = req.body;
 
-    if (!admissionId || !toBedId || !reason) {
-      return res.status(400).json({ error: 'Admission ID, destination bed ID, and reason are required' });
+    if (!toBedId || !reason) {
+      return res.status(400).json({ error: 'Destination bed ID and reason are required' });
     }
 
-    // Get the admission with current bed info
-    const admission = await prisma.admission.findUnique({
-      where: { id: admissionId },
-      include: {
-        bed: {
-          include: { ward: true },
+    // Get the admission with current bed info (if admissionId provided)
+    let admission = null;
+    let actualFromBedId = fromBedId;
+    let actualPatientId = patientId;
+
+    if (admissionId) {
+      admission = await prisma.admission.findUnique({
+        where: { id: admissionId },
+        include: {
+          bed: { include: { ward: true } },
+          patient: true,
         },
-        patient: true,
-      },
-    });
+      });
 
-    if (!admission) {
-      return res.status(404).json({ error: 'Admission not found' });
+      if (!admission) {
+        return res.status(404).json({ error: 'Admission not found' });
+      }
+
+      actualFromBedId = actualFromBedId || admission.bedId;
+      actualPatientId = actualPatientId || admission.patientId;
     }
 
-    if (!admission.bedId) {
-      return res.status(400).json({ error: 'Patient is not currently assigned to a bed' });
+    // Get destination bed info based on ward type
+    let toBedInfo: { bedNumber: string; wardType: string; status: string } | null = null;
+    let isToICU = toWardType === 'icu';
+    let isFromICU = fromWardType === 'icu';
+
+    if (isToICU) {
+      // Destination is ICU bed
+      const icuBed = await prisma.iCUBed.findUnique({ where: { id: toBedId } });
+      if (!icuBed) {
+        return res.status(404).json({ error: 'ICU bed not found' });
+      }
+      if (icuBed.status !== 'vacant') {
+        return res.status(400).json({ error: 'ICU bed is not available' });
+      }
+      toBedInfo = { bedNumber: icuBed.bedNumber, wardType: 'icu', status: icuBed.status };
+    } else {
+      // Destination is regular bed
+      const toBed = await prisma.bed.findUnique({
+        where: { id: toBedId },
+        include: { ward: true },
+      });
+      if (!toBed) {
+        return res.status(404).json({ error: 'Destination bed not found' });
+      }
+      if (toBed.status !== 'vacant') {
+        return res.status(400).json({ error: 'Destination bed is not available' });
+      }
+      toBedInfo = { bedNumber: toBed.bedNumber, wardType: toBed.ward?.type || toBed.category, status: toBed.status };
     }
 
-    // Get the destination bed
-    const toBed = await prisma.bed.findUnique({
-      where: { id: toBedId },
-      include: { ward: true },
-    });
-
-    if (!toBed) {
-      return res.status(404).json({ error: 'Destination bed not found' });
-    }
-
-    if (toBed.status !== 'vacant') {
-      return res.status(400).json({ error: 'Destination bed is not available' });
+    // Get source bed info
+    let fromBedInfo: { bedNumber: string; wardType: string } = { bedNumber: 'Unknown', wardType: fromWardType || 'general' };
+    if (actualFromBedId) {
+      if (isFromICU) {
+        const fromIcuBed = await prisma.iCUBed.findUnique({ where: { id: actualFromBedId } });
+        if (fromIcuBed) {
+          fromBedInfo = { bedNumber: fromIcuBed.bedNumber, wardType: 'icu' };
+        }
+      } else {
+        const fromBed = await prisma.bed.findUnique({
+          where: { id: actualFromBedId },
+          include: { ward: true },
+        });
+        if (fromBed) {
+          fromBedInfo = { bedNumber: fromBed.bedNumber, wardType: fromBed.ward?.type || fromBed.category };
+        }
+      }
     }
 
     // Generate transfer number
@@ -6406,12 +6482,12 @@ app.post('/api/bed-transfers', authenticateToken, async (req: any, res: Response
       const transfer = await tx.bedTransfer.create({
         data: {
           transferNumber,
-          admissionId,
-          patientId: admission.patientId,
-          fromBedId: admission.bedId!,
+          admissionId: admissionId || '',
+          patientId: actualPatientId || '',
+          fromBedId: actualFromBedId || '',
           toBedId,
-          fromWardType: admission.bed?.ward?.type || 'general',
-          toWardType: toBed.ward?.type || 'general',
+          fromWardType: fromWardType || fromBedInfo.wardType,
+          toWardType: toWardType || toBedInfo.wardType,
           reason,
           clinicalNotes,
           transferredBy: req.user.userId,
@@ -6419,23 +6495,51 @@ app.post('/api/bed-transfers', authenticateToken, async (req: any, res: Response
         },
       });
 
-      // Update old bed to vacant
-      await tx.bed.update({
-        where: { id: admission.bedId! },
-        data: { status: 'vacant' },
-      });
+      // Update source bed to vacant
+      if (actualFromBedId) {
+        if (isFromICU) {
+          await tx.iCUBed.update({
+            where: { id: actualFromBedId },
+            data: { status: 'vacant', currentPatient: null, admissionId: null },
+          });
+        } else {
+          await tx.bed.update({
+            where: { id: actualFromBedId },
+            data: { status: 'vacant' },
+          });
+        }
+      }
 
-      // Update new bed to occupied
-      await tx.bed.update({
-        where: { id: toBedId },
-        data: { status: 'occupied' },
-      });
+      // Update destination bed to occupied
+      if (isToICU) {
+        await tx.iCUBed.update({
+          where: { id: toBedId },
+          data: {
+            status: 'occupied',
+            currentPatient: actualPatientId || null,
+            admissionId: admissionId || null,
+          },
+        });
+      } else {
+        await tx.bed.update({
+          where: { id: toBedId },
+          data: { status: 'occupied' },
+        });
+      }
 
-      // Update admission with new bed
-      await tx.admission.update({
-        where: { id: admissionId },
-        data: { bedId: toBedId },
-      });
+      // Update admission with new bed (only if not ICU - ICU uses its own tracking)
+      if (admissionId && !isToICU) {
+        await tx.admission.update({
+          where: { id: admissionId },
+          data: { bedId: toBedId },
+        });
+      } else if (admissionId && isToICU) {
+        // For ICU, clear bedId from admission (ICU tracks via ICUBed.admissionId)
+        await tx.admission.update({
+          where: { id: admissionId },
+          data: { bedId: null },
+        });
+      }
 
       return transfer;
     });
@@ -6446,8 +6550,8 @@ app.post('/api/bed-transfers', authenticateToken, async (req: any, res: Response
         userId: req.user.userId,
         action: 'BED_TRANSFER',
         entityType: 'Admission',
-        entityId: admissionId,
-        description: `Transferred patient from ${admission.bed?.bedNumber} (${admission.bed?.ward?.type || 'General'}) to ${toBed.bedNumber} (${toBed.ward?.type || 'General'}). Reason: ${reason}`,
+        entityId: admissionId || toBedId,
+        description: `Transferred patient from ${fromBedInfo.bedNumber} (${fromBedInfo.wardType}) to ${toBedInfo.bedNumber} (${toBedInfo.wardType}). Reason: ${reason}`,
         ipAddress: req.ip,
         userAgent: req.headers['user-agent'],
       },
@@ -6456,8 +6560,8 @@ app.post('/api/bed-transfers', authenticateToken, async (req: any, res: Response
     res.status(201).json({
       message: 'Patient transferred successfully',
       transfer: result,
-      fromBed: admission.bed?.bedNumber,
-      toBed: toBed.bedNumber,
+      fromBed: fromBedInfo.bedNumber,
+      toBed: toBedInfo.bedNumber,
     });
   } catch (error) {
     logger.error('Create bed transfer error:', error);
