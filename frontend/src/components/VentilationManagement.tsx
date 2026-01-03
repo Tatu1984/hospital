@@ -225,6 +225,14 @@ export default function VentilationManagement({
   };
 
   const handleStartVentilation = async () => {
+    console.log('[Ventilation] Starting ventilation for admission:', admissionId);
+
+    if (!admissionId) {
+      console.error('[Ventilation] ERROR: admissionId is undefined!');
+      setError('Cannot start ventilation: No admission ID provided');
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
@@ -241,11 +249,20 @@ export default function VentilationManagement({
         }
       };
 
-      await api.post(`/api/admissions/${admissionId}/ventilation`, payload);
+      console.log('[Ventilation] Sending payload:', payload);
+      console.log('[Ventilation] API URL:', `/api/admissions/${admissionId}/ventilation`);
+
+      const response = await api.post(`/api/admissions/${admissionId}/ventilation`, payload);
+      console.log('[Ventilation] Success response:', response.data);
+
       setIsStartDialogOpen(false);
       onUpdate?.();
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to start ventilation');
+      console.error('[Ventilation] ERROR:', err);
+      console.error('[Ventilation] Error response:', err.response?.data);
+      console.error('[Ventilation] Error status:', err.response?.status);
+      const errorMessage = err.response?.data?.error || err.message || 'Failed to start ventilation';
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -444,7 +461,10 @@ export default function VentilationManagement({
             <div className="text-center py-4">
               <Wind className="h-12 w-12 text-gray-300 mx-auto mb-3" />
               <p className="text-gray-500 mb-4">Patient is not currently on ventilatory support</p>
-              <Button onClick={() => setIsStartDialogOpen(true)}>
+              <Button onClick={() => {
+                console.log('[Ventilation] Opening start dialog, admissionId:', admissionId);
+                setIsStartDialogOpen(true);
+              }}>
                 <Play className="h-4 w-4 mr-2" />
                 Start Ventilation
               </Button>
@@ -719,7 +739,13 @@ export default function VentilationManagement({
             <Button variant="outline" onClick={() => setIsStartDialogOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleStartVentilation} disabled={loading}>
+            <Button
+              onClick={() => {
+                console.log('[Ventilation] Start button clicked in dialog');
+                handleStartVentilation();
+              }}
+              disabled={loading}
+            >
               {loading ? (
                 <>
                   <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
