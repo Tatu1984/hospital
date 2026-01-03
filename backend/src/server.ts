@@ -6281,6 +6281,208 @@ app.delete('/api/beds/:id', authenticateToken, requirePermission('beds:delete'),
 });
 
 // ===========================
+// BED TRANSFER APIs
+// ===========================
+
+// Get all bed transfers
+app.get('/api/bed-transfers', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { admissionId, patientId, fromDate, toDate } = req.query;
+
+    const where: any = {};
+    if (admissionId) where.admissionId = admissionId;
+    if (patientId) where.patientId = patientId;
+    if (fromDate || toDate) {
+      where.transferredAt = {};
+      if (fromDate) where.transferredAt.gte = new Date(fromDate as string);
+      if (toDate) where.transferredAt.lte = new Date(toDate as string);
+    }
+
+    const transfers = await prisma.bedTransfer.findMany({
+      where,
+      orderBy: { transferredAt: 'desc' },
+      take: 100,
+    });
+
+    res.json(transfers);
+  } catch (error) {
+    logger.error('Get bed transfers error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get available beds for transfer (by ward type)
+app.get('/api/bed-transfers/available-beds', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { wardType, excludeBedId } = req.query;
+
+    const beds = await prisma.bed.findMany({
+      where: {
+        branchId: req.user.branchId,
+        status: 'vacant',
+        ...(excludeBedId ? { id: { not: excludeBedId as string } } : {}),
+        ...(wardType ? {
+          ward: {
+            type: wardType as string,
+          },
+        } : {}),
+      },
+      include: {
+        ward: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            floor: true,
+            building: true,
+            tariffPerDay: true,
+          },
+        },
+      },
+      orderBy: [
+        { ward: { name: 'asc' } },
+        { bedNumber: 'asc' },
+      ],
+    });
+
+    res.json(beds);
+  } catch (error) {
+    logger.error('Get available beds error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Create bed transfer (transfer patient between beds/wards)
+app.post('/api/bed-transfers', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { admissionId, toBedId, reason, clinicalNotes } = req.body;
+
+    if (!admissionId || !toBedId || !reason) {
+      return res.status(400).json({ error: 'Admission ID, destination bed ID, and reason are required' });
+    }
+
+    // Get the admission with current bed info
+    const admission = await prisma.admission.findUnique({
+      where: { id: admissionId },
+      include: {
+        bed: {
+          include: { ward: true },
+        },
+        patient: true,
+      },
+    });
+
+    if (!admission) {
+      return res.status(404).json({ error: 'Admission not found' });
+    }
+
+    if (!admission.bedId) {
+      return res.status(400).json({ error: 'Patient is not currently assigned to a bed' });
+    }
+
+    // Get the destination bed
+    const toBed = await prisma.bed.findUnique({
+      where: { id: toBedId },
+      include: { ward: true },
+    });
+
+    if (!toBed) {
+      return res.status(404).json({ error: 'Destination bed not found' });
+    }
+
+    if (toBed.status !== 'vacant') {
+      return res.status(400).json({ error: 'Destination bed is not available' });
+    }
+
+    // Generate transfer number
+    const lastTransfer = await prisma.bedTransfer.findFirst({
+      orderBy: { transferNumber: 'desc' },
+    });
+    const transferNumber = `BT-${String((lastTransfer ? parseInt(lastTransfer.transferNumber.split('-')[1] || '0') : 0) + 1).padStart(6, '0')}`;
+
+    // Perform the transfer in a transaction
+    const result = await prisma.$transaction(async (tx) => {
+      // Create transfer record
+      const transfer = await tx.bedTransfer.create({
+        data: {
+          transferNumber,
+          admissionId,
+          patientId: admission.patientId,
+          fromBedId: admission.bedId!,
+          toBedId,
+          fromWardType: admission.bed?.ward?.type || 'general',
+          toWardType: toBed.ward?.type || 'general',
+          reason,
+          clinicalNotes,
+          transferredBy: req.user.userId,
+          status: 'completed',
+        },
+      });
+
+      // Update old bed to vacant
+      await tx.bed.update({
+        where: { id: admission.bedId! },
+        data: { status: 'vacant' },
+      });
+
+      // Update new bed to occupied
+      await tx.bed.update({
+        where: { id: toBedId },
+        data: { status: 'occupied' },
+      });
+
+      // Update admission with new bed
+      await tx.admission.update({
+        where: { id: admissionId },
+        data: { bedId: toBedId },
+      });
+
+      return transfer;
+    });
+
+    // Log audit
+    await prisma.auditLog.create({
+      data: {
+        userId: req.user.userId,
+        action: 'BED_TRANSFER',
+        entityType: 'Admission',
+        entityId: admissionId,
+        description: `Transferred patient from ${admission.bed?.bedNumber} (${admission.bed?.ward?.type || 'General'}) to ${toBed.bedNumber} (${toBed.ward?.type || 'General'}). Reason: ${reason}`,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      },
+    });
+
+    res.status(201).json({
+      message: 'Patient transferred successfully',
+      transfer: result,
+      fromBed: admission.bed?.bedNumber,
+      toBed: toBed.bedNumber,
+    });
+  } catch (error) {
+    logger.error('Create bed transfer error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get transfer history for an admission
+app.get('/api/bed-transfers/admission/:admissionId', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { admissionId } = req.params;
+
+    const transfers = await prisma.bedTransfer.findMany({
+      where: { admissionId },
+      orderBy: { transferredAt: 'desc' },
+    });
+
+    res.json(transfers);
+  } catch (error) {
+    logger.error('Get admission transfers error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ===========================
 // WARD MANAGEMENT APIs
 // ===========================
 

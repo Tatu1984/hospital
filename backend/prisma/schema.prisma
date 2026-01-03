@@ -2293,6 +2293,32 @@ model BedReservation {
   @@map("bed_reservations")
 }
 
+model BedTransfer {
+  id               String    @id @default(uuid())
+  transferNumber   String    @unique
+  admissionId      String
+  patientId        String
+  fromBedId        String
+  toBedId          String
+  fromWardType     String    // general, icu, hdu, private, etc.
+  toWardType       String    // general, icu, hdu, private, etc.
+  reason           String    // escalation, de-escalation, patient request, etc.
+  clinicalNotes    String?
+  transferredAt    DateTime  @default(now())
+  transferredBy    String
+  approvedBy       String?
+  status           String    @default("completed") // pending, approved, completed, cancelled
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([admissionId])
+  @@index([patientId])
+  @@index([fromBedId])
+  @@index([toBedId])
+  @@index([transferredAt])
+  @@map("bed_transfers")
+}
+
 // ===========================
 // OPD SERVICES & BILLING
 // ===========================

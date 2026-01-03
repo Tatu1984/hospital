@@ -29,6 +29,7 @@ import Pharmacy from './pages/Pharmacy';
 import MISReport from './pages/MISReport';
 import Emergency from './pages/Emergency';
 import ICU from './pages/ICU';
+import HDU from './pages/HDU';
 import HR from './pages/HR';
 import Inventory from './pages/Inventory';
 import Ambulance from './pages/Ambulance';
@@ -151,6 +152,7 @@ const AppRoutes = () => {
         <Route path="nurse-station" element={<RoleProtectedRoute path="nurse-station"><NurseStation /></RoleProtectedRoute>} />
         <Route path="emergency" element={<RoleProtectedRoute path="emergency"><Emergency /></RoleProtectedRoute>} />
         <Route path="icu" element={<RoleProtectedRoute path="icu"><ICU /></RoleProtectedRoute>} />
+        <Route path="hdu" element={<RoleProtectedRoute path="hdu"><HDU /></RoleProtectedRoute>} />
         <Route path="operation-theatre" element={<RoleProtectedRoute path="operation-theatre"><OperationTheatre /></RoleProtectedRoute>} />
 
         {/* Support Services */}

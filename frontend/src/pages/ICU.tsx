@@ -8,7 +8,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Heart, Activity, Wind, Droplet, Thermometer, Users, Bed, TrendingUp, FileText, ExternalLink, Eye } from 'lucide-react';
+import { Heart, Activity, Wind, Droplet, Thermometer, Users, Bed, TrendingUp, FileText, ExternalLink, Eye, ArrowRightLeft, AlertTriangle } from 'lucide-react';
+import { Textarea } from '@/components/ui/textarea';
 import api from '../services/api';
 import BedPatientDetails from '../components/BedPatientDetails';
 
@@ -65,6 +66,19 @@ interface VentilatorFormData {
   notes: string;
 }
 
+interface AvailableBed {
+  id: string;
+  bedNumber: string;
+  wardName: string;
+  wardType: string;
+}
+
+interface TransferFormData {
+  toBedId: string;
+  reason: string;
+  clinicalNotes: string;
+}
+
 export default function ICU() {
   const [icuBeds, setICUBeds] = useState<ICUBed[]>([]);
   const [selectedBed, setSelectedBed] = useState<ICUBed | null>(null);
@@ -75,6 +89,16 @@ export default function ICU() {
 
   // Comprehensive Patient Details
   const [showFullPatientDetails, setShowFullPatientDetails] = useState(false);
+
+  // Transfer Dialog State
+  const [isTransferDialogOpen, setIsTransferDialogOpen] = useState(false);
+  const [availableTransferBeds, setAvailableTransferBeds] = useState<AvailableBed[]>([]);
+  const [targetWardType, setTargetWardType] = useState<string>('general');
+  const [transferFormData, setTransferFormData] = useState<TransferFormData>({
+    toBedId: '',
+    reason: 'de-escalation',
+    clinicalNotes: ''
+  });
 
   const [vitalsFormData, setVitalsFormData] = useState<VitalsFormData>({
     bedId: '',
@@ -157,6 +181,68 @@ export default function ICU() {
     if (bed.patient && bed.admission) {
       setSelectedBed(bed);
       setShowFullPatientDetails(true);
+    }
+  };
+
+  // Transfer functions
+  const fetchAvailableTransferBeds = async (wardType: string) => {
+    try {
+      const response = await api.get('/api/bed-transfers/available-beds', {
+        params: { wardType }
+      });
+      setAvailableTransferBeds(response.data);
+    } catch (error) {
+      console.error('Error fetching available beds:', error);
+      setAvailableTransferBeds([]);
+    }
+  };
+
+  const openTransferDialog = (bed: ICUBed) => {
+    setSelectedBed(bed);
+    setTransferFormData({
+      toBedId: '',
+      reason: 'de-escalation',
+      clinicalNotes: ''
+    });
+    setTargetWardType('general');
+    fetchAvailableTransferBeds('general');
+    setIsTransferDialogOpen(true);
+  };
+
+  const handleWardTypeChange = (wardType: string) => {
+    setTargetWardType(wardType);
+    setTransferFormData(prev => ({ ...prev, toBedId: '' }));
+    fetchAvailableTransferBeds(wardType);
+  };
+
+  const handleTransfer = async () => {
+    if (!selectedBed || !transferFormData.toBedId) {
+      alert('Please select a destination bed');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await api.post('/api/bed-transfers', {
+        admissionId: selectedBed.admission?.id,
+        patientId: selectedBed.patient?.id,
+        fromBedId: selectedBed.id,
+        toBedId: transferFormData.toBedId,
+        fromWardType: 'icu',
+        toWardType: targetWardType,
+        reason: transferFormData.reason,
+        clinicalNotes: transferFormData.clinicalNotes
+      });
+
+      await fetchICUBeds();
+      setIsTransferDialogOpen(false);
+      setSelectedBed(null);
+      alert('Patient transferred successfully');
+    } catch (error) {
+      console.error('Error transferring patient:', error);
+      alert('Failed to transfer patient');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -414,6 +500,9 @@ export default function ICU() {
                                 Vent
                               </Button>
                             )}
+                            <Button size="sm" variant="outline" onClick={() => openTransferDialog(bed)} title="Transfer Patient">
+                              <ArrowRightLeft className="w-3 h-3" />
+                            </Button>
                             <Button size="sm" variant="outline" onClick={() => openDetailsDialog(bed)} title="Quick View">
                               <FileText className="w-3 h-3" />
                             </Button>
@@ -493,6 +582,10 @@ export default function ICU() {
                           <div className="flex gap-2">
                             <Button size="sm" variant="outline" onClick={() => openVitalsDialog(bed)}>
                               Record Vitals
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => openTransferDialog(bed)}>
+                              <ArrowRightLeft className="w-3 h-3 mr-1" />
+                              Transfer
                             </Button>
                             <Button size="sm" variant="ghost" onClick={() => openPatientDetailsPopup(bed)} title="View Patient Details">
                               <Eye className="w-4 h-4 text-blue-500" />
@@ -861,6 +954,119 @@ export default function ICU() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Transfer Dialog */}
+      <Dialog open={isTransferDialogOpen} onOpenChange={setIsTransferDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ArrowRightLeft className="w-5 h-5" />
+              Transfer ICU Patient
+            </DialogTitle>
+            <DialogDescription>
+              Transfer {selectedBed?.patient?.name} from {selectedBed?.bedNumber}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Transfer To</Label>
+              <Select value={targetWardType} onValueChange={handleWardTypeChange}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select ward type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="general">General Ward (Step-down)</SelectItem>
+                  <SelectItem value="hdu">HDU (High Dependency Unit)</SelectItem>
+                  <SelectItem value="private">Private Ward</SelectItem>
+                  <SelectItem value="semi-private">Semi-Private Ward</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Select Bed</Label>
+              <Select
+                value={transferFormData.toBedId || 'select'}
+                onValueChange={(value) => setTransferFormData({ ...transferFormData, toBedId: value === 'select' ? '' : value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select destination bed" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="select" disabled>Select a bed</SelectItem>
+                  {availableTransferBeds.length === 0 ? (
+                    <SelectItem value="none" disabled>No beds available</SelectItem>
+                  ) : (
+                    availableTransferBeds.map((bed) => (
+                      <SelectItem key={bed.id} value={bed.id}>
+                        {bed.bedNumber} - {bed.wardName}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Transfer Reason</Label>
+              <Select
+                value={transferFormData.reason}
+                onValueChange={(value) => setTransferFormData({ ...transferFormData, reason: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="de-escalation">De-escalation (Condition Improved)</SelectItem>
+                  <SelectItem value="step-down">Step-down Care</SelectItem>
+                  <SelectItem value="patient-request">Patient/Family Request</SelectItem>
+                  <SelectItem value="bed-management">Bed Management</SelectItem>
+                  <SelectItem value="specialty-transfer">Specialty Transfer</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {targetWardType === 'hdu' && (
+              <div className="flex items-start gap-2 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                <AlertTriangle className="w-5 h-5 text-blue-600 mt-0.5" />
+                <div className="text-sm text-blue-800">
+                  <strong>HDU Transfer:</strong> Patient still requires close monitoring but no longer needs intensive care.
+                </div>
+              </div>
+            )}
+
+            {targetWardType === 'general' && (
+              <div className="flex items-start gap-2 p-3 bg-green-50 rounded-lg border border-green-200">
+                <AlertTriangle className="w-5 h-5 text-green-600 mt-0.5" />
+                <div className="text-sm text-green-800">
+                  <strong>Step-down to General Ward:</strong> Patient condition has improved and can be transferred to standard care.
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <Label>Clinical Notes</Label>
+              <Textarea
+                value={transferFormData.clinicalNotes}
+                onChange={(e) => setTransferFormData({ ...transferFormData, clinicalNotes: e.target.value })}
+                placeholder="Reason for transfer, patient condition, handoff notes..."
+                rows={3}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsTransferDialogOpen(false)}>Cancel</Button>
+            <Button
+              onClick={handleTransfer}
+              disabled={loading || !transferFormData.toBedId}
+            >
+              {loading ? 'Transferring...' : 'Transfer Patient'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

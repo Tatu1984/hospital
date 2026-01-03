@@ -92,6 +92,7 @@ const MainLayout = () => {
         { path: '/inpatient', icon: Bed, label: 'IPD / Ward' },
         { path: '/emergency', icon: AlertCircle, label: 'Emergency' },
         { path: '/icu', icon: Heart, label: 'ICU' },
+        { path: '/hdu', icon: Activity, label: 'HDU' },
         { path: '/operation-theatre', icon: Scissors, label: 'OT' },
       ]
     },

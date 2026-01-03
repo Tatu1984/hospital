@@ -8,7 +8,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Bed, LogOut, Search, Settings, Building2, Trash2, Edit, Eye } from 'lucide-react';
+import { Plus, Bed, LogOut, Search, Settings, Building2, Trash2, Edit, Eye, ArrowRightLeft, AlertTriangle } from 'lucide-react';
+import { Textarea } from '@/components/ui/textarea';
 import api from '../services/api';
 import BedPatientDetails from '../components/BedPatientDetails';
 
@@ -74,6 +75,19 @@ interface Doctor {
   department?: string;
 }
 
+interface AvailableBed {
+  id: string;
+  bedNumber: string;
+  wardName: string;
+  wardType: string;
+}
+
+interface TransferFormData {
+  toBedId: string;
+  reason: string;
+  clinicalNotes: string;
+}
+
 export default function Inpatient() {
   const [admissions, setAdmissions] = useState<Admission[]>([]);
   const [beds, setBeds] = useState<Bed[]>([]);
@@ -89,6 +103,17 @@ export default function Inpatient() {
   // Patient Details Dialog State
   const [showPatientDetails, setShowPatientDetails] = useState(false);
   const [selectedBedForDetails, setSelectedBedForDetails] = useState<{bedId: string; patientId: string; admissionId: string} | null>(null);
+
+  // Transfer Dialog State
+  const [isTransferDialogOpen, setIsTransferDialogOpen] = useState(false);
+  const [transferAdmission, setTransferAdmission] = useState<Admission | null>(null);
+  const [availableTransferBeds, setAvailableTransferBeds] = useState<AvailableBed[]>([]);
+  const [targetWardType, setTargetWardType] = useState<string>('general');
+  const [transferFormData, setTransferFormData] = useState<TransferFormData>({
+    toBedId: '',
+    reason: 'bed-management',
+    clinicalNotes: ''
+  });
 
   // Bed Management State
   const [isBedDialogOpen, setIsBedDialogOpen] = useState(false);
@@ -246,6 +271,69 @@ export default function Inpatient() {
   const openDischargeDialog = (admission: Admission) => {
     setSelectedAdmission(admission);
     setIsDischargeDialogOpen(true);
+  };
+
+  // Transfer functions
+  const fetchAvailableTransferBeds = async (wardType: string) => {
+    try {
+      const response = await api.get('/api/bed-transfers/available-beds', {
+        params: { wardType }
+      });
+      setAvailableTransferBeds(response.data);
+    } catch (error) {
+      console.error('Error fetching available beds:', error);
+      setAvailableTransferBeds([]);
+    }
+  };
+
+  const openTransferDialog = (admission: Admission) => {
+    setTransferAdmission(admission);
+    setTransferFormData({
+      toBedId: '',
+      reason: 'bed-management',
+      clinicalNotes: ''
+    });
+    setTargetWardType('general');
+    fetchAvailableTransferBeds('general');
+    setIsTransferDialogOpen(true);
+  };
+
+  const handleWardTypeChange = (wardType: string) => {
+    setTargetWardType(wardType);
+    setTransferFormData(prev => ({ ...prev, toBedId: '' }));
+    fetchAvailableTransferBeds(wardType);
+  };
+
+  const handleTransfer = async () => {
+    if (!transferAdmission || !transferFormData.toBedId) {
+      alert('Please select a destination bed');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await api.post('/api/bed-transfers', {
+        admissionId: transferAdmission.id,
+        patientId: transferAdmission.patientId,
+        fromBedId: transferAdmission.bedId,
+        toBedId: transferFormData.toBedId,
+        fromWardType: 'general',
+        toWardType: targetWardType,
+        reason: transferFormData.reason,
+        clinicalNotes: transferFormData.clinicalNotes
+      });
+
+      await fetchAdmissions();
+      await fetchBeds();
+      setIsTransferDialogOpen(false);
+      setTransferAdmission(null);
+      alert('Patient transferred successfully');
+    } catch (error) {
+      console.error('Error transferring patient:', error);
+      alert('Failed to transfer patient');
+    } finally {
+      setLoading(false);
+    }
   };
 
   // Bed CRUD operations
@@ -647,6 +735,16 @@ export default function Inpatient() {
                         </TableCell>
                         <TableCell>
                           <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => openTransferDialog(admission)}
+                              disabled={!admission.bedId}
+                              title="Transfer to another bed/ward"
+                            >
+                              <ArrowRightLeft className="w-4 h-4 mr-1" />
+                              Transfer
+                            </Button>
                             <Button
                               size="sm"
                               onClick={() => openDischargeDialog(admission)}
@@ -1085,6 +1183,113 @@ export default function Inpatient() {
             </Button>
             <Button onClick={handleSaveWard} disabled={loading || !wardFormData.name || !wardFormData.type}>
               {loading ? 'Saving...' : (editingWard ? 'Update Ward' : 'Add Ward')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Transfer Dialog */}
+      <Dialog open={isTransferDialogOpen} onOpenChange={setIsTransferDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ArrowRightLeft className="w-5 h-5" />
+              Transfer Patient
+            </DialogTitle>
+            <DialogDescription>
+              Transfer {transferAdmission?.patientName} from {transferAdmission?.ward} / {transferAdmission?.bedNumber}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Transfer To Ward Type</Label>
+              <Select value={targetWardType} onValueChange={handleWardTypeChange}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select ward type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="general">General Ward</SelectItem>
+                  <SelectItem value="icu">ICU (Escalation)</SelectItem>
+                  <SelectItem value="hdu">HDU (High Dependency)</SelectItem>
+                  <SelectItem value="private">Private Ward</SelectItem>
+                  <SelectItem value="semi-private">Semi-Private Ward</SelectItem>
+                  <SelectItem value="deluxe">Deluxe Ward</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Select Destination Bed</Label>
+              <Select
+                value={transferFormData.toBedId || 'select'}
+                onValueChange={(value) => setTransferFormData({ ...transferFormData, toBedId: value === 'select' ? '' : value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select destination bed" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="select" disabled>Select a bed</SelectItem>
+                  {availableTransferBeds.length === 0 ? (
+                    <SelectItem value="none" disabled>No beds available</SelectItem>
+                  ) : (
+                    availableTransferBeds.map((bed) => (
+                      <SelectItem key={bed.id} value={bed.id}>
+                        {bed.bedNumber} - {bed.wardName}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Transfer Reason</Label>
+              <Select
+                value={transferFormData.reason}
+                onValueChange={(value) => setTransferFormData({ ...transferFormData, reason: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="escalation">Escalation (Condition Worsening)</SelectItem>
+                  <SelectItem value="de-escalation">De-escalation (Improving)</SelectItem>
+                  <SelectItem value="patient-request">Patient/Family Request</SelectItem>
+                  <SelectItem value="bed-management">Bed Management</SelectItem>
+                  <SelectItem value="room-upgrade">Room Upgrade</SelectItem>
+                  <SelectItem value="specialty-transfer">Specialty Transfer</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {(targetWardType === 'icu' || targetWardType === 'hdu') && (
+              <div className="flex items-start gap-2 p-3 bg-amber-50 rounded-lg border border-amber-200">
+                <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5" />
+                <div className="text-sm text-amber-800">
+                  <strong>{targetWardType === 'icu' ? 'ICU' : 'HDU'} Transfer:</strong> Patient requires closer monitoring and intensive care.
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <Label>Clinical Notes</Label>
+              <Textarea
+                value={transferFormData.clinicalNotes}
+                onChange={(e) => setTransferFormData({ ...transferFormData, clinicalNotes: e.target.value })}
+                placeholder="Reason for transfer, patient condition, handoff notes..."
+                rows={3}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsTransferDialogOpen(false)}>Cancel</Button>
+            <Button
+              onClick={handleTransfer}
+              disabled={loading || !transferFormData.toBedId}
+            >
+              {loading ? 'Transferring...' : 'Transfer Patient'}
             </Button>
           </DialogFooter>
         </DialogContent>
