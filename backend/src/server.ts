@@ -6893,18 +6893,31 @@ app.get('/api/icu/beds', authenticateToken, async (req: any, res: Response) => {
 
       // Get patient data if currentPatient is set
       if (b.currentPatient) {
-        patient = await prisma.patient.findUnique({
+        const patientData = await prisma.patient.findUnique({
           where: { id: b.currentPatient },
-          select: { id: true, name: true, mrn: true, age: true, gender: true }
+          select: { id: true, name: true, mrn: true, dob: true, gender: true }
         });
+        if (patientData) {
+          // Calculate age from dob
+          const age = patientData.dob
+            ? Math.floor((Date.now() - new Date(patientData.dob).getTime()) / (365.25 * 24 * 60 * 60 * 1000))
+            : null;
+          patient = { ...patientData, age };
+        }
       }
 
       // Get admission data if admissionId is set
       if (b.admissionId) {
-        admission = await prisma.admission.findUnique({
+        const admissionData = await prisma.admission.findUnique({
           where: { id: b.admissionId },
-          select: { id: true, admissionDate: true, diagnosis: true, isVentilated: true, ventilatorMode: true }
+          select: { id: true, admissionDate: true, diagnosis: true }
         });
+        // Add ventilation info from ICU bed's ventilator settings if available
+        admission = admissionData ? {
+          ...admissionData,
+          isVentilated: !!b.ventilatorId,
+          ventilatorMode: null // Would come from ventilator settings
+        } : null;
       }
 
       // Normalize status to lowercase (handle legacy AVAILABLE/OCCUPIED values)
