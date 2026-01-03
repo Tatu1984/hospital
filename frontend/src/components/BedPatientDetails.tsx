@@ -12,6 +12,7 @@ import {
   Bed, UserCircle, Shield, AlertCircle, Eye, Sparkles
 } from 'lucide-react';
 import api from '../services/api';
+import VentilationManagement from './VentilationManagement';
 
 // Comprehensive interfaces for patient data
 interface PatientDemographics {
@@ -52,6 +53,12 @@ interface AdmissionDetails {
   finalDiagnosis?: string[];
   mlcCase: boolean;
   mlcNumber?: string;
+  // Ventilation fields
+  isVentilated?: boolean;
+  ventilatorMode?: string;
+  ventilationStartDate?: string;
+  ventilationEndDate?: string;
+  ventilatorSettings?: Record<string, any>;
 }
 
 interface Insurance {
@@ -539,7 +546,13 @@ export default function BedPatientDetails({
               chiefComplaint: adm.chiefComplaint || adm.diagnosis || 'N/A',
               provisionalDiagnosis: adm.diagnosis ? [adm.diagnosis] : [],
               mlcCase: adm.mlcCase || false,
-              mlcNumber: adm.mlcNumber
+              mlcNumber: adm.mlcNumber,
+              // Ventilation fields
+              isVentilated: adm.isVentilated || false,
+              ventilatorMode: adm.ventilatorMode,
+              ventilationStartDate: adm.ventilationStartDate,
+              ventilationEndDate: adm.ventilationEndDate,
+              ventilatorSettings: adm.ventilatorSettings
             });
 
             // Get insurance if available
@@ -571,7 +584,8 @@ export default function BedPatientDetails({
               actualLOS: 1,
               chiefComplaint: 'N/A',
               provisionalDiagnosis: [],
-              mlcCase: false
+              mlcCase: false,
+              isVentilated: false
             });
           }
         }
@@ -735,9 +749,13 @@ export default function BedPatientDetails({
         {/* Content */}
         <div className="h-[calc(90vh-180px)] overflow-y-auto">
           <Tabs value={activeTab} onValueChange={setActiveTab} className="p-4">
-            <TabsList className="grid grid-cols-8 w-full mb-4">
+            <TabsList className="grid grid-cols-9 w-full mb-4">
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="vitals">Vitals</TabsTrigger>
+              <TabsTrigger value="ventilation" className="relative">
+                <Wind className="h-4 w-4 mr-1" />
+                Ventilation
+              </TabsTrigger>
               <TabsTrigger value="medications">Medications</TabsTrigger>
               <TabsTrigger value="labs">Lab Reports</TabsTrigger>
               <TabsTrigger value="radiology">Imaging</TabsTrigger>
@@ -992,6 +1010,22 @@ export default function BedPatientDetails({
                   </table>
                 </CardContent>
               </Card>
+            </TabsContent>
+
+            {/* Ventilation Tab */}
+            <TabsContent value="ventilation" className="space-y-4">
+              <VentilationManagement
+                admissionId={admissionId}
+                patientName={patient?.name || 'Unknown'}
+                patientId={patientId}
+                currentVentilation={admission ? {
+                  isVentilated: admission.isVentilated || false,
+                  ventilatorMode: admission.ventilatorMode,
+                  ventilationStartDate: admission.ventilationStartDate,
+                  ventilatorSettings: admission.ventilatorSettings
+                } : undefined}
+                onUpdate={handleRefresh}
+              />
             </TabsContent>
 
             {/* Medications Tab */}
