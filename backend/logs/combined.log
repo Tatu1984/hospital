@@ -99,3 +99,15 @@
 {"level":"info","message":"API Health: http://localhost:4000/api/health","service":"hospital-erp","timestamp":"2026-01-03T16:07:11.231Z"}
 {"level":"info","message":"WebSocket: ws://localhost:4000/ws","service":"hospital-erp","timestamp":"2026-01-03T16:07:11.231Z"}
 {"level":"info","message":"Redis connected successfully","service":"hospital-erp","timestamp":"2026-01-03T16:07:11.235Z"}
+{"level":"info","message":"SIGTERM received, shutting down gracefully","service":"hospital-erp","timestamp":"2026-01-03T17:18:46.005Z"}
+{"level":"info","message":"WebSocket server initialized","path":"/ws","service":"hospital-erp","timestamp":"2026-01-03T17:18:46.857Z"}
+{"level":"info","message":"Hospital ERP Backend running on http://localhost:4000","service":"hospital-erp","timestamp":"2026-01-03T17:18:46.934Z"}
+{"level":"info","message":"API Health: http://localhost:4000/api/health","service":"hospital-erp","timestamp":"2026-01-03T17:18:46.934Z"}
+{"level":"info","message":"WebSocket: ws://localhost:4000/ws","service":"hospital-erp","timestamp":"2026-01-03T17:18:46.934Z"}
+{"level":"info","message":"Redis connected successfully","service":"hospital-erp","timestamp":"2026-01-03T17:18:46.937Z"}
+{"level":"info","message":"SIGTERM received, shutting down gracefully","service":"hospital-erp","timestamp":"2026-01-03T17:19:11.561Z"}
+{"level":"info","message":"WebSocket server initialized","path":"/ws","service":"hospital-erp","timestamp":"2026-01-03T17:19:12.088Z"}
+{"level":"info","message":"Hospital ERP Backend running on http://localhost:4000","service":"hospital-erp","timestamp":"2026-01-03T17:19:12.147Z"}
+{"level":"info","message":"API Health: http://localhost:4000/api/health","service":"hospital-erp","timestamp":"2026-01-03T17:19:12.148Z"}
+{"level":"info","message":"WebSocket: ws://localhost:4000/ws","service":"hospital-erp","timestamp":"2026-01-03T17:19:12.148Z"}
+{"level":"info","message":"Redis connected successfully","service":"hospital-erp","timestamp":"2026-01-03T17:19:12.152Z"}
