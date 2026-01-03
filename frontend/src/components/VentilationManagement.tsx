@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -461,6 +461,9 @@ export default function VentilationManagement({
               <Wind className="h-5 w-5 text-blue-600" />
               Start Mechanical Ventilation - {patientName}
             </DialogTitle>
+            <DialogDescription>
+              Configure ventilator mode and parameters for the patient
+            </DialogDescription>
           </DialogHeader>
 
           {error && (
@@ -741,6 +744,9 @@ export default function VentilationManagement({
               <Settings className="h-5 w-5" />
               Adjust Ventilator Settings
             </DialogTitle>
+            <DialogDescription>
+              Modify ventilator mode and parameters
+            </DialogDescription>
           </DialogHeader>
 
           {error && (
@@ -791,6 +797,9 @@ export default function VentilationManagement({
               <Square className="h-5 w-5" />
               Stop Ventilation - {patientName}
             </DialogTitle>
+            <DialogDescription>
+              Document reason and weaning assessment before stopping ventilation
+            </DialogDescription>
           </DialogHeader>
 
           {error && (
