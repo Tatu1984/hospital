@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Heart, Activity, Wind, Droplet, Thermometer, Users, Bed, TrendingUp, FileText, ExternalLink } from 'lucide-react';
+import { Heart, Activity, Wind, Droplet, Thermometer, Users, Bed, TrendingUp, FileText, ExternalLink, Eye } from 'lucide-react';
 import api from '../services/api';
 import BedPatientDetails from '../components/BedPatientDetails';
 
@@ -150,6 +150,14 @@ export default function ICU() {
   const openDetailsDialog = (bed: ICUBed) => {
     setSelectedBed(bed);
     setIsDetailsDialogOpen(true);
+  };
+
+  // Direct access to full patient details popup
+  const openPatientDetailsPopup = (bed: ICUBed) => {
+    if (bed.patient && bed.admission) {
+      setSelectedBed(bed);
+      setShowFullPatientDetails(true);
+    }
   };
 
   const handleRecordVitals = async () => {
@@ -406,8 +414,11 @@ export default function ICU() {
                                 Vent
                               </Button>
                             )}
-                            <Button size="sm" variant="outline" onClick={() => openDetailsDialog(bed)}>
+                            <Button size="sm" variant="outline" onClick={() => openDetailsDialog(bed)} title="Quick View">
                               <FileText className="w-3 h-3" />
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={() => openPatientDetailsPopup(bed)} title="Full Patient Details">
+                              <Eye className="w-3 h-3 text-blue-500" />
                             </Button>
                           </div>
                         </div>
@@ -482,6 +493,9 @@ export default function ICU() {
                           <div className="flex gap-2">
                             <Button size="sm" variant="outline" onClick={() => openVitalsDialog(bed)}>
                               Record Vitals
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={() => openPatientDetailsPopup(bed)} title="View Patient Details">
+                              <Eye className="w-4 h-4 text-blue-500" />
                             </Button>
                           </div>
                         </TableCell>
