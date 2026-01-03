@@ -11,6 +11,7 @@ import {
   Printer, Download, RefreshCw, Syringe, ClipboardList,
   Bed, UserCircle, Shield, AlertCircle, Eye, Sparkles
 } from 'lucide-react';
+import api from '../services/api';
 
 // Comprehensive interfaces for patient data
 interface PatientDemographics {
@@ -192,70 +193,13 @@ export default function BedPatientDetails({
   const [activeTab, setActiveTab] = useState('overview');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // Mock data - in production, fetch from API
-  const [patient] = useState<PatientDemographics>({
-    id: patientId,
-    uhid: 'UHID-2024-001234',
-    name: 'Rajesh Kumar Sharma',
-    age: 58,
-    gender: 'Male',
-    dob: '1966-05-15',
-    bloodGroup: 'B+',
-    phone: '+91 98765 43210',
-    email: 'rajesh.sharma@email.com',
-    address: '42, Green Park Extension',
-    city: 'New Delhi',
-    state: 'Delhi',
-    emergencyContact: 'Sunita Sharma (Wife)',
-    emergencyPhone: '+91 98765 43211'
-  });
-
-  const [admission] = useState<AdmissionDetails>({
-    admissionId: admissionId,
-    admissionDate: '2024-01-12T14:30:00',
-    admissionType: 'Emergency',
-    admittingDoctor: 'Dr. Priya Mehta',
-    primaryDoctor: 'Dr. Rajesh Verma',
-    consultingDoctors: ['Dr. Amit Shah (Cardio)', 'Dr. Neha Gupta (Pulmo)'],
-    department: 'Internal Medicine',
-    ward: 'ICU',
-    bed: bedId,
-    roomType: 'ICU Bed',
-    expectedLOS: 7,
-    actualLOS: 3,
-    chiefComplaint: 'Severe chest pain, shortness of breath, sweating',
-    provisionalDiagnosis: ['Acute Myocardial Infarction', 'Hypertensive Crisis'],
-    mlcCase: false
-  });
-
-  const [insurance] = useState<Insurance>({
-    provider: 'ICICI Lombard',
-    policyNumber: 'POL-2023-789456',
-    validUntil: '2025-03-15',
-    preAuthAmount: 500000,
-    preAuthStatus: 'Approved',
-    copay: 10
-  });
-
-  const [allergies] = useState<Allergy[]>([
-    {
-      id: 'A1',
-      allergen: 'Penicillin',
-      type: 'Drug',
-      severity: 'Severe',
-      reaction: 'Anaphylaxis, skin rash',
-      recordedDate: '2020-03-15'
-    },
-    {
-      id: 'A2',
-      allergen: 'Sulfa drugs',
-      type: 'Drug',
-      severity: 'Moderate',
-      reaction: 'Hives, itching',
-      recordedDate: '2018-07-22'
-    }
-  ]);
+  // Real data from API
+  const [patient, setPatient] = useState<PatientDemographics | null>(null);
+  const [admission, setAdmission] = useState<AdmissionDetails | null>(null);
+  const [insurance, setInsurance] = useState<Insurance | null>(null);
+  const [allergies, setAllergies] = useState<Allergy[]>([]);
 
   const [vitals] = useState<VitalSign[]>([
     {
@@ -521,12 +465,126 @@ export default function BedPatientDetails({
   ]);
 
   useEffect(() => {
-    if (open) {
+    const fetchPatientData = async () => {
+      if (!open || !patientId) return;
+
       setLoading(true);
-      // Simulate API fetch
-      setTimeout(() => setLoading(false), 500);
-    }
-  }, [open, patientId, admissionId]);
+      setError(null);
+
+      try {
+        // Fetch patient data
+        const patientRes = await api.get(`/api/patients/${patientId}`);
+        const p = patientRes.data;
+
+        // Calculate age from dob
+        const age = p.dob
+          ? Math.floor((Date.now() - new Date(p.dob).getTime()) / (365.25 * 24 * 60 * 60 * 1000))
+          : 0;
+
+        setPatient({
+          id: p.id,
+          uhid: p.mrn || 'N/A',
+          name: p.name || 'Unknown',
+          age,
+          gender: p.gender || 'Unknown',
+          dob: p.dob || '',
+          bloodGroup: p.bloodGroup || 'Unknown',
+          phone: p.contact || 'N/A',
+          email: p.email || '',
+          address: p.address || 'N/A',
+          city: p.city || '',
+          state: p.state || '',
+          emergencyContact: p.emergencyContact || 'N/A',
+          emergencyPhone: p.emergencyPhone || ''
+        });
+
+        // Parse allergies from patient data
+        if (p.allergies) {
+          const allergyList = p.allergies.split(',').map((a: string, idx: number) => ({
+            id: `A${idx}`,
+            allergen: a.trim(),
+            type: 'Drug' as const,
+            severity: 'Moderate' as const,
+            reaction: 'See medical records',
+            recordedDate: new Date().toISOString()
+          }));
+          setAllergies(allergyList);
+        } else {
+          setAllergies([]);
+        }
+
+        // Fetch admission data if admissionId provided
+        if (admissionId) {
+          try {
+            const admRes = await api.get(`/api/admissions/${admissionId}`);
+            const adm = admRes.data;
+
+            const admissionDate = new Date(adm.admissionDate);
+            const now = new Date();
+            const actualLOS = Math.ceil((now.getTime() - admissionDate.getTime()) / (24 * 60 * 60 * 1000));
+
+            setAdmission({
+              admissionId: adm.id,
+              admissionDate: adm.admissionDate,
+              admissionType: adm.admissionType || 'Elective',
+              admittingDoctor: adm.admittingDoctor?.name || 'N/A',
+              primaryDoctor: adm.primaryDoctor?.name || adm.admittingDoctor?.name || 'N/A',
+              consultingDoctors: adm.consultingDoctors || [],
+              department: adm.department || 'General',
+              ward: adm.bed?.ward?.name || 'ICU',
+              bed: adm.bed?.bedNumber || bedId,
+              roomType: adm.bed?.category || 'General',
+              expectedLOS: adm.expectedLOS || 7,
+              actualLOS,
+              chiefComplaint: adm.chiefComplaint || adm.diagnosis || 'N/A',
+              provisionalDiagnosis: adm.diagnosis ? [adm.diagnosis] : [],
+              mlcCase: adm.mlcCase || false,
+              mlcNumber: adm.mlcNumber
+            });
+
+            // Get insurance if available
+            if (adm.patientInsurance) {
+              setInsurance({
+                provider: adm.patientInsurance.tpa?.name || 'N/A',
+                policyNumber: adm.patientInsurance.policyNumber || 'N/A',
+                validUntil: adm.patientInsurance.validTill || '',
+                preAuthAmount: adm.preAuthAmount,
+                preAuthStatus: adm.preAuthStatus || 'Pending',
+                copay: adm.copay
+              });
+            }
+          } catch (admErr) {
+            console.error('Error fetching admission:', admErr);
+            // Set default admission data
+            setAdmission({
+              admissionId: admissionId,
+              admissionDate: new Date().toISOString(),
+              admissionType: 'Elective',
+              admittingDoctor: 'N/A',
+              primaryDoctor: 'N/A',
+              consultingDoctors: [],
+              department: 'General',
+              ward: 'ICU',
+              bed: bedId,
+              roomType: 'ICU',
+              expectedLOS: 7,
+              actualLOS: 1,
+              chiefComplaint: 'N/A',
+              provisionalDiagnosis: [],
+              mlcCase: false
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Error fetching patient data:', err);
+        setError('Failed to load patient data');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchPatientData();
+  }, [open, patientId, admissionId, bedId]);
 
   const handleRefresh = () => {
     setRefreshing(true);
@@ -575,6 +633,20 @@ export default function BedPatientDetails({
     );
   }
 
+  if (error || !patient) {
+    return (
+      <Dialog open={open} onOpenChange={onClose}>
+        <DialogContent className="max-w-6xl max-h-[90vh]">
+          <div className="flex flex-col items-center justify-center h-96 gap-4">
+            <AlertCircle className="h-12 w-12 text-red-500" />
+            <p className="text-red-600">{error || 'Failed to load patient data'}</p>
+            <Button variant="outline" onClick={onClose}>Close</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-6xl max-h-[90vh] p-0">
@@ -588,7 +660,7 @@ export default function BedPatientDetails({
                 </div>
                 <div>
                   <DialogTitle className="text-xl flex items-center gap-2">
-                    {patient.name}
+                    {patient?.name || 'Unknown Patient'}
                     <Badge variant="outline" className="ml-2">{patient.bloodGroup}</Badge>
                     {allergies.length > 0 && (
                       <Badge className="bg-red-500 text-white animate-pulse">
@@ -600,14 +672,13 @@ export default function BedPatientDetails({
                   <div className="flex items-center gap-4 text-sm text-gray-600 mt-1">
                     <span>{patient.age}y / {patient.gender}</span>
                     <span>UHID: {patient.uhid}</span>
-                    <span>Bed: {admission.bed}</span>
-                    <Badge className={admission.admissionType === 'Emergency' ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'}>
-                      {admission.admissionType}
+                    <span>Bed: {admission?.bed || bedId}</span>
+                    <Badge className={admission?.admissionType === 'Emergency' ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'}>
+                      {admission?.admissionType || 'N/A'}
                     </Badge>
                   </div>
                   <div className="text-sm text-gray-500 mt-1">
-                    Admitted: {new Date(admission.admissionDate).toLocaleString()} | LOS: Day {admission.actualLOS}
-                  </div>
+                    {admission ? `Admitted: ${new Date(admission.admissionDate).toLocaleString()} | LOS: Day ${admission.actualLOS}` : 'Admission details loading...'}
                 </div>
               </div>
               <div className="flex gap-2">
@@ -719,19 +790,19 @@ export default function BedPatientDetails({
                   <CardContent className="space-y-2 text-sm">
                     <div className="flex justify-between">
                       <span className="text-gray-500">Admission ID</span>
-                      <span>{admission.admissionId}</span>
+                      <span>{admission?.admissionId || 'N/A'}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-500">Primary Doctor</span>
-                      <span>{admission.primaryDoctor}</span>
+                      <span>{admission?.primaryDoctor || 'N/A'}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-500">Ward/Bed</span>
-                      <span>{admission.ward} - {admission.bed}</span>
+                      <span>{admission?.ward || 'ICU'} - {admission?.bed || bedId}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-500">Expected LOS</span>
-                      <span>{admission.expectedLOS} days</span>
+                      <span>{admission?.expectedLOS || 'N/A'} days</span>
                     </div>
                   </CardContent>
                 </Card>
@@ -745,22 +816,28 @@ export default function BedPatientDetails({
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Provider</span>
-                      <span>{insurance.provider}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Policy #</span>
-                      <span>{insurance.policyNumber}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Pre-Auth</span>
-                      <Badge className="bg-green-100 text-green-800">{insurance.preAuthStatus}</Badge>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Amount</span>
-                      <span>₹{insurance.preAuthAmount?.toLocaleString()}</span>
-                    </div>
+                    {insurance ? (
+                      <>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Provider</span>
+                          <span>{insurance.provider}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Policy #</span>
+                          <span>{insurance.policyNumber}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Pre-Auth</span>
+                          <Badge className="bg-green-100 text-green-800">{insurance.preAuthStatus}</Badge>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Amount</span>
+                          <span>₹{insurance.preAuthAmount?.toLocaleString() || 'N/A'}</span>
+                        </div>
+                      </>
+                    ) : (
+                      <p className="text-gray-500 text-center py-2">No insurance information available</p>
+                    )}
                   </CardContent>
                 </Card>
               </div>
@@ -802,22 +879,30 @@ export default function BedPatientDetails({
                   <div className="space-y-3">
                     <div>
                       <p className="text-xs text-gray-500 mb-1">Chief Complaint</p>
-                      <p>{admission.chiefComplaint}</p>
+                      <p>{admission?.chiefComplaint || 'N/A'}</p>
                     </div>
                     <div>
                       <p className="text-xs text-gray-500 mb-1">Provisional Diagnosis</p>
                       <div className="flex flex-wrap gap-2">
-                        {admission.provisionalDiagnosis.map((dx, idx) => (
-                          <Badge key={idx} variant="outline">{dx}</Badge>
-                        ))}
+                        {admission?.provisionalDiagnosis?.length ? (
+                          admission.provisionalDiagnosis.map((dx, idx) => (
+                            <Badge key={idx} variant="outline">{dx}</Badge>
+                          ))
+                        ) : (
+                          <span className="text-gray-500 text-sm">No diagnosis recorded</span>
+                        )}
                       </div>
                     </div>
                     <div>
                       <p className="text-xs text-gray-500 mb-1">Consulting Doctors</p>
                       <div className="flex flex-wrap gap-2">
-                        {admission.consultingDoctors.map((doc, idx) => (
-                          <Badge key={idx} className="bg-blue-50 text-blue-700">{doc}</Badge>
-                        ))}
+                        {admission?.consultingDoctors?.length ? (
+                          admission.consultingDoctors.map((doc, idx) => (
+                            <Badge key={idx} className="bg-blue-50 text-blue-700">{doc}</Badge>
+                          ))
+                        ) : (
+                          <span className="text-gray-500 text-sm">No consulting doctors assigned</span>
+                        )}
                       </div>
                     </div>
                   </div>

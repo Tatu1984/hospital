@@ -263,6 +263,13 @@ model Admission {
   preAuthorizationId   String?
   insuranceVerified    Boolean   @default(false)
   insuranceVerifiedAt  DateTime?
+  // Ventilation Support Fields
+  isVentilated         Boolean   @default(false)
+  ventilatorMode       String?   // SIMV, CMV, CPAP, BiPAP, PSV, APRV, etc.
+  ventilationStartDate DateTime?
+  ventilationEndDate   DateTime?
+  ventilatorSettings   Json?     // FiO2, PEEP, Tidal Volume, RR, etc.
+  icuBedId             String?   // Reference to ICU/CCU bed if on ventilator
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
   admittingDoctor      User?       @relation("AdmittingDoctor", fields: [admittingDoctorId], references: [id])

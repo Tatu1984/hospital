@@ -449,13 +449,32 @@ export default function MasterData() {
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="general">General Ward</SelectItem>
+                    <SelectItem value="male">Male Ward</SelectItem>
+                    <SelectItem value="female">Female Ward</SelectItem>
+                    <SelectItem value="paediatric">Paediatric Ward</SelectItem>
+                    <SelectItem value="obsgynae">Obs & Gynae Ward</SelectItem>
                     <SelectItem value="private">Private Room</SelectItem>
                     <SelectItem value="semi-private">Semi-Private</SelectItem>
                     <SelectItem value="deluxe">Deluxe Room</SelectItem>
                     <SelectItem value="suite">Suite</SelectItem>
                     <SelectItem value="icu">ICU</SelectItem>
+                    <SelectItem value="ccu">CCU</SelectItem>
+                    <SelectItem value="iccu">ICCU</SelectItem>
+                    <SelectItem value="hdu">HDU</SelectItem>
+                    <SelectItem value="itu">ITU</SelectItem>
+                    <SelectItem value="micu">MICU</SelectItem>
+                    <SelectItem value="sicu">SICU</SelectItem>
+                    <SelectItem value="ricu">RICU</SelectItem>
                     <SelectItem value="nicu">NICU</SelectItem>
                     <SelectItem value="picu">PICU</SelectItem>
+                    <SelectItem value="burns">Burns ICU</SelectItem>
+                    <SelectItem value="neuro">Neuro ICU</SelectItem>
+                    <SelectItem value="cardiac">Cardiac ICU</SelectItem>
+                    <SelectItem value="trauma">Trauma ICU</SelectItem>
+                    <SelectItem value="isolation">Isolation Ward</SelectItem>
+                    <SelectItem value="emergency">Emergency Ward</SelectItem>
+                    <SelectItem value="daycare">Day Care</SelectItem>
+                    <SelectItem value="ot">Operation Theatre</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

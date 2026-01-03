@@ -6168,6 +6168,179 @@ app.post('/api/admissions/:id/discharge', authenticateToken, validateBody(discha
   }
 });
 
+// Start ventilation for a patient
+app.post('/api/admissions/:id/ventilation', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { ventilatorMode, ventilatorSettings, icuBedId } = req.body;
+
+    if (!ventilatorMode) {
+      return res.status(400).json({ error: 'Ventilator mode is required' });
+    }
+
+    // Valid ventilator modes
+    const validModes = ['SIMV', 'CMV', 'AC', 'CPAP', 'BiPAP', 'PSV', 'APRV', 'PRVC', 'HFV', 'NPPV'];
+    if (!validModes.includes(ventilatorMode)) {
+      return res.status(400).json({
+        error: `Invalid ventilator mode. Valid modes: ${validModes.join(', ')}`
+      });
+    }
+
+    // If icuBedId provided, verify it's available
+    if (icuBedId) {
+      const icuBed = await prisma.iCUBed.findUnique({ where: { id: icuBedId } });
+      if (!icuBed) {
+        return res.status(404).json({ error: 'ICU bed not found' });
+      }
+      if (icuBed.status === 'occupied' && icuBed.admissionId !== id) {
+        return res.status(400).json({ error: 'ICU bed is already occupied' });
+      }
+    }
+
+    const admission = await prisma.admission.update({
+      where: { id },
+      data: {
+        isVentilated: true,
+        ventilatorMode,
+        ventilationStartDate: new Date(),
+        ventilatorSettings: ventilatorSettings || null,
+        icuBedId: icuBedId || null,
+      },
+      include: {
+        patient: true,
+        bed: { include: { ward: true } }
+      },
+    });
+
+    // If ICU bed specified, update its status
+    if (icuBedId) {
+      await prisma.iCUBed.update({
+        where: { id: icuBedId },
+        data: {
+          status: 'occupied',
+          currentPatient: admission.patientId,
+          admissionId: id,
+          ventilatorId: 'ventilator-assigned',
+        }
+      });
+    }
+
+    logger.info(`Patient ${admission.patient.name} started on ventilation (${ventilatorMode})`);
+    res.json(admission);
+  } catch (error) {
+    logger.error('Start ventilation error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Stop ventilation for a patient
+app.delete('/api/admissions/:id/ventilation', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const admission = await prisma.admission.findUnique({
+      where: { id },
+      include: { patient: true }
+    });
+
+    if (!admission) {
+      return res.status(404).json({ error: 'Admission not found' });
+    }
+
+    if (!admission.isVentilated) {
+      return res.status(400).json({ error: 'Patient is not currently on ventilation' });
+    }
+
+    // If patient was in ICU bed, release it
+    if (admission.icuBedId) {
+      await prisma.iCUBed.update({
+        where: { id: admission.icuBedId },
+        data: {
+          ventilatorId: null,
+        }
+      });
+    }
+
+    const updated = await prisma.admission.update({
+      where: { id },
+      data: {
+        isVentilated: false,
+        ventilationEndDate: new Date(),
+      },
+      include: {
+        patient: true,
+        bed: { include: { ward: true } }
+      },
+    });
+
+    logger.info(`Patient ${updated.patient.name} weaned off ventilation`);
+    res.json(updated);
+  } catch (error) {
+    logger.error('Stop ventilation error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update ventilation settings
+app.patch('/api/admissions/:id/ventilation', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { ventilatorMode, ventilatorSettings } = req.body;
+
+    const admission = await prisma.admission.findUnique({ where: { id } });
+
+    if (!admission) {
+      return res.status(404).json({ error: 'Admission not found' });
+    }
+
+    if (!admission.isVentilated) {
+      return res.status(400).json({ error: 'Patient is not currently on ventilation' });
+    }
+
+    const updateData: any = {};
+    if (ventilatorMode) updateData.ventilatorMode = ventilatorMode;
+    if (ventilatorSettings) updateData.ventilatorSettings = ventilatorSettings;
+
+    const updated = await prisma.admission.update({
+      where: { id },
+      data: updateData,
+      include: {
+        patient: true,
+        bed: { include: { ward: true } }
+      },
+    });
+
+    logger.info(`Ventilation settings updated for patient ${updated.patient.name}`);
+    res.json(updated);
+  } catch (error) {
+    logger.error('Update ventilation error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get all ventilated patients
+app.get('/api/ventilation/patients', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const ventilatedPatients = await prisma.admission.findMany({
+      where: {
+        isVentilated: true,
+        status: 'active',
+      },
+      include: {
+        patient: true,
+        bed: { include: { ward: true } },
+        admittingDoctor: true,
+      },
+      orderBy: { ventilationStartDate: 'desc' },
+    });
+
+    res.json(ventilatedPatients);
+  } catch (error) {
+    logger.error('Get ventilated patients error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.get('/api/beds', authenticateToken, async (req: any, res: Response) => {
   try {
     const { status, category } = req.query;
