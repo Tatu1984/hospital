@@ -299,9 +299,9 @@ export default function ICU() {
     }
   };
 
-  const occupiedBeds = icuBeds.filter(b => b.status === 'OCCUPIED');
+  const occupiedBeds = icuBeds.filter(b => b.status === 'occupied');
   const ventilatedPatients = occupiedBeds.filter(b => b.admission?.isVentilated);
-  const availableBeds = icuBeds.filter(b => b.status === 'AVAILABLE');
+  const availableBeds = icuBeds.filter(b => b.status === 'vacant');
 
   const stats = {
     totalBeds: icuBeds.length,
@@ -430,7 +430,7 @@ export default function ICU() {
             <TabsContent value="all">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {icuBeds.map((bed) => (
-                  <Card key={bed.id} className={bed.status === 'OCCUPIED' ? 'border-blue-200 bg-blue-50' : ''}>
+                  <Card key={bed.id} className={bed.status === 'occupied' ? 'border-blue-200 bg-blue-50' : ''}>
                     <CardHeader className="pb-3">
                       <div className="flex justify-between items-start">
                         <div>
@@ -438,7 +438,7 @@ export default function ICU() {
                           <p className="text-sm text-slate-500">{bed.icuUnit}</p>
                         </div>
                         <div className="flex gap-1">
-                          <Badge variant={bed.status === 'OCCUPIED' ? 'default' : 'secondary'}>
+                          <Badge variant={bed.status === 'occupied' ? 'default' : 'secondary'}>
                             {bed.status}
                           </Badge>
                           {bed.admission?.isVentilated && (
@@ -451,7 +451,7 @@ export default function ICU() {
                       </div>
                     </CardHeader>
                     <CardContent>
-                      {bed.status === 'OCCUPIED' && bed.patient ? (
+                      {bed.status === 'occupied' && bed.patient ? (
                         <div className="space-y-3">
                           <div>
                             <div className="font-medium">{bed.patient.name}</div>

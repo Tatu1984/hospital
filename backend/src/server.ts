@@ -6885,20 +6885,46 @@ app.get('/api/icu/beds', authenticateToken, async (req: any, res: Response) => {
       orderBy: { bedNumber: 'asc' },
     });
 
-    res.json(beds.map(b => ({
-      ...b,
-      latestVitals: b.vitalsRecords[0] ? {
-        hr: b.vitalsRecords[0].heartRate,
-        bp: b.vitalsRecords[0].systolicBP && b.vitalsRecords[0].diastolicBP
-          ? `${b.vitalsRecords[0].systolicBP}/${b.vitalsRecords[0].diastolicBP}` : null,
-        spo2: b.vitalsRecords[0].spo2,
-        temp: b.vitalsRecords[0].temperature,
-        rr: b.vitalsRecords[0].respiratoryRate,
-        gcs: b.vitalsRecords[0].gcs,
-        ventilatorMode: b.vitalsRecords[0].ventilatorMode,
-        timestamp: b.vitalsRecords[0].recordedAt,
-      } : null,
-    })));
+    // Fetch patient and admission data for occupied beds
+    const enrichedBeds = await Promise.all(beds.map(async (b) => {
+      let patient = null;
+      let admission = null;
+
+      // Get patient data if currentPatient is set
+      if (b.currentPatient) {
+        patient = await prisma.patient.findUnique({
+          where: { id: b.currentPatient },
+          select: { id: true, name: true, mrn: true, age: true, gender: true }
+        });
+      }
+
+      // Get admission data if admissionId is set
+      if (b.admissionId) {
+        admission = await prisma.admission.findUnique({
+          where: { id: b.admissionId },
+          select: { id: true, admissionDate: true, diagnosis: true, isVentilated: true, ventilatorMode: true }
+        });
+      }
+
+      return {
+        ...b,
+        patient,
+        admission,
+        latestVitals: b.vitalsRecords[0] ? {
+          hr: b.vitalsRecords[0].heartRate,
+          bp: b.vitalsRecords[0].systolicBP && b.vitalsRecords[0].diastolicBP
+            ? `${b.vitalsRecords[0].systolicBP}/${b.vitalsRecords[0].diastolicBP}` : null,
+          spo2: b.vitalsRecords[0].spo2,
+          temp: b.vitalsRecords[0].temperature,
+          rr: b.vitalsRecords[0].respiratoryRate,
+          gcs: b.vitalsRecords[0].gcs,
+          ventilatorMode: b.vitalsRecords[0].ventilatorMode,
+          timestamp: b.vitalsRecords[0].recordedAt,
+        } : null,
+      };
+    }));
+
+    res.json(enrichedBeds);
   } catch (error) {
     logger.error('Get ICU beds error:', error);
     res.status(500).json({ error: 'Internal server error' });
