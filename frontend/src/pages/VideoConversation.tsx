@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,7 +12,7 @@ import { useToast } from '@/components/Toast';
 import {
   Video, VideoOff, Mic, MicOff, Phone, PhoneOff, Monitor,
   MessageSquare, Users, Calendar, Clock, User, Send,
-  Maximize2, Minimize2, Settings, FileText, Pill, Camera
+  Maximize2, Minimize2, FileText, Pill
 } from 'lucide-react';
 
 interface Consultation {
@@ -211,8 +211,8 @@ export default function VideoConversation() {
   const toggleScreenShare = async () => {
     if (!isScreenSharing) {
       try {
-        const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-        // Would normally send this to peer connection
+        await navigator.mediaDevices.getDisplayMedia({ video: true });
+        // Screen stream obtained - would normally send to peer connection
         setIsScreenSharing(true);
         toastSuccess('Screen Sharing', 'Screen sharing started');
       } catch (error) {

@@ -11,7 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/Toast';
 import {
   Microscope, Search, FileText, CheckCircle, Clock, Eye,
-  Upload, Image, AlertTriangle, RefreshCw, Send, Printer
+  RefreshCw, Send, Printer
 } from 'lucide-react';
 
 interface PathologyCase {
@@ -43,10 +43,8 @@ interface PathologyCase {
   turnaroundDays?: number;
 }
 
-const SPECIMEN_TYPES = [
-  'Biopsy', 'Excision', 'Resection', 'Curettage', 'Fine Needle Aspirate',
-  'Pap Smear', 'Body Fluid', 'Bone Marrow', 'Lymph Node', 'Skin'
-];
+// Specimen types for reference (used in backend)
+// const SPECIMEN_TYPES = ['Biopsy', 'Excision', 'Resection', 'Curettage', 'Fine Needle Aspirate', 'Pap Smear', 'Body Fluid', 'Bone Marrow', 'Lymph Node', 'Skin'];
 
 const ICD_CODES = [
   { code: 'C50', description: 'Malignant neoplasm of breast' },
@@ -56,10 +54,8 @@ const ICD_CODES = [
   { code: 'N80', description: 'Endometriosis' },
 ];
 
-const IHC_MARKERS = [
-  'ER', 'PR', 'HER2', 'Ki-67', 'p53', 'CK7', 'CK20', 'CD20', 'CD3',
-  'TTF-1', 'PSA', 'S100', 'Melan-A', 'CD34', 'Vimentin'
-];
+// IHC markers for reference (used in backend)
+// const IHC_MARKERS = ['ER', 'PR', 'HER2', 'Ki-67', 'p53', 'CK7', 'CK20', 'CD20', 'CD3', 'TTF-1', 'PSA', 'S100', 'Melan-A', 'CD34', 'Vimentin'];
 
 export default function Pathology() {
   const { success: showToast } = useToast();

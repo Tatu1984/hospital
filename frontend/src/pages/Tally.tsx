@@ -7,8 +7,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/components/Toast';
 import {
-  Calculator, RefreshCw, Upload, Download, CheckCircle, XCircle,
-  Clock, FileText, ArrowUpRight, ArrowDownLeft, DollarSign
+  RefreshCw, Upload, CheckCircle, XCircle,
+  Clock, ArrowUpRight, ArrowDownLeft, DollarSign
 } from 'lucide-react';
 
 interface SyncEntry {

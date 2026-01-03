@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/Toast';
 import {
-  Syringe, Search, Plus, CheckCircle, XCircle, Clock,
+  Syringe, Search, CheckCircle, XCircle, Clock,
   User, MapPin, Phone, Barcode, Printer, RefreshCw,
   AlertTriangle, Home, Building
 } from 'lucide-react';
@@ -67,7 +67,7 @@ export default function Phlebotomy() {
   const [selectedCollection, setSelectedCollection] = useState<SampleCollection | null>(null);
   const [showCollectDialog, setShowCollectDialog] = useState(false);
   const [showRejectDialog, setShowRejectDialog] = useState(false);
-  const [showAssignDialog, setShowAssignDialog] = useState(false);
+  const [_showAssignDialog, _setShowAssignDialog] = useState(false);
   const [rejectionReason, setRejectionReason] = useState('');
   const [collectionNotes, setCollectionNotes] = useState('');
 

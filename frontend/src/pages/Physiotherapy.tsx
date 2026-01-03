@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -10,8 +10,8 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/Toast';
 import {
-  PersonStanding, Search, Plus, Calendar, Clock, User,
-  CheckCircle, FileText, RefreshCw, Activity, Target
+  Search, Plus, Calendar, Clock, User,
+  CheckCircle, FileText, RefreshCw, Activity
 } from 'lucide-react';
 
 interface PhysiotherapySession {
@@ -496,6 +496,22 @@ export default function Physiotherapy() {
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* Schedule Dialog */}
+      <Dialog open={showScheduleDialog} onOpenChange={setShowScheduleDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Schedule New Session</DialogTitle>
+          </DialogHeader>
+          <div className="py-4 text-center text-slate-500">
+            <Calendar className="w-12 h-12 mx-auto mb-2 text-slate-400" />
+            <p>Session scheduling functionality coming soon.</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowScheduleDialog(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Progress Dialog */}
       <Dialog open={showProgressDialog} onOpenChange={setShowProgressDialog}>
