@@ -8,8 +8,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Bed, LogOut, Search, Settings, Building2, Trash2, Edit } from 'lucide-react';
+import { Plus, Bed, LogOut, Search, Settings, Building2, Trash2, Edit, Eye } from 'lucide-react';
 import api from '../services/api';
+import BedPatientDetails from '../components/BedPatientDetails';
 
 interface Admission {
   id: string;
@@ -84,6 +85,10 @@ export default function Inpatient() {
   const [selectedAdmission, setSelectedAdmission] = useState<Admission | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Patient Details Dialog State
+  const [showPatientDetails, setShowPatientDetails] = useState(false);
+  const [selectedBedForDetails, setSelectedBedForDetails] = useState<{bedId: string; patientId: string; admissionId: string} | null>(null);
 
   // Bed Management State
   const [isBedDialogOpen, setIsBedDialogOpen] = useState(false);
@@ -393,6 +398,20 @@ export default function Inpatient() {
     occupied: occupiedBeds.length,
     available: availableBeds.length,
     activeAdmissions: activeAdmissions.length
+  };
+
+  // Function to open patient details for an occupied bed
+  const openPatientDetails = (bed: Bed) => {
+    // Find the admission for this bed
+    const admission = admissions.find(a => a.bedId === bed.id && a.status === 'active');
+    if (admission) {
+      setSelectedBedForDetails({
+        bedId: bed.id,
+        patientId: admission.patientId,
+        admissionId: admission.id
+      });
+      setShowPatientDetails(true);
+    }
   };
 
   return (
@@ -795,6 +814,11 @@ export default function Inpatient() {
                         </TableCell>
                         <TableCell>
                           <div className="flex gap-1">
+                            {bed.status === 'occupied' && (
+                              <Button size="sm" variant="ghost" onClick={() => openPatientDetails(bed)} title="View Patient Details">
+                                <Eye className="w-4 h-4 text-blue-500" />
+                              </Button>
+                            )}
                             <Button size="sm" variant="ghost" onClick={() => openBedDialog(bed)}>
                               <Edit className="w-4 h-4" />
                             </Button>
@@ -1065,6 +1089,24 @@ export default function Inpatient() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Patient Details Dialog - Shows when clicking on occupied bed */}
+      {selectedBedForDetails && (
+        <BedPatientDetails
+          open={showPatientDetails}
+          onClose={() => {
+            setShowPatientDetails(false);
+            setSelectedBedForDetails(null);
+          }}
+          bedId={selectedBedForDetails.bedId}
+          patientId={selectedBedForDetails.patientId}
+          admissionId={selectedBedForDetails.admissionId}
+          onRefresh={() => {
+            fetchAdmissions();
+            fetchBeds();
+          }}
+        />
+      )}
     </div>
   );
 }

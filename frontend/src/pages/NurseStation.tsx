@@ -8,8 +8,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { AlertCircle, Pill, Heart, Plus, Users, Building2, RefreshCw, UserCog } from 'lucide-react';
+import { AlertCircle, Pill, Heart, Plus, Users, Building2, RefreshCw, UserCog, Eye } from 'lucide-react';
 import api from '../services/api';
+import BedPatientDetails from '../components/BedPatientDetails';
 
 interface Ward {
   id: string;
@@ -100,6 +101,10 @@ export default function NurseStation() {
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [selectedShift, setSelectedShift] = useState<string>('all');
   const [loading, setLoading] = useState(false);
+
+  // Patient Details Dialog
+  const [showPatientDetails, setShowPatientDetails] = useState(false);
+  const [selectedPatientForDetails, setSelectedPatientForDetails] = useState<Patient | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   // Quick assign nurse form
@@ -909,14 +914,27 @@ export default function NurseStation() {
                         <TableCell>{patient.bedNumber}</TableCell>
                         <TableCell>{new Date(patient.admissionDate).toLocaleDateString()}</TableCell>
                         <TableCell>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => openVitalsDialog(patient)}
-                          >
-                            <Heart className="w-4 h-4 mr-1" />
-                            Record Vitals
-                          </Button>
+                          <div className="flex gap-1">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => {
+                                setSelectedPatientForDetails(patient);
+                                setShowPatientDetails(true);
+                              }}
+                              title="View Patient Details"
+                            >
+                              <Eye className="w-4 h-4 text-blue-500" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => openVitalsDialog(patient)}
+                            >
+                              <Heart className="w-4 h-4 mr-1" />
+                              Record Vitals
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))
@@ -1282,6 +1300,21 @@ export default function NurseStation() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Comprehensive Patient Details Dialog */}
+      {selectedPatientForDetails && (
+        <BedPatientDetails
+          open={showPatientDetails}
+          onClose={() => {
+            setShowPatientDetails(false);
+            setSelectedPatientForDetails(null);
+          }}
+          bedId={selectedPatientForDetails.bedNumber}
+          patientId={selectedPatientForDetails.id}
+          admissionId={selectedPatientForDetails.id}
+          onRefresh={fetchPatients}
+        />
+      )}
     </div>
   );
 }

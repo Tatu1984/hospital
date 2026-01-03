@@ -8,8 +8,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Heart, Activity, Wind, Droplet, Thermometer, Users, Bed, TrendingUp, FileText } from 'lucide-react';
+import { Heart, Activity, Wind, Droplet, Thermometer, Users, Bed, TrendingUp, FileText, ExternalLink } from 'lucide-react';
 import api from '../services/api';
+import BedPatientDetails from '../components/BedPatientDetails';
 
 interface ICUBed {
   id: string;
@@ -71,6 +72,9 @@ export default function ICU() {
   const [isVentilatorDialogOpen, setIsVentilatorDialogOpen] = useState(false);
   const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // Comprehensive Patient Details
+  const [showFullPatientDetails, setShowFullPatientDetails] = useState(false);
 
   const [vitalsFormData, setVitalsFormData] = useState<VitalsFormData>({
     bedId: '',
@@ -827,10 +831,39 @@ export default function ICU() {
                   </div>
                 </div>
               )}
+
+              {/* View Full Details Button */}
+              <div className="pt-4 border-t">
+                <Button
+                  className="w-full"
+                  onClick={() => {
+                    setIsDetailsDialogOpen(false);
+                    setShowFullPatientDetails(true);
+                  }}
+                >
+                  <ExternalLink className="w-4 h-4 mr-2" />
+                  View Complete Patient Record
+                </Button>
+              </div>
             </div>
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Comprehensive Patient Details Dialog */}
+      {selectedBed && selectedBed.patient && selectedBed.admission && (
+        <BedPatientDetails
+          open={showFullPatientDetails}
+          onClose={() => {
+            setShowFullPatientDetails(false);
+            setSelectedBed(null);
+          }}
+          bedId={selectedBed.id}
+          patientId={selectedBed.patient.id}
+          admissionId={selectedBed.admission.id}
+          onRefresh={fetchICUBeds}
+        />
+      )}
     </div>
   );
 }
