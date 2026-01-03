@@ -7,10 +7,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
+// Textarea import removed - not currently used
 import { useToast } from '@/components/Toast';
 import {
-  Cross, Search, Plus, FileText, Clock, User,
+  Cross, Search, Plus, FileText, User,
   Phone, CheckCircle, RefreshCw, AlertTriangle
 } from 'lucide-react';
 
@@ -66,7 +66,7 @@ export default function Mortuary() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
-  const [showRegisterDialog, setShowRegisterDialog] = useState(false);
+  const [_showRegisterDialog, _setShowRegisterDialog] = useState(false);
   const [showReleaseDialog, setShowReleaseDialog] = useState(false);
   const [selectedRecord, setSelectedRecord] = useState<DeceasedRecord | null>(null);
 

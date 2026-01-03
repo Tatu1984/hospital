@@ -7,10 +7,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox';
+// Checkbox import removed - not currently used
 import { useToast } from '@/components/Toast';
 import {
-  HeartPulse, Search, Plus, Calendar, User, Clock,
+  HeartPulse, Search, Calendar, User, Clock,
   CheckCircle, FileText, Printer, RefreshCw, DollarSign
 } from 'lucide-react';
 
@@ -190,9 +190,9 @@ const HEALTH_PACKAGES: HealthPackage[] = [
 export default function HealthCheckup() {
   const { success: showToast } = useToast();
   const [activeTab, setActiveTab] = useState('packages');
-  const [packages, setPackages] = useState<HealthPackage[]>(HEALTH_PACKAGES);
+  const [packages, _setPackages] = useState<HealthPackage[]>(HEALTH_PACKAGES);
   const [bookings, setBookings] = useState<Booking[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [_loading, _setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [showBookDialog, setShowBookDialog] = useState(false);

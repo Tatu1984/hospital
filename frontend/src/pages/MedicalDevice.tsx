@@ -7,12 +7,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
+// Textarea import removed - not currently used
 import { useToast } from '@/components/Toast';
 import {
   Activity, Wifi, WifiOff, AlertTriangle, Settings, RefreshCw,
   Monitor, Thermometer, Heart, Droplets, Wind, Zap, Battery,
-  Signal, Clock, CheckCircle, XCircle, Plus, Search, Download
+  CheckCircle, Plus, Search, Download
 } from 'lucide-react';
 
 interface MedicalDevice {
@@ -229,7 +229,7 @@ export default function MedicalDevice() {
     }
   ]);
 
-  const [integrations, setIntegrations] = useState<IntegrationConfig[]>([
+  const [integrations, _setIntegrations] = useState<IntegrationConfig[]>([
     {
       id: 'INT001',
       name: 'HL7 Interface Engine',
