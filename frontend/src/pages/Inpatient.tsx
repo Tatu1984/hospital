@@ -328,9 +328,10 @@ export default function Inpatient() {
       setIsTransferDialogOpen(false);
       setTransferAdmission(null);
       alert('Patient transferred successfully');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error transferring patient:', error);
-      alert('Failed to transfer patient');
+      const errorDetails = error.response?.data?.details || error.response?.data?.error || error.message || 'Unknown error';
+      alert(`Failed to transfer patient: ${errorDetails}`);
     } finally {
       setLoading(false);
     }
