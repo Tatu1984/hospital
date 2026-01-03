@@ -679,6 +679,7 @@ export default function BedPatientDetails({
                   </div>
                   <div className="text-sm text-gray-500 mt-1">
                     {admission ? `Admitted: ${new Date(admission.admissionDate).toLocaleString()} | LOS: Day ${admission.actualLOS}` : 'Admission details loading...'}
+                  </div>
                 </div>
               </div>
               <div className="flex gap-2">
