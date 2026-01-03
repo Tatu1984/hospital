@@ -6318,22 +6318,23 @@ app.get('/api/bed-transfers/available-beds', authenticateToken, async (req: any,
 
     // For ICU transfers, query the ICUBed table
     if (wardType === 'icu') {
+      // Query with multiple status variations to handle case mismatches
       const icuBeds = await prisma.iCUBed.findMany({
         where: {
-          status: 'vacant',
+          status: { in: ['vacant', 'Vacant', 'VACANT', 'available', 'Available', 'AVAILABLE'] },
           ...(excludeBedId ? { id: { not: excludeBedId as string } } : {}),
         },
         orderBy: { bedNumber: 'asc' },
       });
 
-      // Transform ICU beds to match expected format
+      // Transform ICU beds to match expected format with normalized status
       const transformedBeds = icuBeds.map(bed => ({
         id: bed.id,
         bedNumber: bed.bedNumber,
         wardName: bed.icuUnit,
         wardType: 'icu',
         category: 'icu',
-        status: bed.status,
+        status: 'vacant', // Normalize to lowercase
       }));
 
       return res.json(transformedBeds);
@@ -6906,8 +6907,12 @@ app.get('/api/icu/beds', authenticateToken, async (req: any, res: Response) => {
         });
       }
 
+      // Normalize status to lowercase (handle legacy AVAILABLE/OCCUPIED values)
+      const normalizedStatus = b.status?.toLowerCase() === 'available' ? 'vacant' : (b.status?.toLowerCase() || 'vacant');
+
       return {
         ...b,
+        status: normalizedStatus,
         patient,
         admission,
         latestVitals: b.vitalsRecords[0] ? {

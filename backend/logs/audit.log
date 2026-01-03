@@ -18,3 +18,4 @@
 {"level":"info","message":"SIGTERM received, shutting down gracefully","service":"hospital-erp","timestamp":"2025-12-16T03:54:37.221Z"}
 {"level":"info","message":"Hospital ERP Backend running on http://localhost:4000","service":"hospital-erp","timestamp":"2025-12-16T03:54:39.770Z"}
 {"level":"info","message":"API Health: http://localhost:4000/api/health","service":"hospital-erp","timestamp":"2025-12-16T03:54:39.770Z"}
+{"level":"info","message":"SIGTERM received, shutting down gracefully","service":"hospital-erp","timestamp":"2025-12-16T05:51:29.955Z"}

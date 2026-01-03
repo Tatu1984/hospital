@@ -108,12 +108,12 @@ export default function HDU() {
       // HDU beds have category 'hdu' or are in HDU ward
       const response = await api.get('/api/beds', { params: { category: 'hdu' } });
 
-      // Transform data to HDU format
+      // Transform data to HDU format (normalize status to handle case mismatches)
       const transformedBeds: HDUBed[] = response.data.map((bed: any) => ({
         id: bed.id,
         bedNumber: bed.bedNumber,
         hduUnit: bed.ward?.name || 'HDU',
-        status: bed.status === 'occupied' ? 'occupied' : 'vacant',
+        status: bed.status?.toLowerCase() === 'occupied' ? 'occupied' : 'vacant',
         patient: bed.currentAdmission?.patient ? {
           id: bed.currentAdmission.patient.id,
           name: bed.currentAdmission.patient.name,

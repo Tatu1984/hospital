@@ -1,0 +1,92 @@
+// ===========================
+// REPORT BUILDER SYSTEM
+// ===========================
+// Copy and paste these models to the end of schema.prisma
+
+model ReportTemplate {
+  id          String           @id @default(uuid())
+  tenantId    String
+  name        String
+  description String?
+  category    String           // clinical, financial, operational, hr
+  dataSource  String           // patients, appointments, billing, lab, etc.
+  columns     Json             // [{field, label, type, aggregate}]
+  filters     Json             // [{field, operator, defaultValue}]
+  groupBy     Json?            // [field1, field2]
+  sortBy      Json?            // [{field, direction}]
+  chartType   String?          // bar, line, pie, table
+  isSystem    Boolean          @default(false)
+  isActive    Boolean          @default(true)
+  createdBy   String
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  schedules   ReportSchedule[]
+
+  @@index([tenantId])
+  @@index([category])
+  @@map("report_templates")
+}
+
+model ReportSchedule {
+  id         String         @id @default(uuid())
+  templateId String
+  frequency  String         // daily, weekly, monthly
+  dayOfWeek  Int?           // 0-6 for weekly
+  dayOfMonth Int?           // 1-31 for monthly
+  time       String         // "08:00"
+  recipients String[]       // email addresses
+  format     String         @default("excel") // excel, pdf, csv
+  filters    Json?          // override filters
+  isActive   Boolean        @default(true)
+  lastRunAt  DateTime?
+  nextRunAt  DateTime?
+  createdAt  DateTime       @default(now())
+  template   ReportTemplate @relation(fields: [templateId], references: [id])
+
+  @@index([isActive, nextRunAt])
+  @@map("report_schedules")
+}
+
+model GeneratedReport {
+  id          String   @id @default(uuid())
+  tenantId    String
+  templateId  String
+  name        String
+  parameters  Json     // filters used
+  filePath    String?
+  format      String
+  rowCount    Int
+  generatedBy String
+  generatedAt DateTime @default(now())
+  expiresAt   DateTime
+
+  @@index([tenantId])
+  @@index([generatedBy])
+  @@index([expiresAt])
+  @@map("generated_reports")
+}
+
+model RadiologyStudy {
+  id              String   @id @default(uuid())
+  orderId         String
+  patientId       String
+  studyDate       DateTime @default(now())
+  modality        String   // CT, MRI, X-Ray, Ultrasound, etc.
+  bodyPart        String
+  findings        String?
+  impression      String?
+  radiologistId   String?
+  radiologistName String?
+  status          String   @default("pending") // pending, reported, verified
+  images          Json?    // Array of image URLs
+  reportedAt      DateTime?
+  verifiedAt      DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  order           Order    @relation(fields: [orderId], references: [id])
+  patient         Patient  @relation(fields: [patientId], references: [id])
+
+  @@index([patientId])
+  @@index([status])
+  @@map("radiology_studies")
+}

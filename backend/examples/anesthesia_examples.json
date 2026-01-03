@@ -1,0 +1,319 @@
+{
+  "createAnesthesiaRecord": {
+    "description": "POST /api/surgeries/:surgeryId/anesthesia",
+    "example": {
+      "surgeryId": "replace-with-actual-surgery-id",
+      "patientId": "replace-with-actual-patient-id",
+      "anesthetistId": "replace-with-actual-anesthetist-id",
+      "anesthesiaType": "general",
+      "preOpAssessment": {
+        "asaGrade": "II",
+        "airwayAssessment": {
+          "mallamapati": "I",
+          "thyromental": 7.5,
+          "mouthOpening": "Adequate - 4 cm",
+          "neckMobility": "Normal - full range",
+          "dentition": "Good, no loose teeth"
+        },
+        "npoStatus": {
+          "lastSolid": "2024-01-15T20:00:00Z",
+          "lastFluid": "2024-01-16T06:00:00Z",
+          "hoursNPO": 8
+        },
+        "preExistingConditions": [
+          "Hypertension (controlled)",
+          "Type 2 Diabetes"
+        ],
+        "currentMedications": [
+          "Amlodipine 5mg OD",
+          "Metformin 500mg BD"
+        ],
+        "allergies": [],
+        "labValues": {
+          "hemoglobin": 13.5,
+          "platelets": 250000,
+          "inr": 1.1,
+          "creatinine": 0.9,
+          "sodium": 138,
+          "potassium": 4.2,
+          "bloodSugar": 110
+        }
+      },
+      "startTime": "2024-01-16T08:30:00Z"
+    }
+  },
+  "updateAnesthesiaRecord": {
+    "description": "PUT /api/surgeries/:surgeryId/anesthesia",
+    "example": {
+      "agents": [
+        {
+          "name": "Propofol",
+          "dose": "120",
+          "unit": "mg",
+          "route": "IV",
+          "time": "2024-01-16T08:30:00Z"
+        },
+        {
+          "name": "Fentanyl",
+          "dose": "100",
+          "unit": "mcg",
+          "route": "IV",
+          "time": "2024-01-16T08:32:00Z"
+        },
+        {
+          "name": "Rocuronium",
+          "dose": "50",
+          "unit": "mg",
+          "route": "IV",
+          "time": "2024-01-16T08:33:00Z"
+        },
+        {
+          "name": "Sevoflurane",
+          "dose": "1.5-2.0",
+          "unit": "MAC",
+          "route": "Inhalation",
+          "time": "2024-01-16T08:35:00Z"
+        }
+      ],
+      "airwayManagement": {
+        "technique": "ETT",
+        "ettSize": "7.5",
+        "ettDepth": "21 cm at lips",
+        "cuffPressure": 25,
+        "intubationAttempts": 1,
+        "difficulty": "easy",
+        "ventilatorSettings": {
+          "mode": "VCV",
+          "tidalVolume": 450,
+          "respiratoryRate": 12,
+          "fio2": 40,
+          "peep": 5,
+          "pip": 18
+        }
+      },
+      "fluidBalance": {
+        "ivFluids": [
+          {
+            "fluid": "Ringer's Lactate",
+            "volume": 1000,
+            "time": "2024-01-16T08:30:00Z"
+          },
+          {
+            "fluid": "Normal Saline",
+            "volume": 500,
+            "time": "2024-01-16T10:00:00Z"
+          }
+        ],
+        "bloodProducts": [],
+        "urineOutput": 200,
+        "bloodLoss": 50,
+        "drains": []
+      },
+      "recoveryNotes": "Patient recovered smoothly from anesthesia. Extubated in OT at end of procedure. Maintaining SpO2 >95% on room air. Responsive to commands. No nausea or vomiting.",
+      "postOpInstructions": "Monitor vitals q15min for 1hr, then q30min. Pain management: Paracetamol 1g IV q6h, Morphine 2-3mg IV PRN. Continue O2 2L/min if SpO2 <94%. Maintain NBM for 6 hours.",
+      "endTime": "2024-01-16T11:30:00Z"
+    }
+  },
+  "addVitalsEntry": {
+    "description": "POST /api/surgeries/:surgeryId/vitals - Add vitals periodically (every 5-15 min)",
+    "examples": [
+      {
+        "heartRate": 72,
+        "systolicBP": 120,
+        "diastolicBP": 75,
+        "meanBP": 90,
+        "temperature": 36.8,
+        "spo2": 99,
+        "etco2": 38,
+        "respiratoryRate": 12,
+        "time": "2024-01-16T08:45:00Z",
+        "notes": "Stable - Post induction"
+      },
+      {
+        "heartRate": 68,
+        "systolicBP": 115,
+        "diastolicBP": 72,
+        "meanBP": 86,
+        "temperature": 36.7,
+        "spo2": 99,
+        "etco2": 37,
+        "respiratoryRate": 12,
+        "time": "2024-01-16T09:00:00Z",
+        "notes": "Stable"
+      },
+      {
+        "heartRate": 74,
+        "systolicBP": 118,
+        "diastolicBP": 74,
+        "meanBP": 89,
+        "temperature": 36.6,
+        "spo2": 99,
+        "etco2": 38,
+        "respiratoryRate": 12,
+        "time": "2024-01-16T09:15:00Z",
+        "notes": "Stable - During dissection"
+      },
+      {
+        "heartRate": 76,
+        "systolicBP": 122,
+        "diastolicBP": 76,
+        "meanBP": 91,
+        "temperature": 36.7,
+        "spo2": 99,
+        "etco2": 37,
+        "respiratoryRate": 12,
+        "time": "2024-01-16T09:30:00Z",
+        "notes": "Stable"
+      }
+    ]
+  },
+  "addAnesthesiaComplication": {
+    "description": "POST /api/surgeries/:surgeryId/anesthesia/complications",
+    "examples": [
+      {
+        "type": "Hypotension",
+        "description": "BP dropped to 85/50 mmHg following induction",
+        "management": "Fluid bolus 200ml Ringer's Lactate, Phenylephrine 100mcg IV. BP returned to 110/65 within 2 minutes.",
+        "time": "2024-01-16T08:35:00Z"
+      },
+      {
+        "type": "Bronchospasm",
+        "description": "Increased airway pressure, wheeze on auscultation",
+        "management": "Deepened anesthesia with Propofol 20mg, Salbutamol 2 puffs via ETT, increased FiO2 to 100%. Resolved in 3 minutes.",
+        "time": "2024-01-16T09:20:00Z"
+      }
+    ]
+  },
+  "reportSurgeryComplication": {
+    "description": "POST /api/surgeries/:surgeryId/complications",
+    "examples": [
+      {
+        "type": "intraoperative",
+        "description": "Minor bleeding encountered from hepatic bed during gallbladder dissection",
+        "severity": "minor",
+        "managementDone": "Controlled with diathermy and application of hemostatic agents (Surgicel). No further bleeding noted.",
+        "outcome": "Successfully managed, no blood transfusion required, surgery proceeded uneventfully"
+      },
+      {
+        "type": "intraoperative",
+        "description": "Difficulty in accessing cystic artery due to dense adhesions from previous inflammation",
+        "severity": "moderate",
+        "managementDone": "Careful dissection performed, converted to open cholecystectomy for better visualization and safety",
+        "outcome": "Conversion to open procedure, cystic artery identified and ligated safely"
+      },
+      {
+        "type": "postoperative",
+        "description": "Patient developed port site infection on POD 3",
+        "severity": "minor",
+        "managementDone": "Wound opened, pus drained, sent for culture. Started on IV antibiotics (Cefuroxime 750mg TDS)",
+        "outcome": "Infection resolving, culture showed Staphylococcus aureus, sensitive to current antibiotics"
+      }
+    ]
+  },
+  "addSurgeryImplant": {
+    "description": "POST /api/surgeries/:surgeryId/implants",
+    "examples": [
+      {
+        "implantName": "DePuy Synthes Proximal Femoral Nail Antirotation (PFNA)",
+        "manufacturer": "DePuy Synthes",
+        "serialNumber": "SN123456789012",
+        "batchNumber": "BATCH2024-001-PFN",
+        "expiryDate": "2026-12-31",
+        "quantity": 1,
+        "cost": 45000.00
+      },
+      {
+        "implantName": "Titanium Locking Screws (5 x 40mm)",
+        "manufacturer": "DePuy Synthes",
+        "serialNumber": "SN987654321098",
+        "batchNumber": "BATCH2024-045-SCR",
+        "expiryDate": "2027-06-30",
+        "quantity": 4,
+        "cost": 8000.00
+      },
+      {
+        "implantName": "Cardiac Pacemaker - Medtronic Azure XT DR",
+        "manufacturer": "Medtronic",
+        "serialNumber": "PM2024-ABC-123456",
+        "batchNumber": "BATCH-PM-2024-Q1",
+        "expiryDate": "2034-03-15",
+        "quantity": 1,
+        "cost": 450000.00
+      },
+      {
+        "implantName": "Intraocular Lens (IOL) +22.0D",
+        "manufacturer": "Alcon",
+        "serialNumber": "IOL-2024-987654",
+        "batchNumber": "BATCH-IOL-2024-02",
+        "expiryDate": "2029-08-31",
+        "quantity": 1,
+        "cost": 12000.00
+      }
+    ]
+  },
+  "completeWorkflow": {
+    "description": "Complete anesthesia workflow from pre-op to recovery",
+    "steps": [
+      {
+        "step": 1,
+        "action": "Create anesthesia record",
+        "endpoint": "POST /api/surgeries/:id/anesthesia",
+        "note": "Document pre-operative assessment and start time"
+      },
+      {
+        "step": 2,
+        "action": "Update with induction agents",
+        "endpoint": "PUT /api/surgeries/:id/anesthesia",
+        "note": "Add agents used for induction"
+      },
+      {
+        "step": 3,
+        "action": "Add baseline vitals",
+        "endpoint": "POST /api/surgeries/:id/vitals",
+        "note": "Record vitals immediately after induction"
+      },
+      {
+        "step": 4,
+        "action": "Update with airway management",
+        "endpoint": "PUT /api/surgeries/:id/anesthesia",
+        "note": "Document intubation and ventilator settings"
+      },
+      {
+        "step": 5,
+        "action": "Add periodic vitals",
+        "endpoint": "POST /api/surgeries/:id/vitals",
+        "note": "Record vitals every 5-15 minutes throughout surgery"
+      },
+      {
+        "step": 6,
+        "action": "Record any complications",
+        "endpoint": "POST /api/surgeries/:id/anesthesia/complications",
+        "note": "Document anesthesia complications if they occur"
+      },
+      {
+        "step": 7,
+        "action": "Update fluid balance",
+        "endpoint": "PUT /api/surgeries/:id/anesthesia",
+        "note": "Update IV fluids, blood products, urine output"
+      },
+      {
+        "step": 8,
+        "action": "Record surgery complications",
+        "endpoint": "POST /api/surgeries/:id/complications",
+        "note": "Document surgical complications if they occur"
+      },
+      {
+        "step": 9,
+        "action": "Add implants used",
+        "endpoint": "POST /api/surgeries/:id/implants",
+        "note": "Record all implants/devices used"
+      },
+      {
+        "step": 10,
+        "action": "Complete anesthesia record",
+        "endpoint": "PUT /api/surgeries/:id/anesthesia",
+        "note": "Add recovery notes, post-op instructions, and end time"
+      }
+    ]
+  }
+}

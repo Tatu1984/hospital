@@ -1,0 +1,397 @@
+###
+# Nursing Care Plan API Examples
+# Use with REST Client extension in VS Code
+###
+
+@baseUrl = http://localhost:3000/api
+@token = your-auth-token-here
+
+### 1. Get Available Assessment Scales
+GET {{baseUrl}}/nursing/assessment-scales
+Authorization: Bearer {{token}}
+
+### 2. Get Diagnosis Templates
+GET {{baseUrl}}/nursing/diagnoses/templates
+Authorization: Bearer {{token}}
+
+### 3. Create Care Plan - Fall Risk Example
+POST {{baseUrl}}/nursing/care-plans
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "admissionId": "550e8400-e29b-41d4-a716-446655440000",
+  "patientId": "660e8400-e29b-41d4-a716-446655440000",
+  "createdBy": "770e8400-e29b-41d4-a716-446655440000",
+  "diagnoses": [
+    {
+      "code": "00155",
+      "diagnosis": "Risk for Falls",
+      "relatedTo": "History of falls and impaired mobility",
+      "evidencedBy": [
+        "Morse Fall Scale score of 55",
+        "Unsteady gait",
+        "Use of walker"
+      ],
+      "priority": 1,
+      "goals": [
+        {
+          "description": "Patient will remain free from falls during hospitalization",
+          "targetDate": "2025-01-15T00:00:00Z"
+        },
+        {
+          "description": "Patient will demonstrate safe ambulation with walker by discharge",
+          "targetDate": "2025-01-20T00:00:00Z"
+        }
+      ]
+    }
+  ],
+  "interventions": [
+    {
+      "category": "assessment",
+      "intervention": "Perform Morse Fall Scale assessment",
+      "frequency": "Daily",
+      "instructions": "Reassess after any change in condition"
+    },
+    {
+      "category": "therapeutic",
+      "intervention": "Keep bed in lowest position with brakes locked",
+      "frequency": "Continuous",
+      "instructions": "Ensure call bell within reach at all times"
+    },
+    {
+      "category": "therapeutic",
+      "intervention": "Implement fall precaution protocol",
+      "frequency": "Continuous",
+      "instructions": "Yellow wristband, signage on door and bed"
+    },
+    {
+      "category": "teaching",
+      "intervention": "Educate patient on fall prevention strategies",
+      "frequency": "Daily",
+      "instructions": "Instruct to call for assistance before getting up"
+    }
+  ]
+}
+
+### 4. Create Care Plan - Pressure Ulcer Risk
+POST {{baseUrl}}/nursing/care-plans
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "admissionId": "550e8400-e29b-41d4-a716-446655440001",
+  "patientId": "660e8400-e29b-41d4-a716-446655440001",
+  "createdBy": "770e8400-e29b-41d4-a716-446655440001",
+  "diagnoses": [
+    {
+      "code": "00047",
+      "diagnosis": "Risk for Impaired Skin Integrity",
+      "relatedTo": "Prolonged immobility and poor nutritional status",
+      "evidencedBy": [
+        "Braden Scale score of 12 (high risk)",
+        "Bedbound status",
+        "Limited ability to reposition self"
+      ],
+      "priority": 1,
+      "goals": [
+        {
+          "description": "Patient will maintain intact skin throughout hospitalization",
+          "targetDate": "2025-02-01T00:00:00Z"
+        }
+      ]
+    }
+  ],
+  "interventions": [
+    {
+      "category": "assessment",
+      "intervention": "Assess skin integrity every shift",
+      "frequency": "Q8H",
+      "instructions": "Pay special attention to bony prominences"
+    },
+    {
+      "category": "therapeutic",
+      "intervention": "Reposition patient to relieve pressure",
+      "frequency": "Q2H",
+      "instructions": "Use pillows and positioning devices"
+    },
+    {
+      "category": "therapeutic",
+      "intervention": "Apply pressure-relieving mattress",
+      "frequency": "Continuous",
+      "instructions": "Ensure device functioning properly"
+    }
+  ]
+}
+
+### 5. Get Care Plan by Admission
+GET {{baseUrl}}/nursing/care-plans/550e8400-e29b-41d4-a716-446655440000
+Authorization: Bearer {{token}}
+
+### 6. Add Diagnosis to Existing Care Plan
+POST {{baseUrl}}/nursing/care-plans/care-plan-uuid-here/diagnoses
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "code": "00132",
+  "diagnosis": "Acute Pain",
+  "relatedTo": "Post-surgical incision",
+  "evidencedBy": [
+    "Patient reports pain level 7/10",
+    "Grimacing with movement",
+    "Guarding surgical site"
+  ],
+  "priority": 2,
+  "goals": [
+    {
+      "description": "Patient will report pain level of 3 or less within 24 hours",
+      "targetDate": "2025-01-11T00:00:00Z"
+    }
+  ]
+}
+
+### 7. Add Intervention to Care Plan
+POST {{baseUrl}}/nursing/care-plans/care-plan-uuid-here/interventions
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "category": "assessment",
+  "intervention": "Assess pain using numeric pain scale (0-10)",
+  "frequency": "Q4H and PRN",
+  "instructions": "Document location, quality, intensity"
+}
+
+### 8. Execute Intervention
+POST {{baseUrl}}/nursing/interventions/intervention-uuid-here/execute
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "executedBy": "770e8400-e29b-41d4-a716-446655440000",
+  "notes": "Patient repositioned from right side to left side at 1400. Skin assessment completed - no areas of redness or breakdown noted over bony prominences.",
+  "patientResponse": "Patient tolerated position change well. Reported increased comfort. No complaints of pain or discomfort."
+}
+
+### 9. Update Goal Outcome
+PUT {{baseUrl}}/nursing/goals/goal-uuid-here/outcome
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "outcome": "met"
+}
+
+### 10. Evaluate Care Plan
+POST {{baseUrl}}/nursing/care-plans/care-plan-uuid-here/evaluate
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "evaluatedBy": "770e8400-e29b-41d4-a716-446655440000",
+  "overallStatus": "improving",
+  "notes": "Patient showing steady improvement over the past 72 hours. Fall risk remains high but patient is now consistently using call bell before attempting to get up. Ambulation with walker improving. Braden score improved from 12 to 15. Patient actively participating in repositioning schedule. Pain levels decreased from 7/10 to 3/10.",
+  "modifications": "Increased ambulation frequency from BID to TID. Continue all current fall prevention interventions. Consider decreasing repositioning frequency to Q3H as mobility improves."
+}
+
+### 11. Update Care Plan Status to Completed
+PUT {{baseUrl}}/nursing/care-plans/care-plan-uuid-here
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "status": "completed",
+  "endDate": "2025-01-15T00:00:00Z"
+}
+
+### 12. Record Braden Scale Assessment
+POST {{baseUrl}}/nursing/assessments
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "admissionId": "550e8400-e29b-41d4-a716-446655440000",
+  "patientId": "660e8400-e29b-41d4-a716-446655440000",
+  "scaleType": "braden",
+  "answers": {
+    "sensoryPerception": 3,
+    "moisture": 4,
+    "activity": 2,
+    "mobility": 2,
+    "nutrition": 3,
+    "frictionShear": 2
+  },
+  "assessedBy": "770e8400-e29b-41d4-a716-446655440000"
+}
+
+### 13. Record Morse Fall Scale Assessment
+POST {{baseUrl}}/nursing/assessments
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "admissionId": "550e8400-e29b-41d4-a716-446655440000",
+  "patientId": "660e8400-e29b-41d4-a716-446655440000",
+  "scaleType": "morse",
+  "answers": {
+    "historyOfFalling": true,
+    "secondaryDiagnosis": true,
+    "ambulatoryAid": "crutches_cane_walker",
+    "ivTherapy": false,
+    "gait": "weak",
+    "mentalStatus": "oriented"
+  },
+  "assessedBy": "770e8400-e29b-41d4-a716-446655440000"
+}
+
+### 14. Record Glasgow Coma Scale Assessment
+POST {{baseUrl}}/nursing/assessments
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "admissionId": "550e8400-e29b-41d4-a716-446655440000",
+  "patientId": "660e8400-e29b-41d4-a716-446655440000",
+  "scaleType": "glasgow",
+  "answers": {
+    "eyeOpening": 4,
+    "verbalResponse": 5,
+    "motorResponse": 6
+  },
+  "assessedBy": "770e8400-e29b-41d4-a716-446655440000"
+}
+
+### 15. Record Pain Assessment
+POST {{baseUrl}}/nursing/assessments
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "admissionId": "550e8400-e29b-41d4-a716-446655440000",
+  "patientId": "660e8400-e29b-41d4-a716-446655440000",
+  "scaleType": "pain",
+  "answers": {
+    "painLevel": 7,
+    "location": "Right lower abdomen, surgical site",
+    "quality": "Sharp, stabbing",
+    "onset": "Post-operative, worsens with movement",
+    "aggravatingFactors": ["Movement", "Deep breathing", "Coughing"],
+    "relievingFactors": ["Rest", "Pain medication", "Heat application"]
+  },
+  "assessedBy": "770e8400-e29b-41d4-a716-446655440000"
+}
+
+### 16. Get All Assessments for Admission
+GET {{baseUrl}}/nursing/assessments/550e8400-e29b-41d4-a716-446655440000
+Authorization: Bearer {{token}}
+
+### 17. Get Braden Assessments Only
+GET {{baseUrl}}/nursing/assessments/550e8400-e29b-41d4-a716-446655440000?scaleType=braden
+Authorization: Bearer {{token}}
+
+### 18. Get Latest Assessments
+GET {{baseUrl}}/nursing/assessments/550e8400-e29b-41d4-a716-446655440000/latest
+Authorization: Bearer {{token}}
+
+### 19. Get Assessment Trends (Last 7 Days)
+GET {{baseUrl}}/nursing/assessments/550e8400-e29b-41d4-a716-446655440000/trends?scaleType=braden&days=7
+Authorization: Bearer {{token}}
+
+### 20. Get Care Plan Summary
+GET {{baseUrl}}/nursing/care-plans/care-plan-uuid-here/summary
+Authorization: Bearer {{token}}
+
+### 21. Deactivate Intervention
+PUT {{baseUrl}}/nursing/interventions/intervention-uuid-here/deactivate
+Authorization: Bearer {{token}}
+
+###
+# Multi-Diagnosis Care Plan Example
+###
+
+### 22. Complex Care Plan with Multiple Diagnoses
+POST {{baseUrl}}/nursing/care-plans
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "admissionId": "550e8400-e29b-41d4-a716-446655440002",
+  "patientId": "660e8400-e29b-41d4-a716-446655440002",
+  "createdBy": "770e8400-e29b-41d4-a716-446655440002",
+  "diagnoses": [
+    {
+      "code": "00155",
+      "diagnosis": "Risk for Falls",
+      "relatedTo": "Age over 65, history of falls, impaired mobility",
+      "evidencedBy": ["Morse Fall Scale 60", "Unsteady gait", "Confusion at night"],
+      "priority": 1,
+      "goals": [
+        {
+          "description": "Patient will remain free from falls",
+          "targetDate": "2025-02-01T00:00:00Z"
+        }
+      ]
+    },
+    {
+      "code": "00047",
+      "diagnosis": "Risk for Impaired Skin Integrity",
+      "relatedTo": "Bedbound status, poor nutrition",
+      "evidencedBy": ["Braden score 11", "Albumin 2.8", "Weight loss"],
+      "priority": 2,
+      "goals": [
+        {
+          "description": "Patient will maintain intact skin",
+          "targetDate": "2025-02-01T00:00:00Z"
+        }
+      ]
+    },
+    {
+      "code": "00027",
+      "diagnosis": "Deficient Fluid Volume",
+      "relatedTo": "Poor oral intake, fever",
+      "evidencedBy": ["Dry mucous membranes", "Poor skin turgor", "I&O imbalance"],
+      "priority": 3,
+      "goals": [
+        {
+          "description": "Patient will achieve balanced fluid status within 48 hours",
+          "targetDate": "2025-01-13T00:00:00Z"
+        }
+      ]
+    }
+  ],
+  "interventions": [
+    {
+      "category": "assessment",
+      "intervention": "Perform Morse Fall Scale",
+      "frequency": "Daily"
+    },
+    {
+      "category": "therapeutic",
+      "intervention": "Fall precautions protocol",
+      "frequency": "Continuous"
+    },
+    {
+      "category": "assessment",
+      "intervention": "Assess skin integrity",
+      "frequency": "Q8H"
+    },
+    {
+      "category": "therapeutic",
+      "intervention": "Reposition patient",
+      "frequency": "Q2H"
+    },
+    {
+      "category": "assessment",
+      "intervention": "Monitor intake and output",
+      "frequency": "Q8H"
+    },
+    {
+      "category": "therapeutic",
+      "intervention": "Encourage oral fluid intake",
+      "frequency": "Hourly while awake"
+    }
+  ]
+}
+
+###

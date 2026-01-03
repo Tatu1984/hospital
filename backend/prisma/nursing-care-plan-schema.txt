@@ -1,0 +1,117 @@
+// ===========================
+// NURSING CARE PLANS
+// ===========================
+
+model NursingCarePlan {
+  id              String   @id @default(uuid())
+  admissionId     String
+  patientId       String
+  createdBy       String   // nurse who created
+  status          String   @default("active") // active, completed, discontinued
+  startDate       DateTime @default(now())
+  endDate         DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  admission       Admission @relation(fields: [admissionId], references: [id])
+  patient         Patient   @relation(fields: [patientId], references: [id])
+  diagnoses       NursingDiagnosis[]
+  interventions   NursingIntervention[]
+  evaluations     NursingEvaluation[]
+
+  @@index([admissionId])
+  @@index([patientId])
+  @@index([status])
+  @@map("nursing_care_plans")
+}
+
+model NursingDiagnosis {
+  id            String          @id @default(uuid())
+  carePlanId    String
+  code          String?         // NANDA code
+  diagnosis     String
+  relatedTo     String          // etiology
+  evidencedBy   String[]        // signs/symptoms
+  priority      Int             @default(1)
+  status        String          @default("active")
+  createdAt     DateTime        @default(now())
+  carePlan      NursingCarePlan @relation(fields: [carePlanId], references: [id])
+  goals         NursingGoal[]
+
+  @@index([carePlanId])
+  @@map("nursing_diagnoses")
+}
+
+model NursingGoal {
+  id            String           @id @default(uuid())
+  diagnosisId   String
+  description   String
+  targetDate    DateTime
+  outcome       String?          // met, partially_met, not_met
+  evaluatedAt   DateTime?
+  createdAt     DateTime         @default(now())
+  diagnosis     NursingDiagnosis @relation(fields: [diagnosisId], references: [id])
+
+  @@index([diagnosisId])
+  @@map("nursing_goals")
+}
+
+model NursingIntervention {
+  id            String          @id @default(uuid())
+  carePlanId    String
+  category      String          // assessment, therapeutic, teaching, referral
+  intervention  String
+  frequency     String          // Q4H, TID, PRN, etc.
+  instructions  String?
+  isActive      Boolean         @default(true)
+  createdAt     DateTime        @default(now())
+  carePlan      NursingCarePlan @relation(fields: [carePlanId], references: [id])
+  executions    InterventionExecution[]
+
+  @@index([carePlanId])
+  @@index([isActive])
+  @@map("nursing_interventions")
+}
+
+model InterventionExecution {
+  id              String              @id @default(uuid())
+  interventionId  String
+  executedBy      String
+  executedAt      DateTime            @default(now())
+  notes           String?
+  patientResponse String?
+  intervention    NursingIntervention @relation(fields: [interventionId], references: [id])
+
+  @@index([interventionId])
+  @@map("intervention_executions")
+}
+
+model NursingEvaluation {
+  id            String          @id @default(uuid())
+  carePlanId    String
+  evaluatedBy   String
+  evaluatedAt   DateTime        @default(now())
+  overallStatus String          // improving, stable, deteriorating
+  notes         String
+  modifications String?         // changes made to care plan
+  carePlan      NursingCarePlan @relation(fields: [carePlanId], references: [id])
+
+  @@index([carePlanId])
+  @@map("nursing_evaluations")
+}
+
+model NursingAssessmentScale {
+  id          String   @id @default(uuid())
+  admissionId String
+  patientId   String
+  scaleType   String   // braden, morse, pain, glasgow
+  score       Int
+  riskLevel   String   // low, moderate, high
+  details     Json
+  assessedBy  String
+  assessedAt  DateTime @default(now())
+
+  @@index([admissionId])
+  @@index([patientId])
+  @@index([scaleType])
+  @@map("nursing_assessment_scales")
+}

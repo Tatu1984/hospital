@@ -1,0 +1,23 @@
+// Add these imports at the top of server.ts (around line 40-55):
+import {
+  getDoctorAvailability,
+  setDoctorAvailability,
+  checkAppointmentConflict,
+  rescheduleAppointment,
+  sendAppointmentReminder,
+  scheduleAppointmentReminders
+} from './appointment-enhancements';
+
+// Add these routes after the existing appointment routes (after line 2756):
+
+// Doctor availability APIs
+app.get('/api/doctors/:id/availability', authenticateToken, getDoctorAvailability);
+app.post('/api/doctors/:id/availability', authenticateToken, setDoctorAvailability);
+
+// Conflict detection and rescheduling
+app.post('/api/appointments/check-conflict', authenticateToken, checkAppointmentConflict);
+app.post('/api/appointments/:id/reschedule', authenticateToken, rescheduleAppointment);
+
+// Reminder APIs
+app.post('/api/appointments/:id/send-reminder', authenticateToken, sendAppointmentReminder);
+app.post('/api/appointments/schedule-reminders', authenticateToken, scheduleAppointmentReminders);
