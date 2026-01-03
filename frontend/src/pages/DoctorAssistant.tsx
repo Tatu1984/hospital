@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/Toast';
 import {
-  UserCog, Search, Mic, FileText, Clock, Star,
+  Search, Mic, FileText, Star,
   BookOpen, Stethoscope, ClipboardList, Send, Copy
 } from 'lucide-react';
 

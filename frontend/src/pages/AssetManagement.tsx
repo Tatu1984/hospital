@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+// Tabs import - TabsList/TabsTrigger used conditionally
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -10,8 +11,8 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/Toast';
 import {
-  Monitor, Search, Plus, Package, AlertTriangle, Wrench,
-  MapPin, Calendar, DollarSign, RefreshCw, QrCode, FileText
+  Search, Plus, Package, AlertTriangle, Wrench,
+  MapPin, DollarSign, RefreshCw, QrCode
 } from 'lucide-react';
 
 interface Asset {
@@ -40,17 +41,8 @@ interface Asset {
   notes?: string;
 }
 
-interface AssetTransfer {
-  id: string;
-  assetId: string;
-  fromLocation: string;
-  toLocation: string;
-  fromDepartment: string;
-  toDepartment: string;
-  transferDate: string;
-  reason: string;
-  approvedBy: string;
-}
+// AssetTransfer interface - reserved for future use
+// interface AssetTransfer { id, assetId, fromLocation, toLocation, fromDepartment, toDepartment, transferDate, reason, approvedBy }
 
 const CATEGORIES = [
   { value: 'MEDICAL_EQUIPMENT', label: 'Medical Equipment', subCategories: ['Diagnostic', 'Therapeutic', 'Monitoring', 'Laboratory', 'Surgical'] },
@@ -65,7 +57,7 @@ const DEPARTMENTS = ['ICU', 'Emergency', 'OPD', 'Laboratory', 'Radiology', 'Phar
 
 export default function AssetManagement() {
   const { success: showToast } = useToast();
-  const [activeTab, setActiveTab] = useState('assets');
+  const [_activeTab, _setActiveTab] = useState('assets');
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');

@@ -184,7 +184,7 @@ export default function DICOMPACS() {
 
   // Viewer state
   const [zoom, setZoom] = useState(100);
-  const [windowLevel, setWindowLevel] = useState({ window: 400, level: 40 });
+  const [windowLevel, _setWindowLevel] = useState({ window: 400, level: 40 });
   const [currentSeries, setCurrentSeries] = useState(1);
   const [currentImage, setCurrentImage] = useState(1);
 

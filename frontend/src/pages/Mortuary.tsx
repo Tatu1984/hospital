@@ -66,7 +66,7 @@ export default function Mortuary() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
-  const [_showRegisterDialog, _setShowRegisterDialog] = useState(false);
+  const [showRegisterDialog, setShowRegisterDialog] = useState(false);
   const [showReleaseDialog, setShowReleaseDialog] = useState(false);
   const [selectedRecord, setSelectedRecord] = useState<DeceasedRecord | null>(null);
 
@@ -459,6 +459,22 @@ export default function Mortuary() {
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* Register Deceased Dialog */}
+      <Dialog open={showRegisterDialog} onOpenChange={setShowRegisterDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Register Deceased</DialogTitle>
+          </DialogHeader>
+          <div className="py-4 text-center text-slate-500">
+            <Cross className="w-12 h-12 mx-auto mb-2 text-slate-400" />
+            <p>Registration form coming soon.</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowRegisterDialog(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Release Dialog */}
       <Dialog open={showReleaseDialog} onOpenChange={setShowReleaseDialog}>
