@@ -936,16 +936,16 @@ const SystemControl: React.FC = () => {
                 <div className="space-y-2">
                   <Label>Module</Label>
                   <Select
-                    value={auditFilters.module}
+                    value={auditFilters.module || 'all'}
                     onValueChange={(value) =>
-                      setAuditFilters({ ...auditFilters, module: value })
+                      setAuditFilters({ ...auditFilters, module: value === 'all' ? '' : value })
                     }
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="All modules" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">All modules</SelectItem>
+                      <SelectItem value="all">All modules</SelectItem>
                       <SelectItem value="Authentication">Authentication</SelectItem>
                       <SelectItem value="OPD">OPD</SelectItem>
                       <SelectItem value="IPD">IPD</SelectItem>

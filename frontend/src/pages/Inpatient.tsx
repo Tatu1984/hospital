@@ -917,12 +917,12 @@ export default function Inpatient() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="wardId">Ward</Label>
-                <Select value={bedFormData.wardId} onValueChange={(value) => setBedFormData(prev => ({ ...prev, wardId: value }))}>
+                <Select value={bedFormData.wardId || 'none'} onValueChange={(value) => setBedFormData(prev => ({ ...prev, wardId: value === 'none' ? '' : value }))}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select ward" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">No Ward</SelectItem>
+                    <SelectItem value="none">No Ward</SelectItem>
                     {wards.map((ward) => (
                       <SelectItem key={ward.id} value={ward.id}>{ward.name}</SelectItem>
                     ))}
