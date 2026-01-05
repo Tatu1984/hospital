@@ -9,7 +9,6 @@ RUN bun install
 RUN bun prisma generate
 
 COPY . .
-RUN bun run build
 
 EXPOSE 4000
 
