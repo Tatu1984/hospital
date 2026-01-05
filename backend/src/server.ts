@@ -6158,8 +6158,6 @@ app.get('/api/admissions/:id', authenticateToken, async (req: any, res: Response
             contact: true,
             email: true,
             address: true,
-            city: true,
-            state: true,
             emergencyContact: true,
             allergies: true
           }
@@ -6793,9 +6791,9 @@ app.post('/api/bed-transfers', authenticateToken, async (req: any, res: Response
         data: {
           userId: req.user.userId,
           action: 'BED_TRANSFER',
-          entityType: 'Admission',
-          entityId: admissionId || toBedId,
-          description: `Transferred patient from ${fromBedInfo.bedNumber} (${fromBedInfo.wardType}) to ${toBedInfo.bedNumber} (${toBedInfo.wardType}). Reason: ${reason}`,
+          resource: 'Admission',
+          resourceId: admissionId || toBedId,
+          newValue: { description: `Transferred patient from ${fromBedInfo.bedNumber} (${fromBedInfo.wardType}) to ${toBedInfo.bedNumber} (${toBedInfo.wardType}). Reason: ${reason}` },
           ipAddress: req.ip,
           userAgent: req.headers['user-agent'],
         },
