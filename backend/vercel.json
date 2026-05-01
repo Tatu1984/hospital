@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "./node_modules/.bin/prisma generate && (./node_modules/.bin/prisma migrate resolve --applied 20251205083642_init || true) && (./node_modules/.bin/prisma migrate resolve --applied 20251205093844_add_master_data_and_modules || true) && (./node_modules/.bin/prisma migrate resolve --applied 20251206045747_add_broker_accounts_doctor_systems || true) && (./node_modules/.bin/prisma migrate resolve --applied 20251206065445_add_appointments || true) && (./node_modules/.bin/prisma migrate resolve --applied 20251212033828_complete_all_modules || true) && (./node_modules/.bin/prisma migrate resolve --applied 20251217123457_hosptial_erp || true) && (./node_modules/.bin/prisma migrate resolve --rolled-back 20251231000000_add_prescription_pharmacy_integration || true) && ./node_modules/.bin/prisma migrate deploy",
+  "buildCommand": "./node_modules/.bin/prisma generate && node scripts/migrate.js",
   "installCommand": "npm ci --include=dev",
   "framework": null,
   "rewrites": [
