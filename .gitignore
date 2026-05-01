@@ -53,3 +53,9 @@ next-env.d.ts
 # build output
 frontend/dist/
 backend/dist/
+
+# iCloud duplicate files (e.g. "foo 2.tsx", "package 2.json", "Dockerfile 2")
+**/* [0-9]
+**/* [0-9].*
+* [0-9]
+* [0-9].*

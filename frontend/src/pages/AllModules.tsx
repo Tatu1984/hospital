@@ -82,13 +82,7 @@ export function DoctorAccounting() {
   );
 }
 
-export function AssetManagement() {
-  return (
-    <div className="bg-white min-h-full">
-      <ModuleTemplate title="Asset Management" description="Hospital assets and equipment tracking" icon={Monitor} stats={[{ label: 'Total Assets', value: 1245 }, { label: 'Under Maintenance', value: 12 }, { label: 'Depreciation', value: '$45,600' }, { label: 'New This Month', value: 8 }]} features={['Asset registry and tagging', 'Asset categorization', 'Depreciation calculation', 'Location tracking', 'Maintenance scheduling', 'Asset transfer management', 'Asset disposal workflow']} />
-    </div>
-  );
-}
+export { default as AssetManagement } from './AssetManagement';
 
 export function VideoConversation() {
   return (

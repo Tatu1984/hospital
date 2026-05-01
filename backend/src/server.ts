@@ -3472,6 +3472,180 @@ app.get('/api/quality/feedbacks', authenticateToken, async (req: any, res: Respo
   }
 });
 
+// ============================================
+// ASSETS (Hospital equipment / asset registry)
+// ============================================
+
+// List assets (with optional filters: status, category, search by name/code)
+app.get('/api/assets', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { status, category, q } = req.query as Record<string, string | undefined>;
+    const where: any = { isActive: true };
+    if (status) where.status = status;
+    if (category) where.category = category;
+    if (q) {
+      where.OR = [
+        { name: { contains: q, mode: 'insensitive' } },
+        { assetCode: { contains: q, mode: 'insensitive' } },
+        { location: { contains: q, mode: 'insensitive' } },
+      ];
+    }
+    const items = await prisma.asset.findMany({
+      where,
+      orderBy: { name: 'asc' },
+      include: {
+        _count: { select: { maintenanceLogs: true } },
+      },
+    });
+    res.json(items);
+  } catch (error) {
+    console.error('List assets error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get one asset (with its maintenance history)
+app.get('/api/assets/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const asset = await prisma.asset.findUnique({
+      where: { id: req.params.id },
+      include: { maintenanceLogs: { orderBy: { scheduledDate: 'desc' } } },
+    });
+    if (!asset || !asset.isActive) return res.status(404).json({ error: 'Asset not found' });
+    res.json(asset);
+  } catch (error) {
+    console.error('Get asset error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Create asset
+app.post('/api/assets', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { name, assetCode, category, location, purchaseDate, warrantyExpiry, amcVendor, amcExpiry, status } = req.body || {};
+    if (!name || !category) {
+      return res.status(400).json({ error: 'name and category are required' });
+    }
+    // Auto-generate asset code if not provided
+    let code: string = (assetCode || '').trim();
+    if (!code) {
+      const last = await prisma.asset.findFirst({ orderBy: { assetCode: 'desc' }, where: { assetCode: { startsWith: 'AST' } } });
+      const nextNum = last ? (parseInt(last.assetCode.replace(/\D/g, ''), 10) || 0) + 1 : 1;
+      code = `AST${String(nextNum).padStart(5, '0')}`;
+    }
+    const asset = await prisma.asset.create({
+      data: {
+        name,
+        assetCode: code,
+        category,
+        location: location || null,
+        purchaseDate: purchaseDate ? new Date(purchaseDate) : null,
+        warrantyExpiry: warrantyExpiry ? new Date(warrantyExpiry) : null,
+        amcVendor: amcVendor || null,
+        amcExpiry: amcExpiry ? new Date(amcExpiry) : null,
+        status: status || 'active',
+      },
+    });
+    res.status(201).json(asset);
+  } catch (error: any) {
+    if (error?.code === 'P2002') {
+      return res.status(409).json({ error: 'assetCode already exists' });
+    }
+    console.error('Create asset error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update asset
+app.put('/api/assets/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { name, assetCode, category, location, purchaseDate, warrantyExpiry, amcVendor, amcExpiry, status } = req.body || {};
+    const data: any = {};
+    if (name !== undefined) data.name = name;
+    if (assetCode !== undefined) data.assetCode = assetCode;
+    if (category !== undefined) data.category = category;
+    if (location !== undefined) data.location = location;
+    if (purchaseDate !== undefined) data.purchaseDate = purchaseDate ? new Date(purchaseDate) : null;
+    if (warrantyExpiry !== undefined) data.warrantyExpiry = warrantyExpiry ? new Date(warrantyExpiry) : null;
+    if (amcVendor !== undefined) data.amcVendor = amcVendor;
+    if (amcExpiry !== undefined) data.amcExpiry = amcExpiry ? new Date(amcExpiry) : null;
+    if (status !== undefined) data.status = status;
+    const asset = await prisma.asset.update({ where: { id: req.params.id }, data });
+    res.json(asset);
+  } catch (error: any) {
+    if (error?.code === 'P2025') return res.status(404).json({ error: 'Asset not found' });
+    if (error?.code === 'P2002') return res.status(409).json({ error: 'assetCode already exists' });
+    console.error('Update asset error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Soft-delete asset
+app.delete('/api/assets/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    await prisma.asset.update({ where: { id: req.params.id }, data: { isActive: false } });
+    res.status(204).end();
+  } catch (error: any) {
+    if (error?.code === 'P2025') return res.status(404).json({ error: 'Asset not found' });
+    console.error('Delete asset error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Change status (active / under_maintenance / retired / out_of_order)
+app.post('/api/assets/:id/status', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { status } = req.body || {};
+    const allowed = ['active', 'under_maintenance', 'retired', 'out_of_order'];
+    if (!allowed.includes(status)) {
+      return res.status(400).json({ error: `status must be one of ${allowed.join(', ')}` });
+    }
+    const asset = await prisma.asset.update({ where: { id: req.params.id }, data: { status } });
+    res.json(asset);
+  } catch (error: any) {
+    if (error?.code === 'P2025') return res.status(404).json({ error: 'Asset not found' });
+    console.error('Change asset status error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// List maintenance logs for an asset
+app.get('/api/assets/:id/maintenance', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const logs = await prisma.maintenanceLog.findMany({
+      where: { assetId: req.params.id },
+      orderBy: { scheduledDate: 'desc' },
+    });
+    res.json(logs);
+  } catch (error) {
+    console.error('List maintenance error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Add a maintenance entry for an asset
+app.post('/api/assets/:id/maintenance', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { maintenanceType, scheduledDate, completedDate, technician, findings, actionTaken } = req.body || {};
+    if (!maintenanceType) return res.status(400).json({ error: 'maintenanceType is required' });
+    const log = await prisma.maintenanceLog.create({
+      data: {
+        assetId: req.params.id,
+        maintenanceType,
+        scheduledDate: scheduledDate ? new Date(scheduledDate) : null,
+        completedDate: completedDate ? new Date(completedDate) : null,
+        technician: technician || null,
+        findings: findings || null,
+        actionTaken: actionTaken || null,
+      },
+    });
+    res.status(201).json(log);
+  } catch (error) {
+    console.error('Create maintenance error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ===========================
 // REPORTS/MIS APIs
 // ===========================

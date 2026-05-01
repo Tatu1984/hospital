@@ -297,6 +297,16 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   'GET /api/quality/incidents': ['quality:view'],
   'GET /api/quality/feedbacks': ['quality:view'],
 
+  // Assets / Equipment registry
+  'GET /api/assets': ['inventory:view'],
+  'GET /api/assets/:id': ['inventory:view'],
+  'POST /api/assets': ['inventory:manage'],
+  'PUT /api/assets/:id': ['inventory:manage'],
+  'DELETE /api/assets/:id': ['inventory:manage'],
+  'POST /api/assets/:id/status': ['inventory:manage'],
+  'GET /api/assets/:id/maintenance': ['inventory:view'],
+  'POST /api/assets/:id/maintenance': ['inventory:manage'],
+
   // Health checkup
   'GET /api/health-checkup/packages': ['health-checkup:view'],
   'POST /api/health-checkup/packages': ['health-checkup:create'],
