@@ -75,6 +75,7 @@ export default function NurseStation() {
   const [vitals, setVitals] = useState<VitalSign[]>([]);
   const [roster, setRoster] = useState<DutyRoster[]>([]);
   const [handoverNotes, setHandoverNotes] = useState<HandoverNote[]>([]);
+  const [wards, setWards] = useState<Array<{ id: string; name: string; type?: string }>>([]);
 
   const [isVitalsDialogOpen, setIsVitalsDialogOpen] = useState(false);
   const [isRosterDialogOpen, setIsRosterDialogOpen] = useState(false);
@@ -116,7 +117,25 @@ export default function NurseStation() {
     fetchVitals();
     fetchRoster();
     fetchHandoverNotes();
+    void fetchWards();
   }, []);
+
+  const fetchWards = async () => {
+    try {
+      // Master Data exposes wards under /api/master/wards. Falls back to
+      // /api/wards if the master endpoint isn't wired in this build.
+      let res;
+      try {
+        res = await api.get('/api/master/wards');
+      } catch {
+        res = await api.get('/api/wards');
+      }
+      const list = Array.isArray(res.data) ? res.data : (res.data?.items || []);
+      setWards(list.map((w: any) => ({ id: w.id, name: w.name, type: w.type })));
+    } catch (e) {
+      console.error('fetch wards failed', e);
+    }
+  };
 
   const fetchPatients = async () => {
     try {
@@ -575,11 +594,21 @@ export default function NurseStation() {
                       </div>
                       <div className="space-y-2">
                         <Label>Ward *</Label>
-                        <Input
+                        <Select
                           value={rosterFormData.ward}
-                          onChange={(e) => setRosterFormData(prev => ({ ...prev, ward: e.target.value }))}
-                          placeholder="e.g., ICU, General Ward"
-                        />
+                          onValueChange={(value) => setRosterFormData(prev => ({ ...prev, ward: value }))}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder={wards.length ? 'Select ward' : 'No wards in master data'} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {wards.map((w) => (
+                              <SelectItem key={w.id} value={w.name}>
+                                {w.name}{w.type ? ` · ${w.type}` : ''}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
