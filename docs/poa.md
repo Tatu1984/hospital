@@ -24,9 +24,11 @@
 - Added `backend/src/utils/tenantScope.ts` with `tenantWhere`, `branchTenantWhere`, `patientTenantWhere`, `tenantData`, `and` helpers.
 - Audited the hot endpoints. Results:
   - ✅ Already scoped: `GET/POST /api/patients`, `GET /api/users` (both copies), `GET/POST /api/appointments`, `GET /api/encounters` (via branchId), `POST /api/encounters`
-  - ✅ **Newly scoped (this session):** `GET /api/admissions` (was leaking everything across tenants), `GET /api/invoices` (same)
+  - ✅ **Newly scoped (session 1):** `GET /api/admissions` (was leaking everything across tenants), `GET /api/invoices` (same)
+  - ✅ **Newly scoped (session 2):** `GET /api/opd-notes/:encounterId`, `GET /api/lab-orders`, `GET /api/radiology-orders`, `GET /api/pharmacy/pending-prescriptions`, `GET /api/emergency/cases`, `GET /api/surgeries`
   - ✅ All 8 asset endpoints scope by tenantId and verify ownership
-- **Remaining:** systematic audit of every other handler that calls Prisma. ~100 endpoints still to review individually. The `tenantScope` helpers are ready for use; just need to apply.
+- **Remaining (still leaks):** ICUBed/ICUVitals (no patient relation column — schema migration needed), BloodDonor/BloodInventory/BloodRequest (some have patientId, some don't), HR/Payroll/Inventory/PO (no tenant relation), AmbulanceTrip, HousekeepingTask, DietOrder, Incident/Feedback, Drug/LabTestMaster/RadiologyTestMaster (master data — likely OK to share or needs explicit per-tenant override).
+- **Plan to finish:** add `tenantId` directly to ICU/Surgery/EmergencyCase/BloodRequest/Incident/Feedback in a single migration — much cleaner than chasing parent relations everywhere. ~3 h work.
 **Where:** `backend/src/server.ts` — most `prisma.X.findMany`/`findUnique` calls don't include `tenantId`/`branchId` filters.
 **Risk:** Any authenticated user can read another tenant's PHI. HIPAA / NABH violation. Catastrophic.
 
@@ -98,7 +100,7 @@ The rest inherit tenancy transitively (e.g. `Encounter.patientId → Patient.ten
 **Fix:** GitHub Action nightly `pg_dump → S3`, 30-day retention. Quarterly restore drill.
 **Effort:** 2 h.
 
-### 9. [ ] Per-user/IP rate limit on writes
+### 9. [x] Per-IP/path write rate limit
 **Risk:** Currently only `/auth/login` is rate-limited. `POST /api/patients` etc. have no throttle — easy abuse vector.
 **Fix:** Apply `generalRateLimiter` more aggressively to all POST/PUT/DELETE; introduce per-user limits via Redis/Upstash key.
 **Effort:** 1 h.
@@ -115,10 +117,8 @@ The rest inherit tenancy transitively (e.g. `Encounter.patientId → Patient.ten
 **Fix:** Vitest + RTL for component contracts (RoleProtectedRoute, axios interceptor, AssetManagement form). Playwright for the patient → encounter → invoice happy path.
 **Effort:** 8–16 h initial.
 
-### 12. [ ] Sentry / log aggregation
-**Risk:** A 500 in production is invisible until a user complains.
-**Fix:** Already pulled into `backend/package.json` (`@sentry/node`) — wire `SENTRY_DSN` env var, init in `server.ts`, ship Vercel runtime logs to a log drain.
-**Effort:** 1 h.
+### 12. [x] Sentry wired up
+**Done:** `@sentry/node` initialized at the top of `server.ts` (lazy-required so missing dep wouldn't crash boot). Request handler + tracing handler installed before middleware; error handler installed before our app's `errorHandler`. Health-probe noise filtered via `beforeSend`. **No-op when `SENTRY_DSN` env var isn't set.** To enable: add `SENTRY_DSN` (and optional `SENTRY_TRACES_SAMPLE_RATE`) on Vercel, redeploy.
 
 ### 13. [ ] Secret rotation plan + leak detection
 **Fix:** Pre-commit hook with `git-secrets`; quarterly rotation of `JWT_SECRET`/`REFRESH_TOKEN_SECRET` (with rolling-window invalidation tolerance); document the runbook.
@@ -145,7 +145,7 @@ The rest inherit tenancy transitively (e.g. `Encounter.patientId → Patient.ten
 
 ## 🟡 P2 — MEDIUM
 
-### 17. [ ] `/api/auth/me` endpoint
+### 17. [x] `/api/auth/me` endpoint
 **Fix:** Returns the current user's profile + permissions; frontend uses it on hydrate instead of `/dashboard/stats`.
 **Effort:** 30 min.
 
@@ -199,7 +199,7 @@ The rest inherit tenancy transitively (e.g. `Encounter.patientId → Patient.ten
 - [ ] **26.** Add a real favicon to the frontend.
 - [ ] **27.** Implement password reset flow (`/forgot-password`, `/reset-password`) end-to-end (page exists in some bundles, no working backend).
 - [ ] **28.** Replace generic 500s with user-friendly toast notifications.
-- [ ] **29.** Hide Swagger UI in production (`/api/docs` only when `NODE_ENV !== 'production'`).
+- [x] **29.** Hide Swagger UI in production — Swagger only mounted when `NODE_ENV !== 'production'` or explicit opt-in via `EXPOSE_API_DOCS=true`.
 - [ ] **30.** Accessibility pass: aria labels on icon buttons, keyboard navigation for sidebar, focus management in dialogs.
 - [ ] **31.** Front Office "purpose" gets its own DB column (currently packed into `allergies` with a `Purpose:` prefix — see `frontend/src/pages/PatientRegistration.tsx`).
 

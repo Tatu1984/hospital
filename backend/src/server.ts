@@ -29,6 +29,7 @@ import {
   NotFoundError,
   securityHeaders,
   generalRateLimiter,
+  writeRateLimiter,
   authRateLimiter,
   sanitizeRequest,
   apiSecurityHeaders,
@@ -118,6 +119,38 @@ const prisma = new PrismaClient();
 const PORT = process.env.PORT || 4000;
 
 // ============================================
+// SENTRY (optional, but live as soon as SENTRY_DSN is set)
+// ============================================
+// Lazy-required so the dependency doesn't blow up if removed; tolerates a
+// missing DSN by skipping init entirely. Must run BEFORE other middleware
+// so the request handler captures everything downstream.
+let SentryRef: any = null;
+if (process.env.SENTRY_DSN) {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  SentryRef = require('@sentry/node');
+  SentryRef.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV || 'production',
+    tracesSampleRate: parseFloat(process.env.SENTRY_TRACES_SAMPLE_RATE || '0.1'),
+    // Drop healthcheck noise so we don't burn the quota on uptime probes.
+    beforeSend(event: any) {
+      const url = event?.request?.url || '';
+      if (url.includes('/api/health') || url.includes('/api/ready') || url.includes('/api/live') || url === '/health') {
+        return null;
+      }
+      return event;
+    },
+  });
+  app.use(SentryRef.Handlers.requestHandler({ user: ['userId', 'username', 'tenantId'] }));
+  app.use(SentryRef.Handlers.tracingHandler());
+  // eslint-disable-next-line no-console
+  console.log('[sentry] enabled');
+} else {
+  // eslint-disable-next-line no-console
+  console.log('[sentry] disabled — set SENTRY_DSN to enable');
+}
+
+// ============================================
 // GLOBAL MIDDLEWARE SETUP
 // ============================================
 
@@ -160,20 +193,30 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Apply general rate limiting to all routes
 app.use('/api', generalRateLimiter);
+// Tighter cap on state-changing requests, layered on top of the general limit.
+app.use('/api', writeRateLimiter);
 
 // ============================================
-// API DOCUMENTATION (Swagger UI)
+// API DOCUMENTATION (Swagger UI) — only when not in production, or when
+// explicitly opted-in via EXPOSE_API_DOCS=true. Stops the docs page from
+// being a free recon surface for attackers.
 // ============================================
-app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
-  customCss: '.swagger-ui .topbar { display: none }',
-  customSiteTitle: 'Hospital ERP API Documentation',
-}));
-
-// Serve OpenAPI spec as JSON
-app.get('/api/docs.json', (req: Request, res: Response) => {
-  res.setHeader('Content-Type', 'application/json');
-  res.send(swaggerSpec);
-});
+const exposeDocs =
+  process.env.NODE_ENV !== 'production' || process.env.EXPOSE_API_DOCS === 'true';
+if (exposeDocs) {
+  app.use(
+    '/api/docs',
+    swaggerUi.serve,
+    swaggerUi.setup(swaggerSpec, {
+      customCss: '.swagger-ui .topbar { display: none }',
+      customSiteTitle: 'Hospital ERP API Documentation',
+    })
+  );
+  app.get('/api/docs.json', (req: Request, res: Response) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.send(swaggerSpec);
+  });
+}
 
 // ============================================
 // AUTH MIDDLEWARE (using enhanced version)
@@ -434,6 +477,33 @@ app.post('/api/auth/refresh', async (req: Request, res: Response) => {
 app.post('/api/auth/logout', (req: Request, res: Response) => {
   auditLogger.securityEvent('LOGOUT', { ip: req.ip });
   return res.status(204).end();
+});
+
+// Lightweight "who am I" endpoint — frontend uses this on hydrate to verify
+// the token is still valid and pull fresh permissions, instead of calling
+// /api/dashboard/stats (heavy, leaks unrelated info).
+app.get('/api/auth/me', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const user = await prisma.user.findFirst({
+      where: { id: req.user.userId, tenantId: req.user.tenantId, isActive: true },
+      include: { tenant: true, branch: true },
+    });
+    if (!user) return res.status(401).json({ error: 'Session invalid' });
+    const permissions = getUserPermissions(user.roleIds);
+    return res.json({
+      id: user.id,
+      username: user.username,
+      name: user.name,
+      email: user.email,
+      roleIds: user.roleIds,
+      permissions,
+      tenant: user.tenant,
+      branch: user.branch,
+    });
+  } catch (error) {
+    console.error('auth/me error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // Patient routes - with validation and RBAC
@@ -735,6 +805,12 @@ app.post('/api/opd-notes', authenticateToken, async (req: any, res: Response) =>
 app.get('/api/opd-notes/:encounterId', authenticateToken, async (req: any, res: Response) => {
   try {
     const { encounterId } = req.params;
+    // Verify the encounter belongs to this tenant before returning notes.
+    const encounter = await prisma.encounter.findFirst({
+      where: { id: encounterId, patient: { tenantId: req.user.tenantId } },
+      select: { id: true },
+    });
+    if (!encounter) return res.status(404).json({ error: 'Encounter not found' });
 
     const opdNotes = await prisma.oPDNote.findMany({
       where: { encounterId },
@@ -1858,7 +1934,8 @@ app.post('/api/lab-orders', authenticateToken, async (req: any, res: Response) =
 app.get('/api/lab-orders', authenticateToken, async (req: any, res: Response) => {
   try {
     const { status, patientId } = req.query;
-    const where: any = { orderType: 'lab' };
+    // Order has no tenantId — scope through Patient.tenantId.
+    const where: any = { orderType: 'lab', patient: { tenantId: req.user.tenantId } };
 
     if (status) where.status = status;
     if (patientId) where.patientId = patientId;
@@ -1976,7 +2053,7 @@ app.put('/api/radiology-orders/:id', authenticateToken, async (req: any, res: Re
 app.get('/api/radiology-orders', authenticateToken, async (req: any, res: Response) => {
   try {
     const { status, patientId } = req.query;
-    const where: any = { orderType: 'radiology' };
+    const where: any = { orderType: 'radiology', patient: { tenantId: req.user.tenantId } };
 
     if (status) where.status = status;
     if (patientId) where.patientId = patientId;
@@ -2004,6 +2081,8 @@ app.get('/api/radiology-orders', authenticateToken, async (req: any, res: Respon
 app.get('/api/pharmacy/pending-prescriptions', authenticateToken, async (req: any, res: Response) => {
   try {
     const prescriptions = await prisma.prescription.findMany({
+      // Scope through opdNote -> patient.tenantId
+      where: { opdNote: { patient: { tenantId: req.user.tenantId } } },
       include: {
         opdNote: {
           include: {
@@ -2161,7 +2240,12 @@ app.get('/api/beds', authenticateToken, async (req: any, res: Response) => {
 app.get('/api/emergency/cases', authenticateToken, async (req: any, res: Response) => {
   try {
     const { status } = req.query;
-    const where: any = {};
+    // EmergencyCase.patientId is nullable (walk-ins). Scope through patient
+    // when set; for unregistered walk-ins, scope through createdBy/branchId
+    // is not available either (schema gap — see POA P0 #1). For now we only
+    // surface cases that have an associated patient in this tenant.
+    // TODO: add tenantId/branchId directly on EmergencyCase via migration.
+    const where: any = { patient: { tenantId: req.user.tenantId } };
 
     if (status) where.status = status;
 
@@ -2391,7 +2475,10 @@ app.post('/api/icu/ventilator', authenticateToken, async (req: any, res: Respons
 app.get('/api/surgeries', authenticateToken, async (req: any, res: Response) => {
   try {
     const { status, date } = req.query;
-    const where: any = {};
+    // Surgery.patientId is nullable (some are scheduled before patient is registered).
+    // Scope to surgeries with a patient in this tenant. TODO (POA P0 #1): add
+    // tenantId column on Surgery so unlinked rows can be tenant-scoped too.
+    const where: any = { patient: { tenantId: req.user.tenantId } };
 
     if (status) where.status = status;
     if (date) {
@@ -6341,6 +6428,11 @@ app.get('/api/biometric/today', authenticateToken, requirePermission('hr:view'),
 
 // Handle 404 - Route not found
 app.use(notFoundHandler);
+
+// Sentry must capture errors BEFORE our app's errorHandler swallows them.
+if (SentryRef) {
+  app.use(SentryRef.Handlers.errorHandler());
+}
 
 // Global error handler
 app.use(errorHandler);

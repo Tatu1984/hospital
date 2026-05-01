@@ -34,6 +34,7 @@ export {
 export {
   securityHeaders,
   generalRateLimiter,
+  writeRateLimiter,
   authRateLimiter,
   compressionMiddleware,
   sanitizeRequest,

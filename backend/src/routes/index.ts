@@ -92,6 +92,9 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   // Detailed health (admin-only)
   'GET /api/health/detailed': ['system:manage'],
 
+  // Current user
+  'GET /api/auth/me': ['dashboard:view'],
+
   // Patients
   'GET /api/patients': ['patients:view'],
   'POST /api/patients': ['patients:create'],

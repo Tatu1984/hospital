@@ -46,6 +46,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const parsedUser = JSON.parse(storedUser);
       setUser(parsedUser);
       setPermissions(storedPermissions ? JSON.parse(storedPermissions) : parsedUser.permissions || []);
+
+      // Validate the token in the background. If /api/auth/me succeeds we
+      // also refresh the cached user/permissions so the UI follows backend
+      // role changes without requiring a re-login. Failures are silent — the
+      // axios 401 interceptor will handle expiry by refreshing or logging out.
+      authAPI.me()
+        .then((res) => {
+          const fresh = res.data;
+          setUser(fresh);
+          setPermissions(fresh.permissions || []);
+          localStorage.setItem('user', JSON.stringify(fresh));
+          localStorage.setItem('permissions', JSON.stringify(fresh.permissions || []));
+        })
+        .catch(() => undefined);
     }
     setLoading(false);
   }, []);

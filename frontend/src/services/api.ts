@@ -92,6 +92,7 @@ export const authAPI = {
   refresh: (refreshToken: string) =>
     api.post('/api/auth/refresh', { refreshToken }),
   logout: () => api.post('/api/auth/logout'),
+  me: () => api.get('/api/auth/me'),
 };
 
 export const patientAPI = {

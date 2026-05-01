@@ -60,6 +60,31 @@ export const generalRateLimiter = rateLimit({
   },
 });
 
+// Rate limiting - tighter for state-changing methods.
+// Skips GET/HEAD/OPTIONS so list pages aren't crippled. The key is per-IP +
+// per-path so one user spamming a single endpoint doesn't lock everyone out
+// of every other endpoint.
+export const writeRateLimiter = rateLimit({
+  windowMs: config.rateLimit.windowMs,
+  max: Math.max(20, Math.floor(config.rateLimit.maxRequests / 4)),
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => ['GET', 'HEAD', 'OPTIONS'].includes(req.method),
+  keyGenerator: (req) =>
+    `${ipKeyGenerator(req.ip || req.socket?.remoteAddress || '')}:${req.method}:${req.baseUrl || req.path}`,
+  handler: (req, res) => {
+    auditLogger.securityEvent('WRITE_RATE_LIMIT_EXCEEDED', {
+      ip: req.ip,
+      method: req.method,
+      path: req.path,
+    });
+    res.status(429).json({
+      error: 'Too many writes',
+      message: 'You are sending too many write requests. Please slow down.',
+    });
+  },
+});
+
 // Rate limiting - strict for auth routes
 export const authRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
