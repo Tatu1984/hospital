@@ -106,7 +106,9 @@ const ToastContainer: React.FC<{ toasts: Toast[]; removeToast: (id: string) => v
   if (toasts.length === 0) return null;
 
   return (
-    <div className="fixed top-4 right-4 z-50 w-96 max-w-full">
+    // z-[100] so toasts sit above shadcn Dialog (z-50) — otherwise toasts
+    // fired from inside an open dialog are hidden behind the overlay.
+    <div className="fixed top-4 right-4 z-[100] w-96 max-w-full">
       {toasts.map((toast) => (
         <ToastItem
           key={toast.id}
