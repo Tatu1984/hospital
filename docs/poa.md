@@ -124,7 +124,7 @@ The rest inherit tenancy transitively (e.g. `Encounter.patientId → Patient.ten
 **Fix:** Pre-commit hook with `git-secrets`; quarterly rotation of `JWT_SECRET`/`REFRESH_TOKEN_SECRET` (with rolling-window invalidation tolerance); document the runbook.
 **Effort:** 2 h.
 
-### 14. [ ] Code-split the frontend bundle
+### 14. [x] Code-split the frontend bundle (1.7 MB → 461 KB)
 **Where:** `frontend/`. Bundle is 1.7 MB single chunk.
 **Fix:** Convert routes in `App.tsx` to `React.lazy`/`Suspense`; bundle vendors separately via `manualChunks`.
 **Effort:** 4 h.
@@ -149,7 +149,7 @@ The rest inherit tenancy transitively (e.g. `Encounter.patientId → Patient.ten
 **Fix:** Returns the current user's profile + permissions; frontend uses it on hydrate instead of `/dashboard/stats`.
 **Effort:** 30 min.
 
-### 18. [ ] Tighten `validateBody` fallback
+### 18. [x] Tighten `validateBody` fallback
 **Where:** `backend/src/routes/index.ts` — `genericObjectSchema = z.record(z.any())`.
 **Risk:** Any unregistered POST/PUT accepts arbitrary payloads.
 **Fix:** Write a Zod schema per endpoint, then drop the fallback to a strict `z.never()` on unregistered routes (with clearer 400 message).

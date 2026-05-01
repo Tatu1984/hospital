@@ -33,7 +33,6 @@ interface AuthenticatedRequest extends Request {
   };
 }
 
-const genericObjectSchema = z.record(z.any());
 
 function matchKey(method: string, path: string, table: Record<string, unknown>): string | null {
   const normalized = path.replace(/\/+$/, '');
@@ -99,16 +98,47 @@ export function dynamicRBAC(req: AuthenticatedRequest, res: Response, next: Next
 
 /**
  * Body validation for POST/PUT/PATCH using ROUTE_VALIDATORS.
- * Falls back to a generic "must be a JSON object" rule for routes
- * that have not yet declared a schema. Apply after dynamicRBAC.
+ *
+ * Two modes, controlled by STRICT_BODY_VALIDATION env var:
+ *   - default (off): unregistered routes pass a permissive object check;
+ *     a warning is logged so we know which endpoints still need schemas.
+ *   - STRICT_BODY_VALIDATION=true: unregistered POST/PUT/PATCH endpoints
+ *     are rejected with 422. Use this in production once every route has
+ *     a schema in ROUTE_VALIDATORS.
+ *
+ * The permissive fallback also enforces basic sanity (reject arrays /
+ * primitives, cap to 100 top-level keys) so junk payloads don't slip
+ * straight to handlers.
  */
+const STRICT = process.env.STRICT_BODY_VALIDATION === 'true';
+const fallbackSchema = z
+  .record(z.any())
+  .refine((v) => Object.keys(v as object).length <= 100, {
+    message: 'request body has too many top-level keys (max 100)',
+  });
+
 export function dynamicValidation(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   const m = req.method.toUpperCase();
   if (m !== 'POST' && m !== 'PUT' && m !== 'PATCH') return next();
   if (isPublicRoute(req.method, req.path) && req.path !== '/api/auth/login') return next();
 
   const key = matchKey(req.method, req.path, ROUTE_VALIDATORS as Record<string, unknown>);
-  const schema = key ? (ROUTE_VALIDATORS as Record<string, z.ZodTypeAny>)[key] : genericObjectSchema;
+  if (!key) {
+    if (STRICT) {
+      return res.status(422).json({
+        error: 'NO_SCHEMA',
+        message: `${req.method} ${req.path} has no body schema registered. ` +
+          `Add it to ROUTE_VALIDATORS in backend/src/routes/index.ts.`,
+      });
+    }
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[validate] no schema for ${req.method} ${req.path} — using permissive fallback. Add to ROUTE_VALIDATORS.`
+    );
+    return validateBody(fallbackSchema)(req, res, next);
+  }
+
+  const schema = (ROUTE_VALIDATORS as Record<string, z.ZodTypeAny>)[key];
   return validateBody(schema)(req, res, next);
 }
 
