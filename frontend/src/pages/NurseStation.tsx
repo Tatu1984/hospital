@@ -139,7 +139,7 @@ export default function NurseStation() {
 
   const fetchPatients = async () => {
     try {
-      const response = await api.get('/api/nursing/patients');
+      const response = await api.get('/api/nurse/patients');
       setPatients(response.data);
     } catch (error) {
       console.error('Error fetching patients:', error);
@@ -148,7 +148,7 @@ export default function NurseStation() {
 
   const fetchMedications = async () => {
     try {
-      const response = await api.get('/api/nursing/medications');
+      const response = await api.get('/api/nurse/medications');
       setMedications(response.data);
     } catch (error) {
       console.error('Error fetching medications:', error);
@@ -157,7 +157,7 @@ export default function NurseStation() {
 
   const fetchVitals = async () => {
     try {
-      const response = await api.get('/api/nursing/vitals');
+      const response = await api.get('/api/nurse/vitals');
       setVitals(response.data);
     } catch (error) {
       console.error('Error fetching vitals:', error);
@@ -166,7 +166,7 @@ export default function NurseStation() {
 
   const fetchRoster = async () => {
     try {
-      const response = await api.get('/api/nursing/roster');
+      const response = await api.get('/api/nurse/roster');
       setRoster(response.data);
     } catch (error) {
       console.error('Error fetching roster:', error);
@@ -175,7 +175,7 @@ export default function NurseStation() {
 
   const fetchHandoverNotes = async () => {
     try {
-      const response = await api.get('/api/nursing/handover');
+      const response = await api.get('/api/nurse/handover');
       setHandoverNotes(response.data);
     } catch (error) {
       console.error('Error fetching handover notes:', error);
@@ -184,7 +184,7 @@ export default function NurseStation() {
 
   const handleAdministerMedication = async (medId: string) => {
     try {
-      await api.post('/api/nursing/medication-admin', {
+      await api.post('/api/nurse/medication-admin', {
         medicationId: medId,
         administeredAt: new Date().toISOString()
       });
@@ -205,7 +205,7 @@ export default function NurseStation() {
   const handleRecordVitals = async () => {
     setLoading(true);
     try {
-      const response = await api.post('/api/nursing/vitals', {
+      const response = await api.post('/api/nurse/vitals', {
         ...vitalsFormData,
         recordedAt: new Date().toISOString()
       });
@@ -247,7 +247,7 @@ export default function NurseStation() {
   const handleAddRoster = async () => {
     setLoading(true);
     try {
-      const response = await api.post('/api/nursing/roster', rosterFormData);
+      const response = await api.post('/api/nurse/roster', rosterFormData);
 
       const newRoster: DutyRoster = {
         id: response.data.id || Date.now().toString(),
@@ -276,7 +276,7 @@ export default function NurseStation() {
   const handleSaveHandover = async () => {
     setLoading(true);
     try {
-      const response = await api.post('/api/nursing/handover', {
+      const response = await api.post('/api/nurse/handover', {
         ...handoverFormData,
         timestamp: new Date().toISOString()
       });

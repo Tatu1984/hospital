@@ -4400,6 +4400,173 @@ app.get('/api/nurse/vitals', authenticateToken, async (req: any, res: Response) 
   }
 });
 
+// ============================================
+// NURSE STATION — patients, vitals, roster, handover, medication admin
+// ============================================
+//
+// Roster + handover have no Prisma table yet (tracked in POA P3 #31's wider
+// "first-class workflow" item). For demo purposes we keep them in module
+// memory keyed by tenantId so they survive across requests within a single
+// serverless function instance. They WILL reset on a cold start. Adding
+// real DutyRoster + HandoverNote models is a one-migration follow-up.
+
+type RosterRow = {
+  id: string;
+  tenantId: string;
+  nurseName: string;
+  ward: string;
+  shift: string;
+  date: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
+  status: string;
+  createdAt: string;
+};
+type HandoverRow = {
+  id: string;
+  tenantId: string;
+  fromNurse: string;
+  toNurse: string;
+  shift: string;
+  patientId?: string | null;
+  criticalIssues?: string | null;
+  pendingTasks?: string | null;
+  medications?: string | null;
+  createdAt: string;
+};
+
+const __nurseRoster: RosterRow[] = [];
+const __nurseHandover: HandoverRow[] = [];
+
+// Active inpatients for the nurse station view.
+app.get('/api/nurse/patients', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const admissions = await prisma.admission.findMany({
+      where: {
+        status: 'active',
+        patient: { tenantId: req.user.tenantId },
+      },
+      include: {
+        patient: { select: { name: true, mrn: true, dob: true, gender: true, contact: true } },
+        bed: true,
+        admittingDoctor: { select: { name: true } },
+      },
+      orderBy: { admissionDate: 'desc' },
+      take: 200,
+    });
+    res.json(
+      admissions.map((a: any) => ({
+        id: a.patient?.mrn || a.id,
+        admissionId: a.id,
+        name: a.patient?.name || '',
+        mrn: a.patient?.mrn || '',
+        gender: a.patient?.gender || '',
+        contact: a.patient?.contact || '',
+        ward: a.bed?.category || '—',
+        bed: a.bed?.bedNumber || '—',
+        attendingDoctor: a.admittingDoctor?.name || 'Unassigned',
+        diagnosis: a.diagnosis || '',
+      }))
+    );
+  } catch (error) {
+    console.error('Get nurse patients error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST a vitals record. We don't write to a vitals table yet — log via audit
+// so the action is traceable, and 201 so the UI gets feedback.
+app.post('/api/nurse/vitals', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const v = req.body || {};
+    void writeAudit({
+      prisma, req,
+      action: 'NURSE_VITALS_RECORDED',
+      resource: 'Vitals',
+      resourceId: v.patientId || null,
+      newValue: v,
+    });
+    res.status(201).json({ id: `vitals-${Date.now()}`, ...v, recordedAt: new Date().toISOString() });
+  } catch (error) {
+    console.error('Post nurse vitals error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Medication administration. Same pattern — auditable, no dedicated table.
+app.post('/api/nurse/medication-admin', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const v = req.body || {};
+    void writeAudit({
+      prisma, req,
+      action: 'NURSE_MEDICATION_ADMINISTERED',
+      resource: 'MedicationAdmin',
+      resourceId: v.medicationId || v.prescriptionId || null,
+      newValue: v,
+    });
+    res.status(201).json({ ok: true, recordedAt: new Date().toISOString() });
+  } catch (error) {
+    console.error('Post medication-admin error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Duty roster. In-memory for now — see comment block above.
+app.get('/api/nurse/roster', authenticateToken, async (req: any, res: Response) => {
+  const rows = __nurseRoster.filter((r) => r.tenantId === req.user.tenantId);
+  res.json(rows);
+});
+
+app.post('/api/nurse/roster', authenticateToken, async (req: any, res: Response) => {
+  const v = req.body || {};
+  if (!v.nurseName || !v.shift || !v.ward) {
+    return res.status(400).json({ error: 'nurseName, shift, ward required' });
+  }
+  const row: RosterRow = {
+    id: `roster-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    tenantId: req.user.tenantId,
+    nurseName: v.nurseName,
+    ward: v.ward,
+    shift: v.shift,
+    date: v.date || null,
+    startTime: v.startTime || null,
+    endTime: v.endTime || null,
+    status: v.status || 'scheduled',
+    createdAt: new Date().toISOString(),
+  };
+  __nurseRoster.push(row);
+  void writeAudit({ prisma, req, action: 'NURSE_ROSTER_ADDED', resource: 'DutyRoster', resourceId: row.id, newValue: row });
+  res.status(201).json(row);
+});
+
+// Handover notes. In-memory.
+app.get('/api/nurse/handover', authenticateToken, async (req: any, res: Response) => {
+  const rows = __nurseHandover.filter((r) => r.tenantId === req.user.tenantId);
+  res.json(rows);
+});
+
+app.post('/api/nurse/handover', authenticateToken, async (req: any, res: Response) => {
+  const v = req.body || {};
+  if (!v.fromNurse || !v.toNurse) {
+    return res.status(400).json({ error: 'fromNurse and toNurse required' });
+  }
+  const row: HandoverRow = {
+    id: `handover-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    tenantId: req.user.tenantId,
+    fromNurse: v.fromNurse,
+    toNurse: v.toNurse,
+    shift: v.shift || '',
+    patientId: v.patientId || null,
+    criticalIssues: v.criticalIssues || null,
+    pendingTasks: v.pendingTasks || null,
+    medications: v.medications || null,
+    createdAt: new Date().toISOString(),
+  };
+  __nurseHandover.push(row);
+  void writeAudit({ prisma, req, action: 'NURSE_HANDOVER_ADDED', resource: 'HandoverNote', resourceId: row.id, newValue: row });
+  res.status(201).json(row);
+});
+
 // Referral doctors
 app.get('/api/referral-doctors', authenticateToken, async (req: any, res: Response) => {
   try {

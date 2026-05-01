@@ -141,6 +141,13 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   'GET /api/wards': ['master_data:view'],
   'GET /api/nurse/medications': ['nurse_station:view'],
   'GET /api/nurse/vitals': ['nurse_station:view'],
+  'POST /api/nurse/vitals': ['nurse_station:edit'],
+  'GET /api/nurse/patients': ['nurse_station:view'],
+  'POST /api/nurse/medication-admin': ['nurse_station:edit'],
+  'GET /api/nurse/roster': ['nurse_station:view'],
+  'POST /api/nurse/roster': ['nurse_station:edit'],
+  'GET /api/nurse/handover': ['nurse_station:view'],
+  'POST /api/nurse/handover': ['nurse_station:edit'],
 
   // Emergency
   'GET /api/emergency': ['emergency:view'],
