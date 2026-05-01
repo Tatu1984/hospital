@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "./node_modules/.bin/prisma generate",
+  "buildCommand": "./node_modules/.bin/prisma generate && ./node_modules/.bin/prisma migrate deploy",
   "installCommand": "npm ci --include=dev",
   "framework": null,
   "rewrites": [

@@ -1,0 +1,220 @@
+# Hospital ERP — Plan of Action (Production Readiness)
+
+**Status snapshot:** ~55–60% production-ready as of 2026-05-01. Working demo on Vercel. Not safe to put live patient data on without the P0 fixes below.
+
+> **Source of truth.** Every item has a status flag (`[ ]` open / `[x]` done / `[~]` in progress). Update this file as items land.
+
+---
+
+## Legend
+
+| Severity | Meaning | Must-fix-by |
+|---|---|---|
+| 🔴 P0 — BLOCKER | Live patient data is unsafe without it | before live launch |
+| 🟠 P1 — HIGH | User-visible launch / customer demo with PHI | within 2 weeks of launch |
+| 🟡 P2 — MEDIUM | Operational / performance / quality | within 1 month of launch |
+| 🟢 P3 — LOW | Polish, nice-to-have | when convenient |
+
+---
+
+## 🔴 P0 — BLOCKERS
+
+### 1. [~] Tenant isolation enforced at runtime
+**Where:** `backend/src/server.ts` — most `prisma.X.findMany`/`findUnique` calls don't include `tenantId`/`branchId` filters.
+**Risk:** Any authenticated user can read another tenant's PHI. HIPAA / NABH violation. Catastrophic.
+
+**Schema reality (matters for the fix):** Only 10 of 67 models carry `tenantId` directly:
+`AccountGroup`, `AccountHead`, `Appointment`, `Branch`, `FiscalYear`,
+`JournalEntry`, `LedgerEntry`, `Patient`, `ReferralSource`, `User`.
+
+The rest inherit tenancy transitively (e.g. `Encounter.patientId → Patient.tenantId`,
+`Invoice.patientId → Patient.tenantId`). Many also carry `branchId` directly.
+
+**Fix:**
+- Add a `tenantScope(req)` helper that returns `{ tenantId, branchId }` from `req.user`.
+- For top-level tenant-scoped models: add `where: tenantScope(req)` to every list/find query.
+- For child models (Encounter, Invoice, Admission, etc.): scope via the parent —
+  e.g. `where: { patient: { tenantId: req.user.tenantId } }`.
+- Long-term: add `tenantId` directly to Encounter/Invoice/etc. via Prisma migration so
+  scoping is one column lookup, not a join.
+**Effort:** 8–12 h.
+
+### 2. [x] TypeScript build errors that risk runtime 500s
+**Where:** `backend/src/controllers/auth.controller.ts`, `backend/src/controllers/user.controller.ts`, `backend/src/middleware/security.ts`.
+**Risk:** SWC bundles them but they reference Prisma fields (`fullName`, `password`, `roles`, `refreshToken`) that don't exist on the schema — calling those code paths throws at runtime.
+**Fix:**
+- Confirm whether these controllers are imported anywhere; if dead, delete.
+- If live, rewrite to match current schema (`name`, `passwordHash`, `roleIds`).
+**Effort:** 4–6 h.
+
+### 3. [ ] Asset model is not tenant-scoped
+**Where:** `backend/prisma/schema.prisma` — `model Asset` has no `tenantId`/`branchId`.
+**Risk:** All tenants share one asset registry; one hospital sees another's equipment.
+**Fix:**
+- Add `tenantId String` and `branchId String?` columns + relations.
+- Generate a Prisma migration.
+- Update the 8 `/api/assets/*` handlers to scope queries by `req.user.tenantId`.
+**Effort:** 30 min schema + 1 h migration + 15 min handler edits.
+
+### 4. [ ] NeonDB connection pooling for serverless
+**Where:** `DATABASE_URL` env var on Vercel backend.
+**Risk:** Every cold start opens a fresh Postgres connection; under burst traffic NeonDB hits its connection limit and DB calls hang/timeout.
+**Fix:** Replace with the **pooled** connection string from NeonDB (host ends in `-pooler.neon.tech`) and append `?pgbouncer=true&connection_limit=1&connect_timeout=15`.
+**Effort:** 5 min.
+
+### 5. [x] `prisma migrate deploy` runs on every backend deploy
+**Where:** `backend/vercel.json` buildCommand.
+**Risk:** Schema drift between code and live DB silently breaks queries.
+**Fix:** buildCommand chains `prisma generate && prisma migrate deploy`. **Requires `DATABASE_URL` to be set at build time** (Vercel does this if env vars are configured for "Build" + "Production").
+**Effort:** 10 min.
+
+### 6. [ ] Rotate seeded admin password
+**Where:** Live NeonDB.
+**Risk:** `admin / password123` is documented in this repo and across Vercel projects. Trivially guessable.
+**Fix:**
+- Generate a strong password: `openssl rand -base64 24`.
+- Update directly in DB or via a one-shot script:
+  ```sql
+  UPDATE users SET passwordHash = '<bcrypt-hash>' WHERE username = 'admin';
+  ```
+- Or temporarily expose `POST /api/users/:id/reset-password` to admin and call it.
+**Effort:** 5 min.
+
+### 7. [x] CORS robustness
+**Where:** `backend/src/server.ts`.
+**Risk:** Frontend deploys behind on misconfigured `CORS_ORIGIN` get cryptic errors.
+**Fix:** Validate origin via callback; allow `*.vercel.app` previews when `VERCEL_ALLOW_PREVIEW=true`; log denied origins to Vercel logs for fast debug.
+**Effort:** done.
+
+---
+
+## 🟠 P1 — HIGH
+
+### 8. [ ] Automated DB backups
+**Risk:** NeonDB free tier expires branches; no backups means data loss.
+**Fix:** GitHub Action nightly `pg_dump → S3`, 30-day retention. Quarterly restore drill.
+**Effort:** 2 h.
+
+### 9. [ ] Per-user/IP rate limit on writes
+**Risk:** Currently only `/auth/login` is rate-limited. `POST /api/patients` etc. have no throttle — easy abuse vector.
+**Fix:** Apply `generalRateLimiter` more aggressively to all POST/PUT/DELETE; introduce per-user limits via Redis/Upstash key.
+**Effort:** 1 h.
+
+### 10. [ ] Refresh token in httpOnly cookie
+**Where:** `frontend/src/services/api.ts` — currently in localStorage.
+**Risk:** Vulnerable to XSS exfiltration.
+**Fix:** Backend sets a `Set-Cookie: refreshToken=...; HttpOnly; Secure; SameSite=Strict; Path=/api/auth/refresh` on login. Frontend stops touching `refreshToken`.
+**Effort:** 3 h.
+
+### 11. [ ] Frontend tests + E2E
+**Where:** `frontend/`.
+**Risk:** Zero coverage; any regression goes live silently.
+**Fix:** Vitest + RTL for component contracts (RoleProtectedRoute, axios interceptor, AssetManagement form). Playwright for the patient → encounter → invoice happy path.
+**Effort:** 8–16 h initial.
+
+### 12. [ ] Sentry / log aggregation
+**Risk:** A 500 in production is invisible until a user complains.
+**Fix:** Already pulled into `backend/package.json` (`@sentry/node`) — wire `SENTRY_DSN` env var, init in `server.ts`, ship Vercel runtime logs to a log drain.
+**Effort:** 1 h.
+
+### 13. [ ] Secret rotation plan + leak detection
+**Fix:** Pre-commit hook with `git-secrets`; quarterly rotation of `JWT_SECRET`/`REFRESH_TOKEN_SECRET` (with rolling-window invalidation tolerance); document the runbook.
+**Effort:** 2 h.
+
+### 14. [ ] Code-split the frontend bundle
+**Where:** `frontend/`. Bundle is 1.7 MB single chunk.
+**Fix:** Convert routes in `App.tsx` to `React.lazy`/`Suspense`; bundle vendors separately via `manualChunks`.
+**Effort:** 4 h.
+
+### 15. [ ] CSP without `unsafe-inline`
+**Where:** Helmet config in `backend/src/middleware/security.ts`.
+**Risk:** XSS surface.
+**Fix:** Hash or nonce inline styles; strip `'unsafe-inline'` from `style-src`.
+**Effort:** 2 h.
+
+### 16. [ ] Audit-log viewer UI
+**Where:** Frontend has no `/audit-log` page.
+**Risk:** Compliance reviewers can't actually use the audit log.
+**Fix:** Build a paginated, filterable viewer (already have `/api/audit-logs` endpoint) — date range, user, action, resource.
+**Effort:** 4 h.
+
+---
+
+## 🟡 P2 — MEDIUM
+
+### 17. [ ] `/api/auth/me` endpoint
+**Fix:** Returns the current user's profile + permissions; frontend uses it on hydrate instead of `/dashboard/stats`.
+**Effort:** 30 min.
+
+### 18. [ ] Tighten `validateBody` fallback
+**Where:** `backend/src/routes/index.ts` — `genericObjectSchema = z.record(z.any())`.
+**Risk:** Any unregistered POST/PUT accepts arbitrary payloads.
+**Fix:** Write a Zod schema per endpoint, then drop the fallback to a strict `z.never()` on unregistered routes (with clearer 400 message).
+**Effort:** 2–3 h.
+
+### 19. [ ] Pagination on hot list endpoints
+**Where:** `/api/patients`, `/api/encounters`, `/api/admissions`, `/api/invoices`, etc.
+**Risk:** Returning all rows kills the page at 10k+ records.
+**Fix:** Cursor or offset pagination with sensible default (`?limit=50&cursor=...`).
+**Effort:** 3 h.
+
+### 20. [ ] Pick one token storage strategy on frontend
+**Where:** `frontend/src/services/api.ts`.
+**Risk:** Confusion between sessionStorage and localStorage; minor XSS surface.
+**Fix:** `httpOnly` cookie for refresh; in-memory only for access; remove `localStorage`/`sessionStorage` token writes.
+**Effort:** 1 h (after #10).
+
+### 21. [ ] Persist rate-limit state in Redis
+**Where:** `express-rate-limit` default in-memory store.
+**Risk:** Resets on every Vercel cold start — limits don't actually limit much.
+**Fix:** Use `rate-limit-redis` against an Upstash Redis URL.
+**Effort:** 2 h.
+
+### 22. [ ] Dependency scanning in CI
+**Risk:** 12 npm vulnerabilities outstanding, no fail-fast.
+**Fix:** Add `npm audit --audit-level=high` step in GitHub Actions.
+**Effort:** 1 h.
+
+### 23. [ ] Staging environment
+**Risk:** Every push to `main` is production.
+**Fix:** Create Vercel staging projects (frontend + backend) tracking `develop`. Block direct pushes to `main` via GitHub branch protection.
+**Effort:** 4 h.
+
+### 24. [ ] Health-based alerting
+**Fix:** Uptime monitor (Better Uptime / UptimeRobot) hits `/api/health` every 60s; pages on 3 consecutive failures.
+**Effort:** 2 h.
+
+### 25. [ ] Delete or repair dead controller code
+**Where:** `backend/src/controllers/auth.controller.ts`, `user.controller.ts`.
+**Note:** Same as P0 #2 if these are wired anywhere; demote to P2 if confirmed dead.
+**Effort:** 2 h.
+
+---
+
+## 🟢 P3 — LOW
+
+- [ ] **26.** Add a real favicon to the frontend.
+- [ ] **27.** Implement password reset flow (`/forgot-password`, `/reset-password`) end-to-end (page exists in some bundles, no working backend).
+- [ ] **28.** Replace generic 500s with user-friendly toast notifications.
+- [ ] **29.** Hide Swagger UI in production (`/api/docs` only when `NODE_ENV !== 'production'`).
+- [ ] **30.** Accessibility pass: aria labels on icon buttons, keyboard navigation for sidebar, focus management in dialogs.
+- [ ] **31.** Front Office "purpose" gets its own DB column (currently packed into `allergies` with a `Purpose:` prefix — see `frontend/src/pages/PatientRegistration.tsx`).
+
+---
+
+## Suggested rollout order
+
+| Sprint | Items | Goal |
+|---|---|---|
+| **W1 (live-launch must-haves)** | 1, 4, 5 ✅, 6, 12 | Tenant isolation, pooled DB, migrations on deploy, password reset, observability |
+| **W2 (sleep at night)** | 2 ✅, 3, 8, 9, 16 | TS cleanup, asset multi-tenant, backups, write rate limit, audit viewer |
+| **W3 (next paying customer)** | 11, 14, 15, 10/20, 22, 23 | Tests, perf, CSP, cookie auth, dep scans, staging |
+| **Backlog** | rest | Polish |
+
+**Target:** 55% → 90% production-ready in 3 weeks of focused work (~80 engineering hours).
+
+---
+
+## How to update this file
+
+When you start an item: change `[ ]` to `[~]`. When done: `[x]` and add a short note (commit SHA / date). Keep this file in sync with reality — drift here means drift everywhere.

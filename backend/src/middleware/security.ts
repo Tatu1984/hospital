@@ -33,7 +33,8 @@ export const generalRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => {
-    return ipKeyGenerator(req);
+    // ipKeyGenerator wants the IP string (handles IPv6 mapping correctly).
+    return ipKeyGenerator(req.ip || req.socket?.remoteAddress || '');
   },
   handler: (req, res) => {
     auditLogger.securityEvent('RATE_LIMIT_EXCEEDED', {
@@ -59,7 +60,8 @@ export const authRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => {
-    return ipKeyGenerator(req);
+    // ipKeyGenerator wants the IP string (handles IPv6 mapping correctly).
+    return ipKeyGenerator(req.ip || req.socket?.remoteAddress || '');
   },
   handler: (req, res) => {
     auditLogger.securityEvent('AUTH_RATE_LIMIT_EXCEEDED', {
