@@ -138,23 +138,36 @@ export const dischargeSchema = z.object({
   followUpInstructions: z.string().max(2000).optional(),
 });
 
-// Lab order validators. The frontend may send a single testId in the legacy
-// shape OR an array; preprocess and accept either, and don't require UUIDs
-// for testId — some forms send display names (slug) until master data wiring.
+// Lab order validators. The frontend ships several different shapes:
+//   tests: 'X-Ray Chest'                        (single string)
+//   tests: ['lab-test-1', 'lab-test-2']         (array of ids/names)
+//   tests: { testId, priority, notes }          (single object)
+//   tests: [{ testId, priority, notes }, ...]   (array of objects)
+// Preprocess normalizes all four into the canonical array-of-objects shape.
+function normalizeTests(v: unknown): unknown {
+  if (v == null) return v;
+  if (typeof v === 'string') return [{ testId: v }];
+  if (Array.isArray(v)) {
+    return v.map((item) => (typeof item === 'string' ? { testId: item } : item));
+  }
+  if (typeof v === 'object') return [v];
+  return v;
+}
+
 export const createLabOrderSchema = z.object({
   patientId: idSchema,
   encounterId: idSchema.optional().nullable(),
-  // Accept either { tests: [...] } or a flat { testId, priority, notes } and
-  // normalize to an array. Each test's id is just a non-empty string here.
-  tests: z.preprocess((v) => {
-    if (Array.isArray(v)) return v;
-    if (v && typeof v === 'object') return [v];
-    return v;
-  }, z.array(z.object({
-    testId: z.string().min(1),
-    priority: z.enum(['ROUTINE', 'URGENT', 'STAT']).default('ROUTINE'),
-    notes: z.string().max(500).optional().nullable(),
-  })).min(1)),
+  tests: z.preprocess(
+    normalizeTests,
+    z.array(z.object({
+      testId: z.string().min(1),
+      priority: z.preprocess(
+        (v) => (typeof v === 'string' ? v.toUpperCase() : v),
+        z.enum(['ROUTINE', 'URGENT', 'STAT']).default('ROUTINE')
+      ),
+      notes: z.string().max(500).optional().nullable(),
+    })).min(1)
+  ),
   clinicalInfo: z.string().max(1000).optional().nullable(),
 });
 
@@ -346,11 +359,16 @@ export const icuBedAssignmentSchema = z.object({
 });
 
 // Radiology validators
+// Radiology orders. Frontend sends `tests: ['<id-or-name>', ...]` plus a
+// shared priority + clinicalIndication. Backend handler can decompose the
+// array into per-test orders. We accept the legacy single-test shape too.
 export const createRadiologyOrderSchema = z.object({
   patientId: z.string().min(1),
   encounterId: z.string().min(1).optional().nullable(),
-  // testId may be a UUID OR a display name slug ("X-Ray Chest") until master
-  // data wiring lands. Accept either; the handler resolves it.
+  // Either a list (preferred) or a single test id
+  tests: z.preprocess(normalizeTests, z.array(z.object({
+    testId: z.string().min(1),
+  })).min(1)).optional().nullable(),
   testId: z.string().min(1).optional().nullable(),
   testName: z.string().max(200).optional().nullable(),
   modality: z.preprocess(
@@ -361,6 +379,9 @@ export const createRadiologyOrderSchema = z.object({
     (v) => (typeof v === 'string' ? v.toUpperCase() : v),
     z.enum(['ROUTINE', 'URGENT', 'STAT']).default('ROUTINE')
   ),
+  // The frontend sends 'clinicalIndication'; legacy schemas called this
+  // 'clinicalHistory'. Accept both.
+  clinicalIndication: z.string().max(2000).optional().nullable(),
   clinicalHistory: z.string().max(2000).optional().nullable(),
   specialInstructions: z.string().max(1000).optional().nullable(),
 });
