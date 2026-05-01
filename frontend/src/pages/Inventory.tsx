@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Package, Plus, AlertTriangle, TrendingDown, FileText } from 'lucide-react';
 import api from '../services/api';
+import { useToast } from '../components/Toast';
 
 interface InventoryItem {
   id: string;
@@ -45,6 +46,7 @@ interface ItemFormData {
 }
 
 export default function Inventory() {
+  const toast = useToast();
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [isItemDialogOpen, setIsItemDialogOpen] = useState(false);
@@ -109,10 +111,10 @@ export default function Inventory() {
       await fetchItems();
       setIsItemDialogOpen(false);
       resetItemForm();
-      alert('Item added successfully');
-    } catch (error) {
+      toast.success('Item added', `${itemFormData.name} is now in inventory`);
+    } catch (error: any) {
       console.error('Error adding item:', error);
-      alert('Failed to add item');
+      toast.error('Could not add item', error?.response?.data?.error || error?.message || 'Try again or contact support.');
     } finally {
       setLoading(false);
     }

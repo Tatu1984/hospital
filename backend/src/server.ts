@@ -92,6 +92,9 @@ import { checkRoutePermission, ROUTE_PERMISSIONS } from './routes';
 // Import logger
 import { logger, auditLogger } from './utils/logger';
 
+// Tenant-scope helpers + pagination
+import { paginate } from './utils/tenantScope';
+
 dotenv.config();
 
 // ============================================
@@ -731,6 +734,9 @@ app.get('/api/encounters', authenticateToken, async (req: any, res: Response) =>
       where.status = status;
     }
 
+    // Backward-compatible pagination: still return a bare array, just sliced.
+    // Pages without the toArray() normalizer keep working.
+    const { skip, take } = paginate(req);
     const encounters = await prisma.encounter.findMany({
       where,
       orderBy: { visitDate: 'desc' },
@@ -738,6 +744,8 @@ app.get('/api/encounters', authenticateToken, async (req: any, res: Response) =>
         patient: { select: { id: true, mrn: true, name: true, dob: true, gender: true } },
         doctor: { select: { name: true } },
       },
+      skip,
+      take,
     });
 
     res.json(encounters);
@@ -936,6 +944,7 @@ app.get('/api/invoices', authenticateToken, async (req: any, res: Response) => {
     if (patientId) where.patientId = patientId;
     if (status) where.status = status;
 
+    const { skip, take } = paginate(req);
     const invoices = await prisma.invoice.findMany({
       where,
       include: {
@@ -943,6 +952,8 @@ app.get('/api/invoices', authenticateToken, async (req: any, res: Response) => {
         payments: true,
       },
       orderBy: { createdAt: 'desc' },
+      skip,
+      take,
     });
 
     res.json(invoices);
@@ -2149,6 +2160,7 @@ app.get('/api/admissions', authenticateToken, async (req: any, res: Response) =>
 
     if (status) where.status = status;
 
+    const { skip, take } = paginate(req);
     const admissions = await prisma.admission.findMany({
       where,
       include: {
@@ -2162,6 +2174,8 @@ app.get('/api/admissions', authenticateToken, async (req: any, res: Response) =>
         }
       },
       orderBy: { admissionDate: 'desc' },
+      skip,
+      take,
     });
 
     // Transform for frontend compatibility
@@ -2293,9 +2307,30 @@ app.post('/api/emergency/cases', authenticateToken, async (req: any, res: Respon
   }
 });
 
+// Helper: refuse the operation if the ER case belongs to a patient outside
+// this tenant. Returns null on success (proceed), Response on rejection.
+async function ensureTenantOwnsEmergencyCase(req: any, res: Response, id: string): Promise<true | null> {
+  const owned = await prisma.emergencyCase.findFirst({
+    where: {
+      id,
+      OR: [
+        { patient: { tenantId: req.user.tenantId } },
+        { patientId: null }, // walk-ins; allow until EmergencyCase gets its own tenantId column
+      ],
+    },
+    select: { id: true },
+  });
+  if (!owned) {
+    res.status(404).json({ error: 'Emergency case not found' });
+    return null;
+  }
+  return true;
+}
+
 app.put('/api/emergency/cases/:id', authenticateToken, async (req: any, res: Response) => {
   try {
     const { id } = req.params;
+    if (!(await ensureTenantOwnsEmergencyCase(req, res, id))) return;
     const { triageCategory, vitalSigns, assignedDoctor, notes, status } = req.body;
 
     const emergencyCase = await prisma.emergencyCase.update({
@@ -2319,6 +2354,7 @@ app.put('/api/emergency/cases/:id', authenticateToken, async (req: any, res: Res
 app.post('/api/emergency/cases/:id/admit', authenticateToken, async (req: any, res: Response) => {
   try {
     const { id } = req.params;
+    if (!(await ensureTenantOwnsEmergencyCase(req, res, id))) return;
     const { disposition } = req.body;
 
     const emergencyCase = await prisma.emergencyCase.update({
@@ -2339,6 +2375,7 @@ app.post('/api/emergency/cases/:id/admit', authenticateToken, async (req: any, r
 app.post('/api/emergency/cases/:id/discharge', authenticateToken, async (req: any, res: Response) => {
   try {
     const { id } = req.params;
+    if (!(await ensureTenantOwnsEmergencyCase(req, res, id))) return;
 
     const emergencyCase = await prisma.emergencyCase.update({
       where: { id },
@@ -2572,9 +2609,28 @@ app.post('/api/ot-rooms', authenticateToken, async (req: any, res: Response) => 
   }
 });
 
+async function ensureTenantOwnsSurgery(req: any, res: Response, id: string): Promise<true | null> {
+  const owned = await prisma.surgery.findFirst({
+    where: {
+      id,
+      OR: [
+        { patient: { tenantId: req.user.tenantId } },
+        { patientId: null }, // not yet linked to a patient record
+      ],
+    },
+    select: { id: true },
+  });
+  if (!owned) {
+    res.status(404).json({ error: 'Surgery not found' });
+    return null;
+  }
+  return true;
+}
+
 app.post('/api/surgeries/:id/start', authenticateToken, async (req: any, res: Response) => {
   try {
     const { id } = req.params;
+    if (!(await ensureTenantOwnsSurgery(req, res, id))) return;
 
     const surgery = await prisma.surgery.update({
       where: { id },
@@ -2602,6 +2658,7 @@ app.post('/api/surgeries/:id/start', authenticateToken, async (req: any, res: Re
 app.post('/api/surgeries/:id/complete', authenticateToken, async (req: any, res: Response) => {
   try {
     const { id } = req.params;
+    if (!(await ensureTenantOwnsSurgery(req, res, id))) return;
     const { postOpNotes, complications } = req.body;
 
     const surgery = await prisma.surgery.update({
@@ -2632,6 +2689,7 @@ app.post('/api/surgeries/:id/complete', authenticateToken, async (req: any, res:
 app.post('/api/surgeries/:id/cancel', authenticateToken, async (req: any, res: Response) => {
   try {
     const { id } = req.params;
+    if (!(await ensureTenantOwnsSurgery(req, res, id))) return;
     const { reason } = req.body;
 
     const surgery = await prisma.surgery.update({

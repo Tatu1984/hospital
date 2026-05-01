@@ -64,3 +64,17 @@ export function and(...clauses: Array<Record<string, unknown> | undefined>): Rec
   if (valid.length === 1) return valid[0];
   return { AND: valid };
 }
+
+/**
+ * Pagination helper. Reads `limit` and `page` from req.query, clamps both,
+ * and returns Prisma-friendly `skip` and `take`.
+ *   default page = 1, default limit = 50, max limit = 200.
+ */
+export function paginate(req: AuthedReq): { skip: number; take: number; page: number; limit: number } {
+  const q = req.query as Record<string, unknown>;
+  const rawLimit = Number(q.limit ?? 50);
+  const rawPage = Number(q.page ?? 1);
+  const limit = Math.min(200, Math.max(1, Number.isFinite(rawLimit) ? rawLimit : 50));
+  const page = Math.max(1, Number.isFinite(rawPage) ? rawPage : 1);
+  return { skip: (page - 1) * limit, take: limit, page, limit };
+}

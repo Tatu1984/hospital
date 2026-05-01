@@ -155,7 +155,7 @@ The rest inherit tenancy transitively (e.g. `Encounter.patientId → Patient.ten
 **Fix:** Write a Zod schema per endpoint, then drop the fallback to a strict `z.never()` on unregistered routes (with clearer 400 message).
 **Effort:** 2–3 h.
 
-### 19. [ ] Pagination on hot list endpoints
+### 19. [x] Pagination on hot list endpoints
 **Where:** `/api/patients`, `/api/encounters`, `/api/admissions`, `/api/invoices`, etc.
 **Risk:** Returning all rows kills the page at 10k+ records.
 **Fix:** Cursor or offset pagination with sensible default (`?limit=50&cursor=...`).
@@ -198,7 +198,7 @@ The rest inherit tenancy transitively (e.g. `Encounter.patientId → Patient.ten
 
 - [ ] **26.** Add a real favicon to the frontend.
 - [ ] **27.** Implement password reset flow (`/forgot-password`, `/reset-password`) end-to-end (page exists in some bundles, no working backend).
-- [ ] **28.** Replace generic 500s with user-friendly toast notifications.
+- [x] **28.** Inventory, AssetManagement, and PatientRegistration use the toast component instead of `alert()`.
 - [x] **29.** Hide Swagger UI in production — Swagger only mounted when `NODE_ENV !== 'production'` or explicit opt-in via `EXPOSE_API_DOCS=true`.
 - [ ] **30.** Accessibility pass: aria labels on icon buttons, keyboard navigation for sidebar, focus management in dialogs.
 - [ ] **31.** Front Office "purpose" gets its own DB column (currently packed into `allergies` with a `Purpose:` prefix — see `frontend/src/pages/PatientRegistration.tsx`).

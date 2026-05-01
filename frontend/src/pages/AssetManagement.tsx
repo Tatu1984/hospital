@@ -22,6 +22,7 @@ import {
   Plus, Search, MoreVertical, Eye, Edit, Trash2, Wrench, Power, RotateCcw, AlertCircle, Wrench as WrenchIcon,
 } from 'lucide-react';
 import api from '../services/api';
+import { useToast } from '../components/Toast';
 
 interface Asset {
   id: string;
@@ -94,6 +95,7 @@ const emptyForm = {
 };
 
 export default function AssetManagement() {
+  const toast = useToast();
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -205,9 +207,12 @@ export default function AssetManagement() {
     setMaintenanceOpen(true);
   };
 
+  const errMsg = (e: any, fallback: string) =>
+    e?.response?.data?.error || e?.message || fallback;
+
   const onCreate = async () => {
     if (!form.name || !form.category) {
-      alert('Name and category are required');
+      toast.warning('Missing fields', 'Name and category are required.');
       return;
     }
     setSubmitting(true);
@@ -220,8 +225,9 @@ export default function AssetManagement() {
       });
       await loadAssets();
       setCreateOpen(false);
+      toast.success('Asset added', form.name);
     } catch (e: any) {
-      alert(e?.response?.data?.error || 'Failed to create asset');
+      toast.error('Could not add asset', errMsg(e, 'Try again.'));
     } finally {
       setSubmitting(false);
     }
@@ -239,8 +245,9 @@ export default function AssetManagement() {
       });
       await loadAssets();
       setEditOpen(false);
+      toast.success('Asset updated', form.name);
     } catch (e: any) {
-      alert(e?.response?.data?.error || 'Failed to update asset');
+      toast.error('Could not update asset', errMsg(e, 'Try again.'));
     } finally {
       setSubmitting(false);
     }
@@ -253,8 +260,9 @@ export default function AssetManagement() {
       await api.delete(`/api/assets/${selected.id}`);
       await loadAssets();
       setDeleteOpen(false);
+      toast.success('Asset deleted', selected.name);
     } catch (e: any) {
-      alert(e?.response?.data?.error || 'Failed to delete asset');
+      toast.error('Could not delete', errMsg(e, 'Try again.'));
     } finally {
       setSubmitting(false);
     }
@@ -264,14 +272,15 @@ export default function AssetManagement() {
     try {
       await api.post(`/api/assets/${a.id}/status`, { status });
       await loadAssets();
+      toast.success('Status changed', `${a.name} → ${status.replace('_', ' ')}`);
     } catch (e: any) {
-      alert(e?.response?.data?.error || 'Failed to change status');
+      toast.error('Could not change status', errMsg(e, 'Try again.'));
     }
   };
 
   const onAddMaintenance = async () => {
     if (!selected || !logForm.maintenanceType) {
-      alert('Maintenance type is required');
+      toast.warning('Missing field', 'Maintenance type is required.');
       return;
     }
     setSubmitting(true);
@@ -281,14 +290,14 @@ export default function AssetManagement() {
         scheduledDate: logForm.scheduledDate || null,
         completedDate: logForm.completedDate || null,
       });
-      // If scheduling future maintenance, also flip the asset's status
       if (!logForm.completedDate && selected.status === 'active') {
         await api.post(`/api/assets/${selected.id}/status`, { status: 'under_maintenance' });
       }
       await loadAssets();
       setMaintenanceOpen(false);
+      toast.success('Maintenance logged', logForm.maintenanceType);
     } catch (e: any) {
-      alert(e?.response?.data?.error || 'Failed to add maintenance log');
+      toast.error('Could not save maintenance', errMsg(e, 'Try again.'));
     } finally {
       setSubmitting(false);
     }

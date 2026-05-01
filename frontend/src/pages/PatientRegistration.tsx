@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Search, Plus, Edit, FileText, Fingerprint, Eye } from 'lucide-react';
 import api from '../services/api';
 import { useNavigate } from 'react-router-dom';
+import { useToast } from '../components/Toast';
 
 interface Patient {
   id: string;
@@ -89,6 +90,7 @@ export default function PatientRegistration() {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [loading, setLoading] = useState(false);
+  const toast = useToast();
   const [formData, setFormData] = useState({
     mrn: '',
     firstName: '',
@@ -192,9 +194,12 @@ export default function PatientRegistration() {
         idProofNumber: '', insuranceProvider: '', insuranceNumber: '', allergies: '',
         chronicConditions: '', purpose: '', referralSourceId: ''
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error creating patient:', error);
-      alert('Failed to create patient. Please try again.');
+      toast.error(
+        'Could not register patient',
+        error?.response?.data?.error || error?.message || 'Please try again.'
+      );
     } finally {
       setLoading(false);
     }
@@ -259,7 +264,7 @@ export default function PatientRegistration() {
       setSelectedPatient(null);
     } catch (error) {
       console.error('Error updating patient:', error);
-      alert('Failed to update patient.');
+      toast.error('Could not update patient', 'Please try again.');
     } finally {
       setLoading(false);
     }
