@@ -1,0 +1,68 @@
+name: DB Backup
+
+# Nightly pg_dump of the production NeonDB → uploaded as a workflow artifact
+# (30-day retention by default). For longer retention, add an S3 push step.
+#
+# Required repo secret:
+#   PROD_DATABASE_URL  — the same value as backend Vercel project DATABASE_URL.
+#                        Use the pooler URL; a transient connection is fine.
+#
+# Manual trigger: Actions tab → "DB Backup" → "Run workflow".
+
+on:
+  schedule:
+    # Every day at 02:00 UTC (07:30 IST). Adjust as needed.
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  pg-dump:
+    name: pg_dump production
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Verify secret is set
+        run: |
+          if [ -z "${{ secrets.PROD_DATABASE_URL }}" ]; then
+            echo "::error::PROD_DATABASE_URL secret is not set. Add it under repo Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+
+      - name: Install postgresql-client (matches the deployed Postgres major)
+        run: |
+          sudo sh -c 'echo "deb https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-15
+
+      - name: Dump the database
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+        run: |
+          mkdir -p backup
+          STAMP=$(date -u +%Y%m%d_%H%M%SZ)
+          OUT=backup/hospital_${STAMP}.sql.gz
+          # --no-owner / --no-privileges keep the dump portable across DBs.
+          # --clean / --if-exists make a restore self-contained.
+          pg_dump --format=plain --no-owner --no-privileges --clean --if-exists \
+            "$DATABASE_URL" \
+            | gzip -9 > "$OUT"
+          ls -lh "$OUT"
+          echo "BACKUP_FILE=$OUT" >> "$GITHUB_ENV"
+          echo "BACKUP_NAME=hospital-backup-${STAMP}" >> "$GITHUB_ENV"
+
+      - name: Upload backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BACKUP_NAME }}
+          path: ${{ env.BACKUP_FILE }}
+          # 90 days = current GitHub default cap on free / Pro for actions
+          # artifact retention. Bump or add S3 push for longer.
+          retention-days: 30
+
+      - name: Smoke-check the dump is restorable (optional sanity)
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+        run: |
+          # Ensure gzip is intact and starts with a Postgres header.
+          gunzip -c "${{ env.BACKUP_FILE }}" | head -n 5

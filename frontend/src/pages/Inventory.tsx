@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Package, Plus, AlertTriangle, TrendingDown, FileText } from 'lucide-react';
 import api from '../services/api';
 import { useToast } from '../components/Toast';
+import { toArray } from '../utils/list';
 
 interface InventoryItem {
   id: string;
@@ -67,18 +68,8 @@ export default function Inventory() {
   }, []);
 
   // Different backend versions return either a bare array or a paginated
-  // wrapper like `{ items: [...], pagination: {...} }`. Normalize both so the
-  // page never crashes on `.filter is not a function`.
-  const toArray = <T,>(data: unknown): T[] => {
-    if (Array.isArray(data)) return data as T[];
-    if (data && typeof data === 'object') {
-      const obj = data as Record<string, unknown>;
-      if (Array.isArray(obj.items)) return obj.items as T[];
-      if (Array.isArray(obj.data)) return obj.data as T[];
-      if (Array.isArray(obj.results)) return obj.results as T[];
-    }
-    return [];
-  };
+  // wrapper like `{ items: [...], pagination: {...} }`. The shared toArray()
+  // util in src/utils/list.ts normalizes both — see its tests.
 
   const fetchItems = async () => {
     try {

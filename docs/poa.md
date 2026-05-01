@@ -95,7 +95,7 @@ The rest inherit tenancy transitively (e.g. `Encounter.patientId → Patient.ten
 
 ## 🟠 P1 — HIGH
 
-### 8. [ ] Automated DB backups
+### 8. [x] Automated DB backups (GitHub Actions, 30-day retention)
 **Risk:** NeonDB free tier expires branches; no backups means data loss.
 **Fix:** GitHub Action nightly `pg_dump → S3`, 30-day retention. Quarterly restore drill.
 **Effort:** 2 h.
@@ -111,7 +111,7 @@ The rest inherit tenancy transitively (e.g. `Encounter.patientId → Patient.ten
 **Fix:** Backend sets a `Set-Cookie: refreshToken=...; HttpOnly; Secure; SameSite=Strict; Path=/api/auth/refresh` on login. Frontend stops touching `refreshToken`.
 **Effort:** 3 h.
 
-### 11. [ ] Frontend tests + E2E
+### 11. [~] Frontend tests + E2E
 **Where:** `frontend/`.
 **Risk:** Zero coverage; any regression goes live silently.
 **Fix:** Vitest + RTL for component contracts (RoleProtectedRoute, axios interceptor, AssetManagement form). Playwright for the patient → encounter → invoice happy path.
