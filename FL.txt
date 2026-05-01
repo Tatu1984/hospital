@@ -1,0 +1,248 @@
+A. Core Platform & Admin
+	•	Multi-branch / multi-entity support
+	•	Multiple hospitals, clinics, diagnostic centers
+	•	Centralized vs branch-specific configurations
+	•	Cross-branch patient lookup
+	•	Master Data Management
+	•	Departments, units, wards, ICUs, OTs
+	•	Services, procedures, packages, tariffs
+	•	Item masters (drugs, consumables, assets)
+	•	ICD-10 / procedure codes (or configurable code sets)
+	•	User Management & Roles
+	•	Role-based access control (RBAC)
+	•	Page/module level permissions
+	•	Department-based access
+	•	Maker-checker / approvals
+	•	Audit & Security
+	•	Audit logs (who did what, when, from where)
+	•	IP-based restrictions (optional)
+	•	Session management, forced logouts
+	•	Data encryption at rest and in transit
+	•	Localization & Config
+	•	Currency, tax configs (GST / local)
+	•	Timezone, date format, language support
+	•	Custom fields & forms
+
+B. Patient & Front Office
+1. Registration & Demographics
+	•	Unique MRN (medical record number)
+	•	Multi-ID support (govt ID, insurance ID, corporate ID)
+	•	Biometric-based patient identification (finger/iris/face)
+	•	Family linking, corporate/TPA linking
+	•	Document upload (ID proofs, previous records)
+2. Appointment & Scheduling
+	•	Doctor-wise slots
+	•	Department/Service-wise appointments
+	•	Online booking (future web/app integration)
+	•	Teleconsultation slot flag
+	•	No-show tracking & auto-reminders (SMS/WhatsApp/email)
+3. Front Office & Queue Management
+	•	Token generation
+	•	Doctor/department-wise queues
+	•	Real-time display board integration
+	•	Priority tagging (emergency/paid priority/VIP)
+4. Patient Portal (optional module)
+	•	View prescriptions, lab reports, radiology reports
+	•	Download invoices
+	•	Request appointments, refill prescriptions
+	•	Pay bills online
+
+C. Clinical / EMR Modules
+1. Outpatient (OPD) EMR
+	•	SOAP notes (Subjective, Objective, Assessment, Plan)
+	•	Chief complaints, history, allergies
+	•	Vitals & BMI
+	•	Clinical templates by specialty
+	•	e-Prescription (linked with drug database)
+	•	Lab & radiology orders from EMR
+	•	Follow-up & revisit tracking
+2. Inpatient (IPD) Management
+	•	Admission/transfer/discharge workflows
+	•	Bed management, bed allocation and transfer
+	•	Ward/Room-category based tariffs
+	•	Clinical notes: progress notes, nursing notes, specialty notes
+	•	eMAR (Medication administration record)
+3. Nursing Station
+	•	Care plans
+	•	Vitals charting (with device integration in future)
+	•	Intake/output chart
+	•	Medication schedules & administration
+	•	Procedure scheduling & execution logs
+4. OT / OR Management
+	•	OT scheduling (surgeon, anesthetist, assistants, theater)
+	•	Pre-op checks, consents, checklists
+	•	OT utilization tracking
+	•	Implants/consumables usage tracking (auto-billing)
+	•	Post-op notes & recovery tracking
+5. ICU Module
+	•	Specialized ICU flows (frequent vitals)
+	•	Ventilator parameters (manual entry / integration ready)
+	•	Critical care checklists
+	•	Sepsis / risk alerts (future decision support)
+6. Emergency / Casualty
+	•	Quick registration & triage
+	•	Triage categories (red/yellow/green)
+	•	MLC (medico-legal case) flagging & reporting
+	•	Emergency treatment notes
+	•	Conversion to IP / OP case
+
+D. Diagnostics & Pharmacy
+1. Laboratory Information System (LIS)
+	•	Test catalog with panels & profiles
+	•	Sample collection & barcode generation
+	•	Sample tracking (collected, received, in process, verified)
+	•	Machine integration ready (HL7 / ASTM)
+	•	Result entry, validation, critical value alerts
+	•	Printable and portal-viewable lab reports
+2. Radiology / RIS & PACS
+	•	Radiology order management
+	•	Modality scheduling (X-ray, CT, MRI, USG, etc.)
+	•	Integration with PACS (linking images via URL/viewer)
+	•	Reporting templates by modality
+	•	Second opinion workflows
+3. Pharmacy (Inpatient & Retail)
+	•	Drug formulary management
+	•	Inpatient medication orders from EMR
+	•	Bed-side issue & return
+	•	Retail pharmacy billing (walk-in & IP/OP-linked)
+	•	Stock check at order time
+	•	Substitutions and generics
+	•	Expiry and narcotics tracking
+4. Blood Bank (optional but nice for larger setups)
+	•	Donor registration & screening
+	•	Blood collection, processing & component separation
+	•	Inventory: group, Rh, component-wise
+	•	Cross-matching and issue
+	•	Traceability logs
+
+E. Operations & Support Services
+1. Inventory & Procurement
+	•	Purchase requisition & approval workflows
+	•	Purchase order, GRN (goods receipt)
+	•	Vendor management
+	•	Stock management per store/sub-store
+	•	Batch, expiry, lot tracking
+	•	Reorder levels, min/max settings
+	•	Stock transfers between branches/stores
+2. Asset & Biomedical Equipment Management
+	•	Asset registry (equipment, furniture, IT)
+	•	Maintenance schedules (AMC/CMC)
+	•	Complaint logging & resolution management
+	•	Downtime tracking
+3. Housekeeping & Linen/Laundry
+	•	Bed status: cleaning, ready, occupied
+	•	Housekeeping tasks & assignments
+	•	Linen issue/return
+	•	Laundry cycles and costs
+4. Diet & Kitchen Management
+	•	Diet orders from wards
+	•	Diet plans per patient type/condition
+	•	Kitchen production list
+	•	Food distribution tracking
+5. Transport / Ambulance Management
+	•	Ambulance booking & dispatch
+	•	Trip logs and charges
+
+F. Finance & Revenue Cycle
+1. Billing & Tariffs
+	•	OP billing (consults, procedures, services)
+	•	IP billing (room charges, nursing, procedures, pharmacy, diagnostics)
+	•	Package billing (e.g., surgery packages, maternity packages)
+	•	Split billing (patient + insurer + corporate)
+	•	Multiple payers per bill
+2. TPA / Insurance / Corporate
+	•	TPA & corporate master contracts
+	•	Cashless pre-authorization workflows
+	•	Approval & enhancement tracking
+	•	Claims preparation & submission tracking
+	•	Denial & rejection tracking
+3. Cash & Payments
+	•	Multiple payment modes (cash, card, UPI, online)
+	•	Advance receipts & adjustment
+	•	Refunds & credit notes
+	•	Daily cash closure reports
+4. Accounting Interface
+	•	Mapping to chart of accounts
+	•	Export to Tally/ERP or via API
+	•	Revenue recognition by department/service
+
+G. HR & Biometric Module
+1. HR Basics
+	•	Staff profiles (doctors, nurses, admin, technicians)
+	•	Department assignment, designations
+	•	Qualifications, licenses, certifications
+	•	Shift & duty roster management
+	•	Leave management (apply, approve, track)
+2. Biometric Integrations
+You can treat biometrics as a horizontal capability that connects to multiple modules:
+	•	Attendance & Access Control
+	•	Staff attendance via biometric devices at entry/exit
+	•	Late/early, overtime calculation
+	•	Access control for sensitive areas (ICU, OT, pharmacy, server room)
+	•	Device sync (cloud-based, scheduled polling)
+	•	Patient Identification
+	•	Biometric capture at registration (fingerprint/face, depending on region regulatory comfort)
+	•	Fast patient lookup at front office, pharmacy, sample collection
+	•	Clinical & Legal Sign-offs
+	•	Biometric-authenticated e-signatures for:
+	•	OT notes
+	•	Discharge summaries
+	•	Critical care orders
+	•	High-risk medication orders
+	•	Audit trail: “Which doctor actually signed this?”
+	•	Device Layer Design
+	•	Support for multiple device brands via adapters/SDKs
+	•	Local agent that talks to on-prem devices and syncs to cloud
+	•	Failover mechanisms:
+	•	Fallback to PIN/OTP when biometric fails
+	•	Offline caching and later sync
+
+H. Quality, Compliance & Risk
+	•	Incident reporting (falls, medication errors, near-misses)
+	•	Complaints & feedback management
+	•	Checklists (OT safety checklist, ICU checklist, infection control)
+	•	Consent management:
+	•	Custom consent templates
+	•	Digital signature capture (stylus + biometric optional)
+	•	MLC management (for countries where this matters)
+	•	NABH / JCI-friendly reports and logs (you don’t have to name them in UI, but design for it)
+
+I. Analytics, Dashboards & Reports
+	•	Operational Dashboards
+	•	OP/IP census, occupancy rates
+	•	Average length of stay
+	•	OT utilization
+	•	ER throughput
+	•	Financial Dashboards
+	•	Revenue by department, doctor, branch
+	•	Collection vs billing vs write-offs
+	•	TPA aging and claim status
+	•	Clinical & Quality Dashboards
+	•	Infection rates (if captured)
+	•	Readmission rates
+	•	Mortality stats
+	•	Antibiotic usage patterns (if pharmacy + EMR data is rich)
+	•	Custom Report Builder
+	•	Drag-and-drop report designer
+	•	Exports: Excel, CSV, PDF
+	•	Scheduled email reports
+	•	Multi-branch Comparison
+	•	Benchmark KPIs across branches
+	•	Drill-down from group → hospital → department → doctor
+
+J. Integration Layer & APIs
+Design this as a first-class module, not an afterthought.
+	•	Standard interfaces
+	•	HL7/FHIR readiness (for future EMR/EHR exchanges)
+	•	DICOM worklist and PACS integration points
+	•	Lab equipment integration
+	•	Payment gateways (Razorpay/Stripe/etc.)
+	•	SMS/WhatsApp/email gateways
+	•	External Systems
+	•	Existing ERPs (SAP, Oracle, Tally, etc.)
+	•	Third-party LIS/RIS if hospital already has them
+	•	Government systems / national health IDs (if applicable later)
+	•	Developer-friendly APIs
+	•	RESTful APIs for all major entities (patients, appointments, bills, labs, pharmacy)
+	•	Webhooks for events (bill created, discharge completed, report ready, etc.)
+
