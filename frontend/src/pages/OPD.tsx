@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -7,20 +7,112 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription, DialogFooter } from '@/components/ui/dialog';
-import { Stethoscope } from 'lucide-react';
+import { Stethoscope, RefreshCw } from 'lucide-react';
+import api from '../services/api';
+import { useToast } from '../components/Toast';
+import { toArray } from '../utils/list';
+
+interface OpdAppointment {
+  id: string;
+  patientId: string;
+  doctorId: string | null;
+  appointmentDate: string;
+  appointmentTime?: string | null;
+  type?: string | null;
+  reason?: string | null;
+  status: string;
+  patient?: { id: string; name: string; mrn: string; contact?: string };
+  doctor?: { id: string; name: string };
+}
+
+const statusBadgeColor = (s: string) => {
+  switch ((s || '').toUpperCase()) {
+    case 'CHECKED_IN': return 'bg-blue-100 text-blue-800';
+    case 'IN_PROGRESS': return 'bg-amber-100 text-amber-800';
+    case 'COMPLETED': return 'bg-emerald-100 text-emerald-800';
+    case 'CANCELLED': return 'bg-red-100 text-red-700';
+    case 'NO_SHOW': return 'bg-slate-200 text-slate-600';
+    default: return 'bg-slate-100 text-slate-800';
+  }
+};
 
 export default function OPD() {
-  const [encounters] = useState([
-    {
-      id: '1',
-      patientName: 'John Doe',
-      doctorName: 'Dr. Sarah Smith',
-      chiefComplaint: 'Fever and headache',
-      status: 'In Progress',
-      tokenNumber: 'T-001',
-      time: '10:00 AM'
+  const toast = useToast();
+  const [appointments, setAppointments] = useState<OpdAppointment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+
+  // YYYY-MM-DD for today, in the user's local timezone
+  const today = useMemo(() => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }, []);
+
+  const load = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await api.get('/api/appointments', { params: { date: today } });
+      setAppointments(toArray<OpdAppointment>(res.data));
+    } catch (e: any) {
+      setError(e?.response?.data?.error || e?.message || 'Failed to load OPD queue');
+      setAppointments([]);
+    } finally {
+      setLoading(false);
     }
-  ]);
+  };
+
+  useEffect(() => {
+    load();
+  }, [today]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return appointments;
+    return appointments.filter((a) =>
+      (a.patient?.name || '').toLowerCase().includes(q) ||
+      (a.patient?.mrn || '').toLowerCase().includes(q) ||
+      (a.doctor?.name || '').toLowerCase().includes(q) ||
+      (a.reason || '').toLowerCase().includes(q)
+    );
+  }, [appointments, search]);
+
+  const stats = useMemo(() => {
+    const norm = (s: string) => (s || '').toUpperCase();
+    return {
+      today: appointments.length,
+      waiting: appointments.filter((a) => ['SCHEDULED', 'CHECKED_IN'].includes(norm(a.status))).length,
+      inProgress: appointments.filter((a) => norm(a.status) === 'IN_PROGRESS').length,
+      completed: appointments.filter((a) => norm(a.status) === 'COMPLETED').length,
+    };
+  }, [appointments]);
+
+  const onCheckIn = async (id: string) => {
+    try {
+      await api.post(`/api/appointments/${id}/check-in`);
+      toast.success('Checked in');
+      await load();
+    } catch (e: any) {
+      toast.error('Could not check in', e?.response?.data?.error || 'Try again.');
+    }
+  };
+
+  // Mock encounter list for the SOAP dialog. We still render a Consult button
+  // per row because the visit notes UI hasn't been wired to /api/encounters
+  // creation yet — that's a larger workflow refactor (next session).
+  const encounters = filtered.map((a, i) => ({
+    id: a.id,
+    patientName: a.patient?.name || '—',
+    doctorName: a.doctor?.name || 'Unassigned',
+    chiefComplaint: a.reason || '—',
+    status: a.status,
+    tokenNumber: a.appointmentTime ? a.appointmentTime : `T-${String(i + 1).padStart(3, '0')}`,
+    time: a.appointmentTime || '',
+  }));
 
   const [soapNotes, setSoapNotes] = useState({
     subjective: '',
@@ -81,8 +173,12 @@ export default function OPD() {
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold text-slate-900">OutPatient Department (OPD)</h1>
-          <p className="text-slate-600">Manage OPD consultations and EMR</p>
+          <p className="text-slate-600">Today's appointments and consultations</p>
         </div>
+        <Button variant="outline" onClick={load} disabled={loading} className="gap-2">
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          Refresh
+        </Button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -91,7 +187,7 @@ export default function OPD() {
             <CardTitle className="text-sm font-medium">Today's Patients</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">45</div>
+            <div className="text-2xl font-bold">{stats.today}</div>
           </CardContent>
         </Card>
         <Card>
@@ -99,7 +195,7 @@ export default function OPD() {
             <CardTitle className="text-sm font-medium">Waiting</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-orange-600">12</div>
+            <div className="text-2xl font-bold text-orange-600">{stats.waiting}</div>
           </CardContent>
         </Card>
         <Card>
@@ -107,7 +203,7 @@ export default function OPD() {
             <CardTitle className="text-sm font-medium">In Progress</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-blue-600">8</div>
+            <div className="text-2xl font-bold text-blue-600">{stats.inProgress}</div>
           </CardContent>
         </Card>
         <Card>
@@ -115,43 +211,71 @@ export default function OPD() {
             <CardTitle className="text-sm font-medium">Completed</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-green-600">25</div>
+            <div className="text-2xl font-bold text-green-600">{stats.completed}</div>
           </CardContent>
         </Card>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>OPD Queue</CardTitle>
-          <CardDescription>Patient consultation queue</CardDescription>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <CardTitle>OPD Queue</CardTitle>
+              <CardDescription>
+                {loading ? 'Loading…' : `${filtered.length} appointment(s) for today (${today})`}
+              </CardDescription>
+            </div>
+            <Input
+              placeholder="Search by name, MRN, doctor, reason"
+              className="w-72"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
         </CardHeader>
         <CardContent>
+          {error && (
+            <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md p-3 mb-4">
+              {error}
+            </div>
+          )}
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Token</TableHead>
-                <TableHead>Patient Name</TableHead>
+                <TableHead>Token / Time</TableHead>
+                <TableHead>Patient</TableHead>
                 <TableHead>Doctor</TableHead>
                 <TableHead>Chief Complaint</TableHead>
-                <TableHead>Time</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Actions</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {encounters.map((encounter) => (
+              {loading ? (
+                <TableRow><TableCell colSpan={6} className="py-10 text-center text-slate-500">Loading appointments…</TableCell></TableRow>
+              ) : encounters.length === 0 ? (
+                <TableRow><TableCell colSpan={6} className="py-10 text-center text-slate-500">
+                  No appointments for today. Book one from <a href="/appointment" className="text-blue-600 hover:underline">Appointments</a> or register a patient first.
+                </TableCell></TableRow>
+              ) : (
+                encounters.map((encounter) => (
                 <TableRow key={encounter.id}>
                   <TableCell className="font-medium">{encounter.tokenNumber}</TableCell>
                   <TableCell>{encounter.patientName}</TableCell>
                   <TableCell>{encounter.doctorName}</TableCell>
                   <TableCell>{encounter.chiefComplaint}</TableCell>
-                  <TableCell>{encounter.time}</TableCell>
                   <TableCell>
-                    <Badge variant={encounter.status === 'In Progress' ? 'default' : 'secondary'}>
-                      {encounter.status}
+                    <Badge className={`${statusBadgeColor(encounter.status)} border-0`}>
+                      {(encounter.status || 'SCHEDULED').replace(/_/g, ' ')}
                     </Badge>
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="text-right">
+                    <div className="inline-flex gap-2">
+                      {(encounter.status || '').toUpperCase() === 'SCHEDULED' && (
+                        <Button variant="outline" size="sm" onClick={() => onCheckIn(encounter.id)}>
+                          Check in
+                        </Button>
+                      )}
                     <Dialog>
                       <DialogTrigger asChild>
                         <Button variant="outline" size="sm">
@@ -236,9 +360,11 @@ export default function OPD() {
                         </DialogFooter>
                       </DialogContent>
                     </Dialog>
+                    </div>
                   </TableCell>
                 </TableRow>
-              ))}
+                ))
+              )}
             </TableBody>
           </Table>
         </CardContent>
