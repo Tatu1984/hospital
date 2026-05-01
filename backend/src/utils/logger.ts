@@ -4,10 +4,22 @@ import path from 'path';
 import fs from 'fs';
 import { config } from '../config';
 
-// Ensure log directory exists
+// Serverless platforms (Vercel, Lambda, etc.) run from a read-only filesystem
+// — only stdout/stderr is durable. Skip file transports there. Anywhere else
+// (local dev, Docker, plain VPS) keep file logs as before.
+const isServerless = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NETLIFY);
+
 const logDir = config.logging.dir;
-if (!fs.existsSync(logDir)) {
-  fs.mkdirSync(logDir, { recursive: true });
+if (!isServerless) {
+  try {
+    if (!fs.existsSync(logDir)) {
+      fs.mkdirSync(logDir, { recursive: true });
+    }
+  } catch (e) {
+    // If we can't create the log dir (e.g. read-only FS we didn't detect),
+    // fall back to console-only logging instead of crashing on boot.
+    console.warn(`[logger] could not create log dir ${logDir}: ${(e as Error).message}. Falling back to console-only logging.`);
+  }
 }
 
 // Custom format for console output
@@ -27,16 +39,14 @@ const fileFormat = winston.format.combine(
   winston.format.json()
 );
 
-// Create logger
-export const logger = winston.createLogger({
-  level: config.logging.level,
-  defaultMeta: { service: 'hospital-erp' },
-  transports: [
-    // Console transport
-    new winston.transports.Console({
-      format: consoleFormat,
-    }),
-    // Error log file
+// Build the transport list. Always include the console; only add file
+// transports when we have a writable filesystem.
+const transports: winston.transport[] = [
+  new winston.transports.Console({ format: consoleFormat }),
+];
+
+if (!isServerless) {
+  transports.push(
     new winston.transports.File({
       filename: path.join(logDir, 'error.log'),
       level: 'error',
@@ -44,14 +54,12 @@ export const logger = winston.createLogger({
       maxsize: 5242880, // 5MB
       maxFiles: 5,
     }),
-    // Combined log file
     new winston.transports.File({
       filename: path.join(logDir, 'combined.log'),
       format: fileFormat,
       maxsize: 5242880, // 5MB
       maxFiles: 5,
     }),
-    // Audit log for sensitive operations
     new winston.transports.File({
       filename: path.join(logDir, 'audit.log'),
       level: 'info',
@@ -59,7 +67,14 @@ export const logger = winston.createLogger({
       maxsize: 10485760, // 10MB
       maxFiles: 10,
     }),
-  ],
+  );
+}
+
+// Create logger
+export const logger = winston.createLogger({
+  level: config.logging.level,
+  defaultMeta: { service: 'hospital-erp' },
+  transports,
 });
 
 // Create audit logger for sensitive operations
