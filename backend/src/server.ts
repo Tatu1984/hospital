@@ -6139,12 +6139,20 @@ app.use(errorHandler);
 // ============================================
 // SERVER STARTUP
 // ============================================
-app.listen(PORT, () => {
-  logger.info(`Hospital ERP Backend running on http://localhost:${PORT}`);
-  logger.info(`API Health: http://localhost:${PORT}/api/health`);
-  console.log(`🏥 HMS Backend running on http://localhost:${PORT}`);
-  console.log(`📊 API Health: http://localhost:${PORT}/api/health`);
-});
+// Vercel and other serverless runtimes import the app and route requests to
+// it directly — they never want app.listen(). Only bind a port when running
+// as a long-lived process (local dev, Docker, plain Node).
+if (!process.env.VERCEL && process.env.NODE_ENV !== 'test') {
+  app.listen(PORT, () => {
+    logger.info(`Hospital ERP Backend running on http://localhost:${PORT}`);
+    logger.info(`API Health: http://localhost:${PORT}/api/health`);
+    console.log(`🏥 HMS Backend running on http://localhost:${PORT}`);
+    console.log(`📊 API Health: http://localhost:${PORT}/api/health`);
+  });
+}
+
+export default app;
+export { app };
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {
