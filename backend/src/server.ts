@@ -33,6 +33,7 @@ import {
   sanitizeRequest,
   apiSecurityHeaders,
   dynamicRBAC,
+  dynamicValidation,
 } from './middleware';
 
 // Import validators
@@ -92,6 +93,26 @@ import { logger, auditLogger } from './utils/logger';
 
 dotenv.config();
 
+// ============================================
+// REQUIRED ENV VALIDATION (fail-fast at boot)
+// ============================================
+const REQUIRED_ENV = ['DATABASE_URL', 'JWT_SECRET', 'REFRESH_TOKEN_SECRET', 'CORS_ORIGIN'] as const;
+const missing = REQUIRED_ENV.filter((k) => !process.env[k] || String(process.env[k]).trim() === '');
+if (missing.length > 0) {
+  // eslint-disable-next-line no-console
+  console.error(
+    `\n❌ Missing required environment variables: ${missing.join(', ')}\n` +
+    `   Copy backend/.env.example to backend/.env and fill them in.\n` +
+    `   Generate secrets with: openssl rand -hex 32\n`
+  );
+  process.exit(1);
+}
+if ((process.env.JWT_SECRET || '').length < 32) {
+  // eslint-disable-next-line no-console
+  console.error('❌ JWT_SECRET must be at least 32 characters. Use: openssl rand -hex 32');
+  process.exit(1);
+}
+
 const app = express();
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 4000;
@@ -107,9 +128,10 @@ app.use(apiSecurityHeaders);
 // Request sanitization
 app.use(sanitizeRequest);
 
-// CORS configuration
+// CORS configuration — comma-separated allowlist from env (validated above)
+const corsOrigins = process.env.CORS_ORIGIN!.split(',').map((s) => s.trim()).filter(Boolean);
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+  origin: corsOrigins.length === 1 ? corsOrigins[0] : corsOrigins,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
@@ -169,8 +191,11 @@ const authenticateToken = (req: any, res: Response, next: any) => {
       });
     }
     req.user = user;
-    // Apply dynamic RBAC check after authentication
-    dynamicRBAC(req, res, next);
+    // Apply dynamic RBAC, then route-level body validation, then continue.
+    dynamicRBAC(req, res, (err?: any) => {
+      if (err) return next(err);
+      dynamicValidation(req, res, next);
+    });
   });
 };
 
@@ -300,16 +325,22 @@ app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (r
       });
     }
 
+    const accessTokenPayload = {
+      userId: user.id,
+      username: user.username,
+      tenantId: user.tenantId,
+      branchId: user.branchId,
+      roleIds: user.roleIds,
+    };
     const token = jwt.sign(
-      {
-        userId: user.id,
-        username: user.username,
-        tenantId: user.tenantId,
-        branchId: user.branchId,
-        roleIds: user.roleIds,
-      },
+      accessTokenPayload,
       process.env.JWT_SECRET!,
-      { expiresIn: '24h' }
+      { expiresIn: process.env.JWT_EXPIRES_IN || '1h' } as jwt.SignOptions
+    );
+    const refreshToken = jwt.sign(
+      { userId: user.id, type: 'refresh' },
+      process.env.REFRESH_TOKEN_SECRET!,
+      { expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || '7d' } as jwt.SignOptions
     );
 
     // Update last login
@@ -318,11 +349,14 @@ app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (r
       data: { lastLoginAt: new Date() },
     });
 
+    auditLogger.securityEvent('LOGIN_SUCCESS', { userId: user.id, username, ip: req.ip });
+
     // Get user permissions based on roles
     const permissions = getUserPermissions(user.roleIds);
 
     res.json({
       token,
+      refreshToken,
       user: {
         id: user.id,
         username: user.username,
@@ -338,6 +372,51 @@ app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (r
     console.error('Login error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
+});
+
+// Token refresh — accepts a valid refresh token, issues a new access + rotated refresh.
+// PUBLIC route (registered in PUBLIC_ROUTES) — does not require authenticateToken.
+app.post('/api/auth/refresh', async (req: Request, res: Response) => {
+  const { refreshToken } = req.body || {};
+  if (!refreshToken || typeof refreshToken !== 'string') {
+    return res.status(400).json({ error: 'INVALID_REQUEST', message: 'refreshToken is required' });
+  }
+  try {
+    const decoded: any = jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET!);
+    if (decoded.type !== 'refresh' || !decoded.userId) {
+      return res.status(401).json({ error: 'INVALID_TOKEN' });
+    }
+    const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
+    if (!user || !user.isActive) {
+      return res.status(401).json({ error: 'INVALID_TOKEN' });
+    }
+    const newAccess = jwt.sign(
+      {
+        userId: user.id,
+        username: user.username,
+        tenantId: user.tenantId,
+        branchId: user.branchId,
+        roleIds: user.roleIds,
+      },
+      process.env.JWT_SECRET!,
+      { expiresIn: process.env.JWT_EXPIRES_IN || '1h' } as jwt.SignOptions
+    );
+    const newRefresh = jwt.sign(
+      { userId: user.id, type: 'refresh' },
+      process.env.REFRESH_TOKEN_SECRET!,
+      { expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || '7d' } as jwt.SignOptions
+    );
+    return res.json({ token: newAccess, refreshToken: newRefresh });
+  } catch (e: any) {
+    auditLogger.securityEvent('REFRESH_TOKEN_REJECTED', { ip: req.ip, reason: e?.name || 'unknown' });
+    return res.status(401).json({ error: 'INVALID_TOKEN', message: 'Refresh token invalid or expired' });
+  }
+});
+
+// Logout — stateless: client clears storage. We still log it for audit.
+app.post('/api/auth/logout', (req: Request, res: Response) => {
+  auditLogger.securityEvent('LOGOUT', { ip: req.ip });
+  return res.status(204).end();
 });
 
 // Patient routes - with validation and RBAC
@@ -4309,8 +4388,11 @@ app.get('/api/users', authenticateToken, async (req: any, res: Response) => {
 app.post('/api/users', authenticateToken, async (req: any, res: Response) => {
   try {
     const { username, fullName, email, phone, role, password } = req.body;
+    if (!password || typeof password !== 'string' || password.length < 12) {
+      return res.status(400).json({ error: 'password is required and must be at least 12 characters' });
+    }
     const bcrypt = await import('bcryptjs');
-    const passwordHash = await bcrypt.hash(password || 'password123', 10);
+    const passwordHash = await bcrypt.hash(password, 10);
 
     const user = await prisma.user.create({
       data: {

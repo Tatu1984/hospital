@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { authAPI } from '../services/api';
+import { authAPI, tokenStore } from '../services/api';
 import { canAccessRoute, getAccessibleRoutes } from '../config/permissions';
 
 interface User {
@@ -34,8 +34,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [permissions, setPermissions] = useState<string[]>([]);
 
   useEffect(() => {
-    // Load user from localStorage on mount
-    const storedToken = localStorage.getItem('token');
+    // Re-hydrate session from storage. Access token may live in sessionStorage
+    // (cleared on tab close) or fall back to localStorage; refresh token is
+    // always in localStorage so a refresh can recover the session on reload.
+    const storedToken = tokenStore.getAccess();
     const storedUser = localStorage.getItem('user');
     const storedPermissions = localStorage.getItem('permissions');
 
@@ -49,28 +51,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const login = async (username: string, password: string) => {
-    try {
-      const response = await authAPI.login(username, password);
-      const { token, user } = response.data;
+    const response = await authAPI.login(username, password);
+    const { token, refreshToken, user } = response.data;
 
-      setToken(token);
-      setUser(user);
-      setPermissions(user.permissions || []);
-      localStorage.setItem('token', token);
-      localStorage.setItem('user', JSON.stringify(user));
-      localStorage.setItem('permissions', JSON.stringify(user.permissions || []));
-    } catch (error) {
-      throw error;
-    }
+    setToken(token);
+    setUser(user);
+    setPermissions(user.permissions || []);
+    tokenStore.set(token, refreshToken);
+    localStorage.setItem('user', JSON.stringify(user));
+    localStorage.setItem('permissions', JSON.stringify(user.permissions || []));
   };
 
   const logout = useCallback(() => {
+    // Best-effort server notification (stateless logout, but useful for audit).
+    authAPI.logout().catch(() => undefined);
     setUser(null);
     setToken(null);
     setPermissions([]);
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    localStorage.removeItem('permissions');
+    tokenStore.clear();
   }, []);
 
   // Check if user can access a route (based on role-route mapping)

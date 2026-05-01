@@ -15,6 +15,7 @@ interface Patient {
   id: string;
   mrn: string;
   name: string;
+  dob?: string | null;
   age: number;
   gender: string;
   phone: string;
@@ -23,6 +24,59 @@ interface Patient {
   bloodGroup: string;
   registrationDate: string;
   status: string;
+  referralSourceId?: string | null;
+  referralDoctor?: string;
+  purpose?: string;
+}
+
+// Backend stores `contact`, `dob`, `createdAt` and uses `allergies` as the
+// free-text notes field. The UI thinks in `phone`, `age`, `registrationDate`
+// and "Purpose of visit". Normalize once when the API responds so every
+// downstream render reads from one consistent shape.
+function ageFromDob(dob?: string | null): number {
+  if (!dob) return 0;
+  const d = new Date(dob);
+  if (Number.isNaN(d.getTime())) return 0;
+  const diffMs = Date.now() - d.getTime();
+  return Math.max(0, Math.floor(diffMs / (365.25 * 24 * 60 * 60 * 1000)));
+}
+
+function normalizePatient(raw: any, refMap: Record<string, string>): Patient {
+  // Same `allergies` column doubles as "Notes / Purpose of visit" in the UI
+  // (no schema migration needed). If the user typed "Purpose: <x>" we surface
+  // it; otherwise we show the whole notes string.
+  const allergies: string = raw?.allergies || '';
+  const purposeMatch = allergies.match(/(?:^|\b)Purpose\s*[:\-]\s*(.+?)(?:\n|$)/i);
+  return {
+    id: raw?.id,
+    mrn: raw?.mrn || '',
+    name: raw?.name || '',
+    dob: raw?.dob ?? null,
+    age: ageFromDob(raw?.dob),
+    gender: raw?.gender || '',
+    phone: raw?.contact || raw?.phone || '',
+    email: raw?.email || '',
+    address: raw?.address || '',
+    bloodGroup: raw?.bloodGroup || '',
+    registrationDate: raw?.createdAt
+      ? new Date(raw.createdAt).toLocaleDateString()
+      : (raw?.registrationDate || ''),
+    status: raw?.status || (raw?.isActive === false ? 'Inactive' : 'Active'),
+    referralSourceId: raw?.referralSourceId ?? null,
+    referralDoctor: raw?.referralSourceId ? (refMap[raw.referralSourceId] || '') : '',
+    purpose: purposeMatch ? purposeMatch[1].trim() : allergies,
+  };
+}
+
+function toArray<T>(data: unknown): T[] {
+  if (Array.isArray(data)) return data as T[];
+  if (data && typeof data === 'object') {
+    const obj = data as Record<string, unknown>;
+    if (Array.isArray(obj.items)) return obj.items as T[];
+    if (Array.isArray(obj.data)) return obj.data as T[];
+    if (Array.isArray(obj.results)) return obj.results as T[];
+  }
+  return [];
 }
 
 export default function PatientRegistration() {
@@ -58,35 +112,59 @@ export default function PatientRegistration() {
     insuranceNumber: '',
     allergies: '',
     chronicConditions: '',
+    purpose: '',
     referralSourceId: ''
   });
 
   useEffect(() => {
-    fetchPatients();
-    fetchReferralSources();
+    // Fetch referrals first so the initial patient render already has doctor
+    // names resolved. Then refresh patients (which uses refMap).
+    (async () => {
+      await fetchReferralSources();
+      await fetchPatients();
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchPatients = async () => {
     try {
       const response = await api.get('/api/patients');
-      setPatients(response.data);
+      const list = toArray<any>(response.data);
+      // Use the latest refMap snapshot from state — referralSources is loaded first.
+      const map = referralSources.reduce<Record<string, string>>((acc, r) => {
+        if (r?.id) acc[r.id] = r.name || r.label || '';
+        return acc;
+      }, {});
+      setPatients(list.map((p) => normalizePatient(p, map)));
     } catch (error) {
       console.error('Error fetching patients:', error);
+      setPatients([]);
     }
   };
 
   const fetchReferralSources = async () => {
     try {
       const response = await api.get('/api/referral-sources');
-      setReferralSources(response.data);
+      setReferralSources(toArray<any>(response.data));
     } catch (error) {
       console.error('Error fetching referral sources:', error);
+      setReferralSources([]);
     }
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const buildNotes = () => {
+    // Pack "Purpose of visit" + allergies + chronic conditions into the single
+    // `allergies` notes column the schema currently exposes.
+    const parts: string[] = [];
+    if (formData.purpose) parts.push(`Purpose: ${formData.purpose}`);
+    if (formData.allergies) parts.push(`Allergies: ${formData.allergies}`);
+    if (formData.chronicConditions) parts.push(`Chronic: ${formData.chronicConditions}`);
+    return parts.join('\n') || null;
   };
 
   const handleSubmit = async () => {
@@ -100,7 +178,7 @@ export default function PatientRegistration() {
         email: formData.email || null,
         address: formData.address || null,
         bloodGroup: formData.bloodGroup || null,
-        allergies: formData.allergies || null,
+        allergies: buildNotes(),
         referralSourceId: formData.referralSourceId || null,
       };
 
@@ -112,7 +190,7 @@ export default function PatientRegistration() {
         phone: '', email: '', address: '', city: '', state: '', zipCode: '', country: '',
         bloodGroup: '', emergencyContact: '', emergencyPhone: '', idProofType: '',
         idProofNumber: '', insuranceProvider: '', insuranceNumber: '', allergies: '',
-        chronicConditions: '', referralSourceId: ''
+        chronicConditions: '', purpose: '', referralSourceId: ''
       });
     } catch (error) {
       console.error('Error creating patient:', error);
@@ -134,8 +212,8 @@ export default function PatientRegistration() {
       mrn: patient.mrn,
       firstName: firstName || '',
       lastName: lastNameParts.join(' ') || '',
-      dateOfBirth: '',
-      age: String(patient.age),
+      dateOfBirth: patient.dob ? new Date(patient.dob).toISOString().slice(0, 10) : '',
+      age: String(patient.age || ''),
       gender: patient.gender,
       phone: patient.phone,
       email: patient.email,
@@ -153,7 +231,8 @@ export default function PatientRegistration() {
       insuranceNumber: '',
       allergies: '',
       chronicConditions: '',
-      referralSourceId: ''
+      purpose: patient.purpose || '',
+      referralSourceId: patient.referralSourceId || ''
     });
     setIsEditDialogOpen(true);
   };
@@ -164,10 +243,14 @@ export default function PatientRegistration() {
     try {
       const payload = {
         name: `${formData.firstName} ${formData.lastName}`.trim(),
+        dob: formData.dateOfBirth || null,
+        gender: formData.gender || null,
         contact: formData.phone,
         email: formData.email || null,
         address: formData.address || null,
         bloodGroup: formData.bloodGroup || null,
+        allergies: buildNotes(),
+        referralSourceId: formData.referralSourceId || null,
       };
 
       await api.put(`/api/patients/${selectedPatient.id}`, payload);
@@ -294,10 +377,10 @@ export default function PatientRegistration() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="referralSource">Referral Source</Label>
+                <Label htmlFor="referralSource">Referring Doctor / Source</Label>
                 <Select value={formData.referralSourceId} onValueChange={(value) => setFormData(prev => ({ ...prev, referralSourceId: value }))}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Select referral source" />
+                    <SelectValue placeholder="Select referring doctor" />
                   </SelectTrigger>
                   <SelectContent>
                     {referralSources.map((source) => (
@@ -307,6 +390,16 @@ export default function PatientRegistration() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="space-y-2 col-span-2">
+                <Label htmlFor="purpose">Purpose of Visit</Label>
+                <Input
+                  id="purpose"
+                  name="purpose"
+                  value={formData.purpose}
+                  onChange={handleInputChange}
+                  placeholder="e.g., Routine check-up, fever, follow-up consultation"
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="emergencyContact">Emergency Contact Name</Label>
@@ -393,8 +486,11 @@ export default function PatientRegistration() {
                 <TableHead>Name</TableHead>
                 <TableHead>Age/Gender</TableHead>
                 <TableHead>Phone</TableHead>
+                <TableHead>Email</TableHead>
+                <TableHead>Doctor</TableHead>
+                <TableHead>Purpose</TableHead>
                 <TableHead>Blood Group</TableHead>
-                <TableHead>Registration Date</TableHead>
+                <TableHead>Registered</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Actions</TableHead>
               </TableRow>
@@ -404,10 +500,15 @@ export default function PatientRegistration() {
                 <TableRow key={patient.id}>
                   <TableCell className="font-medium">{patient.mrn}</TableCell>
                   <TableCell>{patient.name}</TableCell>
-                  <TableCell>{patient.age}Y / {patient.gender}</TableCell>
-                  <TableCell>{patient.phone}</TableCell>
-                  <TableCell>{patient.bloodGroup}</TableCell>
-                  <TableCell>{patient.registrationDate}</TableCell>
+                  <TableCell>{patient.age ? `${patient.age}Y` : '—'} / {patient.gender || '—'}</TableCell>
+                  <TableCell>{patient.phone || '—'}</TableCell>
+                  <TableCell className="text-slate-600">{patient.email || '—'}</TableCell>
+                  <TableCell className="text-slate-600">{patient.referralDoctor || '—'}</TableCell>
+                  <TableCell className="text-slate-600 max-w-[180px] truncate" title={patient.purpose}>
+                    {patient.purpose || '—'}
+                  </TableCell>
+                  <TableCell>{patient.bloodGroup || '—'}</TableCell>
+                  <TableCell>{patient.registrationDate || '—'}</TableCell>
                   <TableCell>
                     <Badge variant={patient.status === 'Active' ? 'default' : 'secondary'}>
                       {patient.status}
@@ -477,6 +578,14 @@ export default function PatientRegistration() {
               <div>
                 <Label className="text-sm font-semibold">Registration Date</Label>
                 <p className="text-sm">{selectedPatient.registrationDate}</p>
+              </div>
+              <div>
+                <Label className="text-sm font-semibold">Referring Doctor</Label>
+                <p className="text-sm">{selectedPatient.referralDoctor || 'N/A'}</p>
+              </div>
+              <div className="col-span-2">
+                <Label className="text-sm font-semibold">Purpose of Visit</Label>
+                <p className="text-sm whitespace-pre-line">{selectedPatient.purpose || 'N/A'}</p>
               </div>
             </div>
           )}

@@ -109,7 +109,16 @@ async function main() {
   console.log('✅ Departments created:', departments.length);
 
   // Create Users
-  const passwordHash = await bcrypt.hash('password123', 10);
+  // Seed password is required via env. Refuse to run with a default — every dev should
+  // set their own SEED_ADMIN_PASSWORD locally, and prod must NEVER seed with a known one.
+  const seedPassword = process.env.SEED_ADMIN_PASSWORD;
+  if (!seedPassword || seedPassword.length < 12) {
+    throw new Error(
+      'SEED_ADMIN_PASSWORD must be set to a strong value (>= 12 chars) before running seed. ' +
+      'Add it to backend/.env (see backend/.env.example).'
+    );
+  }
+  const passwordHash = await bcrypt.hash(seedPassword, 10);
 
   const users = [
     {
@@ -771,7 +780,7 @@ async function main() {
   console.log('✅ Inventory items:', inventoryItems.length);
 
   console.log('\n🎉 Database seeded successfully!');
-  console.log('\n📝 Login credentials (password for all: password123):');
+  console.log('\n📝 Login credentials (password for all: value of SEED_ADMIN_PASSWORD env):');
   console.log('   ┌──────────────┬───────────────────────────┐');
   console.log('   │ Username     │ Role / Department         │');
   console.log('   ├──────────────┼───────────────────────────┤');
