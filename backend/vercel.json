@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "npx prisma generate",
+  "buildCommand": "node node_modules/prisma/build/index.js generate",
   "installCommand": "npm ci",
   "framework": null,
   "rewrites": [
