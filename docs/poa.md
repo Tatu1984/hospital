@@ -105,7 +105,7 @@ The rest inherit tenancy transitively (e.g. `Encounter.patientId → Patient.ten
 **Fix:** Apply `generalRateLimiter` more aggressively to all POST/PUT/DELETE; introduce per-user limits via Redis/Upstash key.
 **Effort:** 1 h.
 
-### 10. [ ] Refresh token in httpOnly cookie
+### 10. [x] Refresh token in httpOnly cookie
 **Where:** `frontend/src/services/api.ts` — currently in localStorage.
 **Risk:** Vulnerable to XSS exfiltration.
 **Fix:** Backend sets a `Set-Cookie: refreshToken=...; HttpOnly; Secure; SameSite=Strict; Path=/api/auth/refresh` on login. Frontend stops touching `refreshToken`.
@@ -161,7 +161,7 @@ The rest inherit tenancy transitively (e.g. `Encounter.patientId → Patient.ten
 **Fix:** Cursor or offset pagination with sensible default (`?limit=50&cursor=...`).
 **Effort:** 3 h.
 
-### 20. [ ] Pick one token storage strategy on frontend
+### 20. [x] Pick one token storage strategy on frontend
 **Where:** `frontend/src/services/api.ts`.
 **Risk:** Confusion between sessionStorage and localStorage; minor XSS surface.
 **Fix:** `httpOnly` cookie for refresh; in-memory only for access; remove `localStorage`/`sessionStorage` token writes.

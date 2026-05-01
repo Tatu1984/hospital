@@ -66,12 +66,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const login = async (username: string, password: string) => {
     const response = await authAPI.login(username, password);
-    const { token, refreshToken, user } = response.data;
+    // Refresh token is set as an httpOnly cookie by the backend; we don't
+    // store it in JS anymore (XSS-safe). Just keep the access token in memory.
+    const { token, user } = response.data;
 
     setToken(token);
     setUser(user);
     setPermissions(user.permissions || []);
-    tokenStore.set(token, refreshToken);
+    tokenStore.set(token);
     localStorage.setItem('user', JSON.stringify(user));
     localStorage.setItem('permissions', JSON.stringify(user.permissions || []));
   };

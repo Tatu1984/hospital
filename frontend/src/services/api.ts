@@ -2,27 +2,29 @@ import axios, { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig } fro
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
-// Token storage helpers — kept in one place so AuthContext and the interceptor
-// agree on key names. Access tokens live in sessionStorage (cleared on tab close);
-// refresh tokens live in localStorage (so a refresh survives a reload).
+// Token storage. Access token lives in sessionStorage (cleared on tab close);
+// refresh token now lives in an httpOnly cookie set by the backend so JS
+// (and therefore an XSS payload) can't read it. Old localStorage values are
+// cleaned up on `clear()` to migrate existing sessions cleanly.
 export const tokenStore = {
   getAccess: () => sessionStorage.getItem('token') || localStorage.getItem('token'),
-  getRefresh: () => localStorage.getItem('refreshToken'),
-  set: (access: string, refresh?: string) => {
+  set: (access: string) => {
     sessionStorage.setItem('token', access);
-    localStorage.setItem('token', access); // back-compat for any code reading localStorage
-    if (refresh) localStorage.setItem('refreshToken', refresh);
+    localStorage.setItem('token', access); // legacy readers still find it
   },
   clear: () => {
     sessionStorage.removeItem('token');
     localStorage.removeItem('token');
+    // Clean up legacy refresh-token storage if a previous build wrote it.
     localStorage.removeItem('refreshToken');
     localStorage.removeItem('user');
     localStorage.removeItem('permissions');
   },
 };
 
-const api = axios.create({ baseURL: API_URL });
+// withCredentials lets the browser ship the httpOnly refresh cookie on
+// /api/auth/refresh and /api/auth/logout (cross-site, so it's required).
+const api = axios.create({ baseURL: API_URL, withCredentials: true });
 
 // Attach access token to every outgoing request.
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
@@ -33,20 +35,20 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
 
 // --- Single-flight refresh on 401 -----------------------------------------
 // If many requests fire concurrently and all 401 at once, we want exactly ONE
-// /auth/refresh call and to retry the rest with the fresh token.
+// /auth/refresh call and to retry the rest with the fresh token. The refresh
+// token rides on the httpOnly cookie — no body needed — so withCredentials is
+// the only thing that matters here.
 let refreshPromise: Promise<string | null> | null = null;
 
 async function refreshAccessToken(): Promise<string | null> {
   if (refreshPromise) return refreshPromise;
-  const refreshToken = tokenStore.getRefresh();
-  if (!refreshToken) return null;
 
   refreshPromise = axios
-    .post(`${API_URL}/api/auth/refresh`, { refreshToken })
+    .post(`${API_URL}/api/auth/refresh`, {}, { withCredentials: true })
     .then((res) => {
-      const { token, refreshToken: newRefresh } = res.data || {};
+      const { token } = res.data || {};
       if (!token) return null;
-      tokenStore.set(token, newRefresh);
+      tokenStore.set(token);
       return token;
     })
     .catch(() => null)
@@ -89,8 +91,7 @@ api.interceptors.response.use(
 export const authAPI = {
   login: (username: string, password: string) =>
     api.post('/api/auth/login', { username, password }),
-  refresh: (refreshToken: string) =>
-    api.post('/api/auth/refresh', { refreshToken }),
+  refresh: () => api.post('/api/auth/refresh', {}),
   logout: () => api.post('/api/auth/logout'),
   me: () => api.get('/api/auth/me'),
 };

@@ -361,6 +361,56 @@ app.get('/api/live', (req: Request, res: Response) => {
   res.json({ alive: true, timestamp: new Date().toISOString() });
 });
 
+// ============================================
+// REFRESH TOKEN — httpOnly cookie helpers
+// ============================================
+// We accept the refresh token via either an httpOnly cookie (preferred,
+// XSS-safe) or the JSON body (legacy clients during the rollout). Once
+// every client is updated, the body fallback can be deleted.
+const REFRESH_COOKIE_NAME = 'refreshToken';
+
+function refreshCookieMaxAgeMs(): number {
+  // crude parse of "7d" / "12h" / "30m" / pure seconds — defaults to 7 days.
+  const raw = String(process.env.REFRESH_TOKEN_EXPIRES_IN || '7d').trim();
+  const m = /^(\d+)([smhd])?$/.exec(raw);
+  if (!m) return 7 * 24 * 60 * 60 * 1000;
+  const n = parseInt(m[1], 10);
+  const unit = m[2] || 's';
+  const multipliers: Record<string, number> = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
+  return n * (multipliers[unit] || 1000);
+}
+
+function setRefreshCookie(res: Response, token: string): void {
+  res.cookie(REFRESH_COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    // Cross-site because frontend (*.vercel.app) and backend (different
+    // subdomain) are different sites. SameSite=None requires secure=true.
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+    path: '/api/auth',
+    maxAge: refreshCookieMaxAgeMs(),
+  });
+}
+
+function clearRefreshCookie(res: Response): void {
+  res.clearCookie(REFRESH_COOKIE_NAME, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+    path: '/api/auth',
+  });
+}
+
+function readCookie(req: Request, name: string): string | undefined {
+  const header = req.headers.cookie;
+  if (!header) return undefined;
+  for (const pair of header.split(';')) {
+    const [k, ...v] = pair.trim().split('=');
+    if (k === name) return decodeURIComponent(v.join('='));
+  }
+  return undefined;
+}
+
 // Auth routes - with rate limiting and validation
 app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (req: Request, res: Response) => {
   try {
@@ -420,6 +470,11 @@ app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (r
     auditLogger.securityEvent('LOGIN_SUCCESS', { userId: user.id, username, ip: req.ip });
     void writeAudit({ prisma, req, userId: user.id, action: 'LOGIN_SUCCESS', resource: 'Authentication', resourceId: user.id });
 
+    // Set the refresh token as an httpOnly cookie so JS in the page (and
+    // therefore an XSS payload) can't read it. Cross-site cookie because
+    // frontend and backend are on different *.vercel.app domains.
+    setRefreshCookie(res, refreshToken);
+
     // Get user permissions based on roles
     const permissions = getUserPermissions(user.roleIds);
 
@@ -443,12 +498,18 @@ app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (r
   }
 });
 
-// Token refresh — accepts a valid refresh token, issues a new access + rotated refresh.
+// Token refresh — reads the refresh token from the httpOnly cookie set on
+// login (preferred), falling back to a JSON body for legacy clients still
+// sending it in the request body. Issues a fresh access + rotated refresh
+// and re-sets the cookie.
 // PUBLIC route (registered in PUBLIC_ROUTES) — does not require authenticateToken.
 app.post('/api/auth/refresh', async (req: Request, res: Response) => {
-  const { refreshToken } = req.body || {};
-  if (!refreshToken || typeof refreshToken !== 'string') {
-    return res.status(400).json({ error: 'INVALID_REQUEST', message: 'refreshToken is required' });
+  const cookieToken = readCookie(req, REFRESH_COOKIE_NAME);
+  const bodyToken = (req.body && typeof req.body.refreshToken === 'string') ? req.body.refreshToken : undefined;
+  const refreshToken = cookieToken || bodyToken;
+
+  if (!refreshToken) {
+    return res.status(400).json({ error: 'INVALID_REQUEST', message: 'refresh token missing' });
   }
   try {
     const decoded: any = jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET!);
@@ -475,6 +536,9 @@ app.post('/api/auth/refresh', async (req: Request, res: Response) => {
       process.env.REFRESH_TOKEN_SECRET!,
       { expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || '7d' } as jwt.SignOptions
     );
+    setRefreshCookie(res, newRefresh);
+    // Continue returning refreshToken in JSON for one release so any client
+    // still using the body fallback keeps working. Drop in the next pass.
     return res.json({ token: newAccess, refreshToken: newRefresh });
   } catch (e: any) {
     auditLogger.securityEvent('REFRESH_TOKEN_REJECTED', { ip: req.ip, reason: e?.name || 'unknown' });
@@ -482,8 +546,9 @@ app.post('/api/auth/refresh', async (req: Request, res: Response) => {
   }
 });
 
-// Logout — stateless: client clears storage. We still log it for audit.
+// Logout — clear the refresh cookie and log the audit event.
 app.post('/api/auth/logout', (req: Request, res: Response) => {
+  clearRefreshCookie(res);
   auditLogger.securityEvent('LOGOUT', { ip: req.ip });
   return res.status(204).end();
 });
