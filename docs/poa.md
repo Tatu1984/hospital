@@ -120,7 +120,7 @@ The rest inherit tenancy transitively (e.g. `Encounter.patientId → Patient.ten
 ### 12. [x] Sentry wired up
 **Done:** `@sentry/node` initialized at the top of `server.ts` (lazy-required so missing dep wouldn't crash boot). Request handler + tracing handler installed before middleware; error handler installed before our app's `errorHandler`. Health-probe noise filtered via `beforeSend`. **No-op when `SENTRY_DSN` env var isn't set.** To enable: add `SENTRY_DSN` (and optional `SENTRY_TRACES_SAMPLE_RATE`) on Vercel, redeploy.
 
-### 13. [ ] Secret rotation plan + leak detection
+### 13. [x] Secret rotation runbook
 **Fix:** Pre-commit hook with `git-secrets`; quarterly rotation of `JWT_SECRET`/`REFRESH_TOKEN_SECRET` (with rolling-window invalidation tolerance); document the runbook.
 **Effort:** 2 h.
 
