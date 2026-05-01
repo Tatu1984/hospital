@@ -488,6 +488,78 @@ app.post('/api/auth/logout', (req: Request, res: Response) => {
   return res.status(204).end();
 });
 
+// ============================================
+// PASSWORD RESET (P3 #27)
+// ============================================
+// Two-step flow:
+//   1. POST /api/auth/forgot-password { email }  →  204 always (don't leak
+//      whether the email exists). On the backend we sign a short-lived
+//      reset token (30 min) bound to the userId. In production the link
+//      would be emailed; for the demo we log it to the function output
+//      so an operator can grab it from Vercel logs.
+//   2. POST /api/auth/reset-password { token, password } → 204 on success.
+//      Token signature is verified, user password is rotated, and an audit
+//      row is written.
+
+app.post('/api/auth/forgot-password', async (req: Request, res: Response) => {
+  const { email } = req.body || {};
+  if (!email || typeof email !== 'string') {
+    return res.status(400).json({ error: 'email is required' });
+  }
+  try {
+    const user = await prisma.user.findFirst({ where: { email, isActive: true } });
+    if (user) {
+      const resetToken = jwt.sign(
+        { userId: user.id, type: 'password-reset' },
+        process.env.REFRESH_TOKEN_SECRET!,
+        { expiresIn: '30m' } as jwt.SignOptions
+      );
+      auditLogger.securityEvent('PASSWORD_RESET_REQUESTED', { userId: user.id, email, ip: req.ip });
+      void writeAudit({ prisma, req, userId: user.id, action: 'PASSWORD_RESET_REQUESTED', resource: 'Authentication', resourceId: user.id });
+      // No email gateway wired yet — surface the link via server logs so the
+      // operator can hand it to the user. Replace with SMTP/SES once configured.
+      // eslint-disable-next-line no-console
+      console.log(`[password-reset] for ${email} — token: ${resetToken}`);
+    }
+    // Don't reveal whether the email matched a user.
+    return res.status(204).end();
+  } catch (error) {
+    console.error('forgot-password error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/auth/reset-password', async (req: Request, res: Response) => {
+  const { token, password } = req.body || {};
+  if (!token || typeof token !== 'string') {
+    return res.status(400).json({ error: 'token is required' });
+  }
+  if (!password || typeof password !== 'string' || password.length < 8) {
+    return res.status(400).json({ error: 'password must be at least 8 characters' });
+  }
+  try {
+    const decoded: any = jwt.verify(token, process.env.REFRESH_TOKEN_SECRET!);
+    if (decoded.type !== 'password-reset' || !decoded.userId) {
+      return res.status(401).json({ error: 'Invalid or expired token' });
+    }
+    const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
+    if (!user || !user.isActive) {
+      return res.status(401).json({ error: 'Invalid or expired token' });
+    }
+    const passwordHash = await bcrypt.hash(password, 10);
+    await prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
+    auditLogger.securityEvent('PASSWORD_RESET_COMPLETED', { userId: user.id, ip: req.ip });
+    void writeAudit({ prisma, req, userId: user.id, action: 'PASSWORD_RESET_COMPLETED', resource: 'Authentication', resourceId: user.id });
+    return res.status(204).end();
+  } catch (error: any) {
+    if (error?.name === 'TokenExpiredError' || error?.name === 'JsonWebTokenError') {
+      return res.status(401).json({ error: 'Invalid or expired token' });
+    }
+    console.error('reset-password error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Lightweight "who am I" endpoint — frontend uses this on hydrate to verify
 // the token is still valid and pull fresh permissions, instead of calling
 // /api/dashboard/stats (heavy, leaks unrelated info).

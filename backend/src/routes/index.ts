@@ -83,6 +83,8 @@ export const PUBLIC_ROUTES: ReadonlySet<string> = new Set([
   'POST /api/auth/login',
   'POST /api/auth/refresh',
   'POST /api/auth/logout',
+  'POST /api/auth/forgot-password',
+  'POST /api/auth/reset-password',
 ]);
 
 // ============================================

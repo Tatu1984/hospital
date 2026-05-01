@@ -38,6 +38,8 @@ const SystemControl = lazy(() => import('./pages/SystemControl'));
 const LiveDashboard = lazy(() => import('./pages/LiveDashboard'));
 const AuditLog = lazy(() => import('./pages/AuditLog'));
 const AssetManagement = lazy(() => import('./pages/AssetManagement'));
+const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
+const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 
 // Some smaller modules still live in AllModules.tsx — split that into one
 // async chunk. Each named import resolves once the chunk loads.
@@ -116,6 +118,22 @@ const AppRoutes = () => {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route
+        path="/forgot-password"
+        element={
+          <Suspense fallback={<RouteSpinner />}>
+            <ForgotPassword />
+          </Suspense>
+        }
+      />
+      <Route
+        path="/reset-password"
+        element={
+          <Suspense fallback={<RouteSpinner />}>
+            <ResetPassword />
+          </Suspense>
+        }
+      />
       <Route
         path="/"
         element={

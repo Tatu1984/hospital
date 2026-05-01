@@ -197,7 +197,7 @@ The rest inherit tenancy transitively (e.g. `Encounter.patientId → Patient.ten
 ## 🟢 P3 — LOW
 
 - [x] **26.** Frontend favicon added (`frontend/public/favicon.svg`, 64×64, blue cross).
-- [ ] **27.** Implement password reset flow (`/forgot-password`, `/reset-password`) end-to-end (page exists in some bundles, no working backend).
+- [x] **27.** Password reset flow (`/forgot-password`, `/reset-password`) wired end-to-end. 30-min token signed with `REFRESH_TOKEN_SECRET`. With no email gateway yet, the link is logged to backend stdout — operator hands it to the user. Replace with SMTP/SES once configured.
 - [x] **28.** Inventory, AssetManagement, and PatientRegistration use the toast component instead of `alert()`.
 - [x] **29.** Hide Swagger UI in production — Swagger only mounted when `NODE_ENV !== 'production'` or explicit opt-in via `EXPOSE_API_DOCS=true`.
 - [ ] **30.** Accessibility pass: aria labels on icon buttons, keyboard navigation for sidebar, focus management in dialogs.
