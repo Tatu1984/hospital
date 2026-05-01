@@ -43,11 +43,15 @@ function ageFromDob(dob?: string | null): number {
 }
 
 function normalizePatient(raw: any, refMap: Record<string, string>): Patient {
-  // Same `allergies` column doubles as "Notes / Purpose of visit" in the UI
-  // (no schema migration needed). If the user typed "Purpose: <x>" we surface
-  // it; otherwise we show the whole notes string.
+  // Prefer the first-class `purpose` column; fall back to extracting it from
+  // the legacy "Purpose: ..." prefix that older rows packed into `allergies`.
+  // This supports records written before migration 20260501010000.
+  let purpose: string = raw?.purpose || '';
   const allergies: string = raw?.allergies || '';
-  const purposeMatch = allergies.match(/(?:^|\b)Purpose\s*[:\-]\s*(.+?)(?:\n|$)/i);
+  if (!purpose) {
+    const m = allergies.match(/(?:^|\b)Purpose\s*[:\-]\s*(.+?)(?:\n|$)/i);
+    purpose = m ? m[1].trim() : '';
+  }
   return {
     id: raw?.id,
     mrn: raw?.mrn || '',
@@ -65,7 +69,7 @@ function normalizePatient(raw: any, refMap: Record<string, string>): Patient {
     status: raw?.status || (raw?.isActive === false ? 'Inactive' : 'Active'),
     referralSourceId: raw?.referralSourceId ?? null,
     referralDoctor: raw?.referralSourceId ? (refMap[raw.referralSourceId] || '') : '',
-    purpose: purposeMatch ? purposeMatch[1].trim() : allergies,
+    purpose,
   };
 }
 
@@ -177,11 +181,10 @@ export default function PatientRegistration() {
     });
   };
 
+  // Allergies + chronic-conditions still share the `allergies` column (no
+  // migration for those yet). Purpose is sent as its own field.
   const buildNotes = () => {
-    // Pack "Purpose of visit" + allergies + chronic conditions into the single
-    // `allergies` notes column the schema currently exposes.
     const parts: string[] = [];
-    if (formData.purpose) parts.push(`Purpose: ${formData.purpose}`);
     if (formData.allergies) parts.push(`Allergies: ${formData.allergies}`);
     if (formData.chronicConditions) parts.push(`Chronic: ${formData.chronicConditions}`);
     return parts.join('\n') || null;
@@ -224,6 +227,7 @@ export default function PatientRegistration() {
         address: formData.address || null,
         bloodGroup: formData.bloodGroup || null,
         allergies: buildNotes(),
+        purpose: formData.purpose || null,
         referralSourceId: formData.referralSourceId || null,
       };
 
@@ -299,6 +303,7 @@ export default function PatientRegistration() {
         address: formData.address || null,
         bloodGroup: formData.bloodGroup || null,
         allergies: buildNotes(),
+        purpose: formData.purpose || null,
         referralSourceId: formData.referralSourceId || null,
       };
 

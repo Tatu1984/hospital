@@ -54,6 +54,8 @@ export const createPatientSchema = z.object({
   address: z.string().max(500).optional().nullable(),
   bloodGroup: z.enum(['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']).optional().nullable(),
   allergies: z.string().max(1000).optional().nullable(),
+  // Free-text reason-for-visit captured at registration. First-class column.
+  purpose: z.string().max(500).optional().nullable(),
   referralSourceId: idSchema.optional().nullable(),
 });
 

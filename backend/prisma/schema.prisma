@@ -126,6 +126,11 @@ model Patient {
   emergencyContact  String?
   bloodGroup        String?
   allergies         String?
+  // Free-text purpose-of-visit captured at registration. Used to live
+  // packed into `allergies` with a "Purpose:" prefix; first-class column
+  // landed in migration 20260501010000_patient_purpose. Old rows are
+  // backfilled by extracting that prefix.
+  purpose           String?
   referralSourceId  String?
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt

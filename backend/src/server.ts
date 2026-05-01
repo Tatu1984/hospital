@@ -691,7 +691,18 @@ app.get('/api/patients', authenticateToken, requirePermission('patients:view'), 
 
 app.post('/api/patients', authenticateToken, requirePermission('patients:create'), validateBody(createPatientSchema), async (req: any, res: Response) => {
   try {
-    const { name, dob, gender, contact, email, address, bloodGroup, allergies, referralSourceId } = (req as any).validatedBody || req.body;
+    const body = (req as any).validatedBody || req.body;
+    const { name, dob, gender, contact, email, address, bloodGroup, referralSourceId } = body;
+    let { allergies, purpose } = body as { allergies?: string | null; purpose?: string | null };
+
+    // Backwards compat: older clients packed purpose into the allergies string
+    // with a "Purpose:" prefix. Extract it once and clean the leftover so the
+    // new dedicated column carries the truth.
+    if (!purpose && typeof allergies === 'string' && /Purpose:\s*[^\n]+/i.test(allergies)) {
+      const m = allergies.match(/Purpose:\s*([^\n]+)/i);
+      purpose = m ? m[1].trim() : null;
+      allergies = allergies.replace(/Purpose:\s*[^\n]*\n?/gi, '').trim() || null;
+    }
 
     // Generate MRN
     const lastPatient = await prisma.patient.findFirst({
@@ -720,6 +731,7 @@ app.post('/api/patients', authenticateToken, requirePermission('patients:create'
         address,
         bloodGroup,
         allergies,
+        purpose: purpose || null,
         referralSourceId: referralSourceId || null,
       },
       include: {

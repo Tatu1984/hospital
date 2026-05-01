@@ -111,7 +111,7 @@ The rest inherit tenancy transitively (e.g. `Encounter.patientId → Patient.ten
 **Fix:** Backend sets a `Set-Cookie: refreshToken=...; HttpOnly; Secure; SameSite=Strict; Path=/api/auth/refresh` on login. Frontend stops touching `refreshToken`.
 **Effort:** 3 h.
 
-### 11. [~] Frontend tests + E2E
+### 11. [~] Frontend tests + E2E (utility/component tests in; Playwright pending)
 **Where:** `frontend/`.
 **Risk:** Zero coverage; any regression goes live silently.
 **Fix:** Vitest + RTL for component contracts (RoleProtectedRoute, axios interceptor, AssetManagement form). Playwright for the patient → encounter → invoice happy path.
@@ -201,7 +201,7 @@ The rest inherit tenancy transitively (e.g. `Encounter.patientId → Patient.ten
 - [x] **28.** Inventory, AssetManagement, and PatientRegistration use the toast component instead of `alert()`.
 - [x] **29.** Hide Swagger UI in production — Swagger only mounted when `NODE_ENV !== 'production'` or explicit opt-in via `EXPOSE_API_DOCS=true`.
 - [ ] **30.** Accessibility pass: aria labels on icon buttons, keyboard navigation for sidebar, focus management in dialogs.
-- [ ] **31.** Front Office "purpose" gets its own DB column (currently packed into `allergies` with a `Purpose:` prefix — see `frontend/src/pages/PatientRegistration.tsx`).
+- [x] **31.** Front Office "purpose" is now a first-class `Patient.purpose` column. Migration `20260501010000_patient_purpose` backfills from the legacy `Purpose:` prefix in `allergies`. Frontend writes/reads the dedicated field; legacy rows still surface via the extractor in normalizePatient.
 
 ---
 
