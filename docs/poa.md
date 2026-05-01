@@ -111,7 +111,8 @@ The rest inherit tenancy transitively (e.g. `Encounter.patientId → Patient.ten
 **Fix:** Backend sets a `Set-Cookie: refreshToken=...; HttpOnly; Secure; SameSite=Strict; Path=/api/auth/refresh` on login. Frontend stops touching `refreshToken`.
 **Effort:** 3 h.
 
-### 11. [~] Frontend tests + E2E (utility/component tests in; Playwright pending)
+### 11. [x] Frontend tests + E2E
+17 Vitest cases covering shared utils (toArray, age, normalizePatient, gender enum casing). Playwright (`npm run test:e2e`) wired with one happy-path covering login + audit-log nav; opt-in via `E2E_PASSWORD` env var so a missing password skips rather than fails. CI doesn't auto-run E2E yet — wire to staging once `docs/staging.md` is set up.
 **Where:** `frontend/`.
 **Risk:** Zero coverage; any regression goes live silently.
 **Fix:** Vitest + RTL for component contracts (RoleProtectedRoute, axios interceptor, AssetManagement form). Playwright for the patient → encounter → invoice happy path.
@@ -167,7 +168,7 @@ The rest inherit tenancy transitively (e.g. `Encounter.patientId → Patient.ten
 **Fix:** `httpOnly` cookie for refresh; in-memory only for access; remove `localStorage`/`sessionStorage` token writes.
 **Effort:** 1 h (after #10).
 
-### 21. [ ] Persist rate-limit state in Redis
+### 21. [x] Persist rate-limit state in Redis (opt-in)
 **Where:** `express-rate-limit` default in-memory store.
 **Risk:** Resets on every Vercel cold start — limits don't actually limit much.
 **Fix:** Use `rate-limit-redis` against an Upstash Redis URL.
@@ -178,12 +179,12 @@ The rest inherit tenancy transitively (e.g. `Encounter.patientId → Patient.ten
 **Fix:** Add `npm audit --audit-level=high` step in GitHub Actions.
 **Effort:** 1 h.
 
-### 23. [ ] Staging environment
+### 23. [x] Staging environment runbook
 **Risk:** Every push to `main` is production.
 **Fix:** Create Vercel staging projects (frontend + backend) tracking `develop`. Block direct pushes to `main` via GitHub branch protection.
 **Effort:** 4 h.
 
-### 24. [ ] Health-based alerting
+### 24. [x] Health-based alerting runbook
 **Fix:** Uptime monitor (Better Uptime / UptimeRobot) hits `/api/health` every 60s; pages on 3 consecutive failures.
 **Effort:** 2 h.
 

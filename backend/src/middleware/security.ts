@@ -1,10 +1,43 @@
 import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { type Store } from 'express-rate-limit';
 import { ipKeyGenerator } from 'express-rate-limit';
 import compression from 'compression';
 import { Request, Response, NextFunction } from 'express';
 import { config } from '../config';
 import { logger, auditLogger } from '../utils/logger';
+
+// Optional Redis-backed rate-limit store. Without REDIS_URL the limiters
+// fall back to express-rate-limit's in-memory store — fine for dev and
+// single-instance deploys, but resets on every Vercel cold start. With a
+// REDIS_URL (Upstash works fine) the counters persist across instances.
+function buildSharedStore(prefix: string): Store | undefined {
+  const url = process.env.REDIS_URL;
+  if (!url) return undefined;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const RedisStore = require('rate-limit-redis').default;
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const Redis = require('ioredis');
+    const client = new Redis(url, {
+      // Keep pre-connection retries short — we'd rather fall back than hang
+      // every request waiting for a flaky Redis.
+      maxRetriesPerRequest: 1,
+      enableReadyCheck: false,
+    });
+    client.on('error', (e: Error) => {
+      // eslint-disable-next-line no-console
+      console.warn(`[rate-limit] redis error (${prefix}):`, e.message);
+    });
+    return new RedisStore({
+      sendCommand: (...args: any[]) => client.call(...args),
+      prefix: `rl:${prefix}:`,
+    });
+  } catch (e: any) {
+    // eslint-disable-next-line no-console
+    console.warn(`[rate-limit] redis store init failed (${prefix}); using in-memory:`, e?.message);
+    return undefined;
+  }
+}
 
 // CSP `connect-src` must be a list of individual origins, not a single
 // comma-separated string. CORS_ORIGIN is comma-separated, so split it here
@@ -34,9 +67,11 @@ export const securityHeaders = helmet({
 });
 
 // Rate limiting - general
+const generalStore = buildSharedStore('general');
 export const generalRateLimiter = rateLimit({
   windowMs: config.rateLimit.windowMs,
   max: config.rateLimit.maxRequests,
+  store: generalStore,
   message: {
     error: 'Too many requests',
     message: 'You have exceeded the rate limit. Please try again later.',
@@ -64,9 +99,11 @@ export const generalRateLimiter = rateLimit({
 // Skips GET/HEAD/OPTIONS so list pages aren't crippled. The key is per-IP +
 // per-path so one user spamming a single endpoint doesn't lock everyone out
 // of every other endpoint.
+const writeStore = buildSharedStore('write');
 export const writeRateLimiter = rateLimit({
   windowMs: config.rateLimit.windowMs,
   max: Math.max(20, Math.floor(config.rateLimit.maxRequests / 4)),
+  store: writeStore,
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => ['GET', 'HEAD', 'OPTIONS'].includes(req.method),
@@ -86,9 +123,11 @@ export const writeRateLimiter = rateLimit({
 });
 
 // Rate limiting - strict for auth routes
+const authStore = buildSharedStore('auth');
 export const authRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 5, // 5 attempts per window
+  store: authStore,
   message: {
     error: 'Too many login attempts',
     message: 'Please wait 15 minutes before trying again.',

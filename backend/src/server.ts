@@ -411,6 +411,18 @@ function readCookie(req: Request, name: string): string | undefined {
   return undefined;
 }
 
+// Backwards-compat: cached frontends from before commit f33c07a hit
+// /api/nursing/* (with the 'ing'). Internally rewrite the URL so those
+// requests fall through to the new /api/nurse/* handlers without the
+// browser ever seeing a 3xx (which would also force the user to fetch
+// a new bundle to be reachable).
+app.use((req, _res, next) => {
+  if (req.url.startsWith('/api/nursing/')) {
+    req.url = req.url.replace('/api/nursing/', '/api/nurse/');
+  }
+  next();
+});
+
 // Auth routes - with rate limiting and validation
 app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (req: Request, res: Response) => {
   try {
