@@ -138,21 +138,27 @@ export const dischargeSchema = z.object({
   followUpInstructions: z.string().max(2000).optional(),
 });
 
-// Lab order validators. The frontend ships several different shapes:
-//   tests: 'X-Ray Chest'                        (single string)
-//   tests: ['lab-test-1', 'lab-test-2']         (array of ids/names)
-//   tests: { testId, priority, notes }          (single object)
-//   tests: [{ testId, priority, notes }, ...]   (array of objects)
-// Preprocess normalizes all four into the canonical array-of-objects shape.
-function normalizeTests(v: unknown): unknown {
-  if (v == null) return v;
-  if (typeof v === 'string') return [{ testId: v }];
-  if (Array.isArray(v)) {
-    return v.map((item) => (typeof item === 'string' ? { testId: item } : item));
-  }
-  if (typeof v === 'object') return [v];
-  return v;
+// Generic preprocess: forms ship array-of-strings for relations the schema
+// wants as array-of-objects. Use makeListNormalizer('drugId') for pharmacy
+// dispense, ('itemId') for inventory POs, etc. Handles all four shapes:
+//   <string>                 → [{ <key>: <string> }]
+//   <string>[]               → [{ <key>: s }, ...]
+//   <object>                 → [<object>]
+//   <object>[]               → unchanged (canonical)
+function makeListNormalizer(key: string) {
+  return (v: unknown): unknown => {
+    if (v == null) return v;
+    if (typeof v === 'string') return [{ [key]: v }];
+    if (Array.isArray(v)) {
+      return v.map((item) => (typeof item === 'string' ? { [key]: item } : item));
+    }
+    if (typeof v === 'object') return [v];
+    return v;
+  };
 }
+
+// Backwards-compatible alias used by existing code below.
+const normalizeTests = makeListNormalizer('testId');
 
 export const createLabOrderSchema = z.object({
   patientId: idSchema,
@@ -300,14 +306,23 @@ export const bloodRequestSchema = z.object({
 
 // Inventory validators
 export const createPurchaseOrderSchema = z.object({
-  supplierId: idSchema,
-  items: z.array(z.object({
-    itemId: idSchema,
-    quantity: z.number().int().min(1).max(100000),
-    unitPrice: z.number().min(0).max(10000000),
-  })).min(1),
+  supplierId: z.string().min(1),
+  items: z.preprocess(
+    makeListNormalizer('itemId'),
+    z.array(z.object({
+      itemId: z.string().min(1),
+      quantity: z.preprocess(
+        (v) => (typeof v === 'string' && v ? Number(v) : v),
+        z.number().int().min(1).max(100_000).default(1)
+      ),
+      unitPrice: z.preprocess(
+        (v) => (typeof v === 'string' && v ? Number(v) : v),
+        z.number().min(0).max(10_000_000).optional().nullable()
+      ),
+    })).min(1)
+  ),
   expectedDelivery: optionalDateSchema,
-  notes: z.string().max(1000).optional(),
+  notes: z.string().max(1000).optional().nullable(),
 });
 
 // HR validators
@@ -396,15 +411,22 @@ export const radiologyResultSchema = z.object({
 
 // Pharmacy validators
 export const pharmacyDispenseSchema = z.object({
-  prescriptionId: idSchema,
-  items: z.array(z.object({
-    drugId: idSchema,
-    quantity: z.number().int().min(1).max(10000),
-    batchNumber: z.string().max(50).optional(),
-    expiryDate: optionalDateSchema,
-  })).min(1),
-  patientId: idSchema,
-  dispensedBy: idSchema.optional(),
+  prescriptionId: z.string().min(1),
+  // Items can arrive as array of strings (just drug ids) OR array of objects.
+  items: z.preprocess(
+    makeListNormalizer('drugId'),
+    z.array(z.object({
+      drugId: z.string().min(1),
+      quantity: z.preprocess(
+        (v) => (typeof v === 'string' && v ? Number(v) : v),
+        z.number().int().min(1).max(10_000).default(1)
+      ),
+      batchNumber: z.string().max(50).optional().nullable(),
+      expiryDate: optionalDateSchema,
+    })).min(1)
+  ),
+  patientId: z.string().min(1),
+  dispensedBy: z.string().min(1).optional().nullable(),
 });
 
 export const drugMasterSchema = z.object({
