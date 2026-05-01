@@ -169,13 +169,38 @@ export default function PatientRegistration() {
     return parts.join('\n') || null;
   };
 
+  // Surface the most specific message a Zod-style validation response can
+  // provide. Falls back to the top-level error / error.message / a literal.
+  const apiErrorMessage = (e: any, fallback: string): string => {
+    const data = e?.response?.data;
+    if (data?.details?.[0]) {
+      const d = data.details[0];
+      return d.field ? `${d.field}: ${d.message}` : d.message;
+    }
+    return data?.error || data?.message || e?.message || fallback;
+  };
+
   const handleSubmit = async () => {
+    if (!formData.firstName.trim()) {
+      toast.warning('Missing field', 'First name is required.');
+      return;
+    }
+    if (!formData.gender) {
+      toast.warning('Missing field', 'Please select a gender.');
+      return;
+    }
+    if (!formData.phone) {
+      toast.warning('Missing field', 'Phone number is required.');
+      return;
+    }
+
     setLoading(true);
     try {
       const payload = {
         name: `${formData.firstName} ${formData.lastName}`.trim(),
         dob: formData.dateOfBirth || null,
-        gender: formData.gender,
+        // Backend Zod schema requires uppercase enum values.
+        gender: formData.gender.toUpperCase(),
         contact: formData.phone,
         email: formData.email || null,
         address: formData.address || null,
@@ -184,7 +209,7 @@ export default function PatientRegistration() {
         referralSourceId: formData.referralSourceId || null,
       };
 
-      await api.post('/api/patients', payload);
+      const created = await api.post('/api/patients', payload);
       await fetchPatients(); // Refresh the list
       setIsDialogOpen(false);
       setFormData({
@@ -194,12 +219,13 @@ export default function PatientRegistration() {
         idProofNumber: '', insuranceProvider: '', insuranceNumber: '', allergies: '',
         chronicConditions: '', purpose: '', referralSourceId: ''
       });
+      toast.success(
+        'Patient registered',
+        `${created.data?.name || payload.name} · ${created.data?.mrn || 'MRN pending'}`
+      );
     } catch (error: any) {
       console.error('Error creating patient:', error);
-      toast.error(
-        'Could not register patient',
-        error?.response?.data?.error || error?.message || 'Please try again.'
-      );
+      toast.error('Could not register patient', apiErrorMessage(error, 'Please try again.'));
     } finally {
       setLoading(false);
     }
@@ -249,7 +275,7 @@ export default function PatientRegistration() {
       const payload = {
         name: `${formData.firstName} ${formData.lastName}`.trim(),
         dob: formData.dateOfBirth || null,
-        gender: formData.gender || null,
+        gender: formData.gender ? formData.gender.toUpperCase() : null,
         contact: formData.phone,
         email: formData.email || null,
         address: formData.address || null,
@@ -329,9 +355,9 @@ export default function PatientRegistration() {
                     <SelectValue placeholder="Select gender" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Male">Male</SelectItem>
-                    <SelectItem value="Female">Female</SelectItem>
-                    <SelectItem value="Other">Other</SelectItem>
+                    <SelectItem value="MALE">Male</SelectItem>
+                    <SelectItem value="FEMALE">Female</SelectItem>
+                    <SelectItem value="OTHER">Other</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -505,7 +531,9 @@ export default function PatientRegistration() {
                 <TableRow key={patient.id}>
                   <TableCell className="font-medium">{patient.mrn}</TableCell>
                   <TableCell>{patient.name}</TableCell>
-                  <TableCell>{patient.age ? `${patient.age}Y` : '—'} / {patient.gender || '—'}</TableCell>
+                  <TableCell>
+                    {patient.age ? `${patient.age}Y` : '—'} / {patient.gender ? patient.gender.charAt(0) + patient.gender.slice(1).toLowerCase() : '—'}
+                  </TableCell>
                   <TableCell>{patient.phone || '—'}</TableCell>
                   <TableCell className="text-slate-600">{patient.email || '—'}</TableCell>
                   <TableCell className="text-slate-600">{patient.referralDoctor || '—'}</TableCell>
@@ -623,9 +651,9 @@ export default function PatientRegistration() {
                   <SelectValue placeholder="Select gender" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Male">Male</SelectItem>
-                  <SelectItem value="Female">Female</SelectItem>
-                  <SelectItem value="Other">Other</SelectItem>
+                  <SelectItem value="MALE">Male</SelectItem>
+                  <SelectItem value="FEMALE">Female</SelectItem>
+                  <SelectItem value="OTHER">Other</SelectItem>
                 </SelectContent>
               </Select>
             </div>
