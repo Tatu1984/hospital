@@ -630,8 +630,10 @@ model DietOrder {
 
 model Asset {
   id              String           @id @default(uuid())
+  tenantId        String
+  branchId        String?
   name            String
-  assetCode       String           @unique
+  assetCode       String
   category        String
   location        String?
   purchaseDate    DateTime?
@@ -642,11 +644,14 @@ model Asset {
   isActive        Boolean          @default(true)
   maintenanceLogs MaintenanceLog[]
 
+  @@unique([tenantId, assetCode])
+  @@index([tenantId, isActive])
   @@map("assets")
 }
 
 model MaintenanceLog {
   id              String    @id @default(uuid())
+  tenantId        String
   assetId         String
   maintenanceType String
   scheduledDate   DateTime?
@@ -659,6 +664,7 @@ model MaintenanceLog {
   createdAt       DateTime  @default(now())
   asset           Asset     @relation(fields: [assetId], references: [id])
 
+  @@index([tenantId])
   @@map("maintenance_logs")
 }
 

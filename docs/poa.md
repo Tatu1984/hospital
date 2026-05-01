@@ -20,6 +20,13 @@
 ## 🔴 P0 — BLOCKERS
 
 ### 1. [~] Tenant isolation enforced at runtime
+**Progress 2026-05-01:**
+- Added `backend/src/utils/tenantScope.ts` with `tenantWhere`, `branchTenantWhere`, `patientTenantWhere`, `tenantData`, `and` helpers.
+- Audited the hot endpoints. Results:
+  - ✅ Already scoped: `GET/POST /api/patients`, `GET /api/users` (both copies), `GET/POST /api/appointments`, `GET /api/encounters` (via branchId), `POST /api/encounters`
+  - ✅ **Newly scoped (this session):** `GET /api/admissions` (was leaking everything across tenants), `GET /api/invoices` (same)
+  - ✅ All 8 asset endpoints scope by tenantId and verify ownership
+- **Remaining:** systematic audit of every other handler that calls Prisma. ~100 endpoints still to review individually. The `tenantScope` helpers are ready for use; just need to apply.
 **Where:** `backend/src/server.ts` — most `prisma.X.findMany`/`findUnique` calls don't include `tenantId`/`branchId` filters.
 **Risk:** Any authenticated user can read another tenant's PHI. HIPAA / NABH violation. Catastrophic.
 
@@ -47,14 +54,10 @@ The rest inherit tenancy transitively (e.g. `Encounter.patientId → Patient.ten
 - If live, rewrite to match current schema (`name`, `passwordHash`, `roleIds`).
 **Effort:** 4–6 h.
 
-### 3. [ ] Asset model is not tenant-scoped
-**Where:** `backend/prisma/schema.prisma` — `model Asset` has no `tenantId`/`branchId`.
-**Risk:** All tenants share one asset registry; one hospital sees another's equipment.
-**Fix:**
-- Add `tenantId String` and `branchId String?` columns + relations.
-- Generate a Prisma migration.
-- Update the 8 `/api/assets/*` handlers to scope queries by `req.user.tenantId`.
-**Effort:** 30 min schema + 1 h migration + 15 min handler edits.
+### 3. [x] Asset model is now tenant-scoped
+**Where:** `backend/prisma/schema.prisma` + migration `20260501000000_assets_multi_tenant`.
+**Done:** Added `tenantId` (NOT NULL) and `branchId` (nullable) to `assets` and `tenantId` to `maintenance_logs`. Replaced the global `assetCode` UNIQUE index with `(tenantId, assetCode)` UNIQUE so each tenant has its own AST00001. All 8 asset endpoints now scope by `req.user.tenantId` and verify ownership before update/delete/status-change/maintenance.
+**Migration runs automatically on next backend Vercel deploy** (P0 #5 done) — backfills existing rows from the only existing tenant.
 
 ### 4. [ ] NeonDB connection pooling for serverless
 **Where:** `DATABASE_URL` env var on Vercel backend.
