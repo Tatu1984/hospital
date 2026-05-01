@@ -42,16 +42,18 @@ export const changePasswordSchema = z.object({
   path: ['confirmPassword'],
 });
 
-// Patient validators
+// Frontend often sends `null` for fields the user left blank. Accept both
+// undefined (field omitted) and null (explicit clear) on every optional
+// column — the inline handler maps null to the right Prisma value anyway.
 export const createPatientSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters').max(100),
   dob: optionalDateSchema,
-  gender: z.enum(['MALE', 'FEMALE', 'OTHER']).optional(),
-  contact: z.string().regex(phoneRegex, 'Invalid phone number').optional(),
+  gender: z.enum(['MALE', 'FEMALE', 'OTHER']).optional().nullable(),
+  contact: z.string().regex(phoneRegex, 'Invalid phone number').optional().nullable(),
   email: z.string().email('Invalid email').optional().nullable(),
-  address: z.string().max(500).optional(),
-  bloodGroup: z.enum(['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']).optional(),
-  allergies: z.string().max(1000).optional(),
+  address: z.string().max(500).optional().nullable(),
+  bloodGroup: z.enum(['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']).optional().nullable(),
+  allergies: z.string().max(1000).optional().nullable(),
   referralSourceId: idSchema.optional().nullable(),
 });
 
