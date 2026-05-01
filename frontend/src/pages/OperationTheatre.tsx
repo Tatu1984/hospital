@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Clock, CheckCircle, AlertCircle, Calendar, FileText, Plus, Activity } from 'lucide-react';
 import api from '../services/api';
+import { useToast } from '../components/Toast';
 
 interface Surgery {
   id: string;
@@ -56,9 +57,17 @@ interface SurgeryFormData {
   notes: string;
 }
 
+interface PatientOption { id: string; mrn: string; name: string; }
+interface ProcedureOption { id: string; name: string; category?: string; }
+interface DoctorOption { id: string; name: string; }
+
 export default function OperationTheatre() {
+  const toast = useToast();
   const [surgeries, setSurgeries] = useState<Surgery[]>([]);
   const [otRooms, setOTRooms] = useState<OTRoom[]>([]);
+  const [patients, setPatients] = useState<PatientOption[]>([]);
+  const [procedures, setProcedures] = useState<ProcedureOption[]>([]);
+  const [doctors, setDoctors] = useState<DoctorOption[]>([]);
   const [selectedSurgery, setSelectedSurgery] = useState<Surgery | null>(null);
   const [isScheduleDialogOpen, setIsScheduleDialogOpen] = useState(false);
   const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false);
@@ -81,12 +90,48 @@ export default function OperationTheatre() {
   useEffect(() => {
     fetchSurgeries();
     fetchOTRooms();
+    // Master data for the Schedule Surgery dropdowns. Fetch once on mount —
+    // the form needs Patients (MRN+name), Procedures, and Doctors (used as
+    // both Surgeon and Anesthetist sources).
+    void fetchPatients();
+    void fetchProcedures();
+    void fetchDoctors();
     const interval = setInterval(() => {
       fetchSurgeries();
       fetchOTRooms();
     }, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  const fetchPatients = async () => {
+    try {
+      const res = await api.get('/api/patients', { params: { limit: 500 } });
+      const list = Array.isArray(res.data) ? res.data : (res.data?.items || []);
+      setPatients(list.map((p: any) => ({ id: p.id, mrn: p.mrn, name: p.name })));
+    } catch (e) {
+      console.error('fetch patients failed', e);
+    }
+  };
+
+  const fetchProcedures = async () => {
+    try {
+      const res = await api.get('/api/master/procedures');
+      const list = Array.isArray(res.data) ? res.data : (res.data?.items || []);
+      setProcedures(list.map((p: any) => ({ id: p.id, name: p.name, category: p.category })));
+    } catch (e) {
+      console.error('fetch procedures failed', e);
+    }
+  };
+
+  const fetchDoctors = async () => {
+    try {
+      const res = await api.get('/api/doctors');
+      const list = Array.isArray(res.data) ? res.data : (res.data?.items || []);
+      setDoctors(list.map((u: any) => ({ id: u.id, name: u.name || u.fullName || u.username })));
+    } catch (e) {
+      console.error('fetch doctors failed', e);
+    }
+  };
 
   const fetchSurgeries = async () => {
     try {
@@ -125,7 +170,25 @@ export default function OperationTheatre() {
     }
   };
 
+  // Pull a useful message out of a Zod-style error response.
+  const errMsg = (e: any, fallback: string) => {
+    const data = e?.response?.data;
+    if (data?.details?.[0]) {
+      const d = data.details[0];
+      return d.field ? `${d.field}: ${d.message}` : d.message;
+    }
+    return data?.error || data?.message || e?.message || fallback;
+  };
+
   const handleScheduleSurgery = async () => {
+    if (!surgeryFormData.patientId) { toast.warning('Patient required'); return; }
+    if (!surgeryFormData.procedureName) { toast.warning('Procedure required'); return; }
+    if (!surgeryFormData.surgeonId) { toast.warning('Surgeon required'); return; }
+    if (!surgeryFormData.otRoomId) { toast.warning('OT Room required'); return; }
+    if (!surgeryFormData.scheduledDate || !surgeryFormData.scheduledTime) {
+      toast.warning('Date and time required'); return;
+    }
+
     setLoading(true);
     try {
       await api.post('/api/surgeries', {
@@ -135,19 +198,20 @@ export default function OperationTheatre() {
         otRoomId: surgeryFormData.otRoomId,
         scheduledDate: surgeryFormData.scheduledDate,
         scheduledTime: surgeryFormData.scheduledTime,
-        estimatedDuration: parseInt(surgeryFormData.duration),
+        estimatedDuration: surgeryFormData.duration ? parseInt(surgeryFormData.duration, 10) : undefined,
         priority: surgeryFormData.priority,
-        anesthesiaType: surgeryFormData.anesthesiaType,
-        anesthetistId: surgeryFormData.anesthetistId,
-        notes: surgeryFormData.notes
+        anesthesiaType: surgeryFormData.anesthesiaType || undefined,
+        anesthetistId: surgeryFormData.anesthetistId || undefined,
+        notes: surgeryFormData.notes || undefined,
       });
 
       await fetchSurgeries();
       setIsScheduleDialogOpen(false);
       resetForm();
-    } catch (error) {
+      toast.success('Surgery scheduled');
+    } catch (error: any) {
       console.error('Error scheduling surgery:', error);
-      alert('Failed to schedule surgery');
+      toast.error('Could not schedule surgery', errMsg(error, 'Try again.'));
     } finally {
       setLoading(false);
     }
@@ -159,10 +223,10 @@ export default function OperationTheatre() {
       await api.post(`/api/surgeries/${surgeryId}/start`);
       await fetchSurgeries();
       await fetchOTRooms();
-      alert('Surgery started successfully');
-    } catch (error) {
+      toast.success('Surgery started');
+    } catch (error: any) {
       console.error('Error starting surgery:', error);
-      alert('Failed to start surgery');
+      toast.error('Could not start surgery', errMsg(error, 'Try again.'));
     } finally {
       setLoading(false);
     }
@@ -174,10 +238,10 @@ export default function OperationTheatre() {
       await api.post(`/api/surgeries/${surgeryId}/complete`);
       await fetchSurgeries();
       await fetchOTRooms();
-      alert('Surgery completed successfully');
-    } catch (error) {
+      toast.success('Surgery completed');
+    } catch (error: any) {
       console.error('Error completing surgery:', error);
-      alert('Failed to complete surgery');
+      toast.error('Could not complete surgery', errMsg(error, 'Try again.'));
     } finally {
       setLoading(false);
     }
@@ -190,10 +254,10 @@ export default function OperationTheatre() {
     try {
       await api.post(`/api/surgeries/${surgeryId}/cancel`);
       await fetchSurgeries();
-      alert('Surgery cancelled');
-    } catch (error) {
+      toast.success('Surgery cancelled');
+    } catch (error: any) {
       console.error('Error cancelling surgery:', error);
-      alert('Failed to cancel surgery');
+      toast.error('Could not cancel surgery', errMsg(error, 'Try again.'));
     } finally {
       setLoading(false);
     }
@@ -618,12 +682,22 @@ export default function OperationTheatre() {
           <div className="space-y-4 py-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Patient ID *</Label>
-                <Input
-                  placeholder="Enter patient MRN or ID"
+                <Label>Patient (MRN — Name) *</Label>
+                <Select
                   value={surgeryFormData.patientId}
-                  onChange={(e) => setSurgeryFormData({ ...surgeryFormData, patientId: e.target.value })}
-                />
+                  onValueChange={(value) => setSurgeryFormData({ ...surgeryFormData, patientId: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={patients.length ? 'Select patient' : 'No patients found'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {patients.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.mrn} — {p.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-2">
                 <Label>Priority *</Label>
@@ -644,22 +718,40 @@ export default function OperationTheatre() {
             </div>
 
             <div className="space-y-2">
-              <Label>Procedure Name *</Label>
-              <Input
-                placeholder="e.g., Appendectomy, Knee Replacement"
+              <Label>Procedure *</Label>
+              <Select
                 value={surgeryFormData.procedureName}
-                onChange={(e) => setSurgeryFormData({ ...surgeryFormData, procedureName: e.target.value })}
-              />
+                onValueChange={(value) => setSurgeryFormData({ ...surgeryFormData, procedureName: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={procedures.length ? 'Select procedure' : 'No procedures in master data'} />
+                </SelectTrigger>
+                <SelectContent>
+                  {procedures.map((p) => (
+                    <SelectItem key={p.id} value={p.name}>
+                      {p.name}{p.category ? ` · ${p.category}` : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Surgeon *</Label>
-                <Input
-                  placeholder="Surgeon ID or name"
+                <Select
                   value={surgeryFormData.surgeonId}
-                  onChange={(e) => setSurgeryFormData({ ...surgeryFormData, surgeonId: e.target.value })}
-                />
+                  onValueChange={(value) => setSurgeryFormData({ ...surgeryFormData, surgeonId: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={doctors.length ? 'Select surgeon' : 'No doctors found'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {doctors.map((d) => (
+                      <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-2">
                 <Label>OT Room *</Label>
@@ -668,14 +760,22 @@ export default function OperationTheatre() {
                   onValueChange={(value) => setSurgeryFormData({ ...surgeryFormData, otRoomId: value })}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Select OT room" />
+                    <SelectValue placeholder={otRooms.length ? 'Select OT room' : 'No OT rooms configured'} />
                   </SelectTrigger>
                   <SelectContent>
-                    {otRooms.filter(r => r.status === 'AVAILABLE').map((room) => (
-                      <SelectItem key={room.id} value={room.id}>
-                        {room.roomNumber}
+                    {otRooms.length === 0 ? (
+                      <SelectItem value="__none__" disabled>
+                        No OT rooms — add one in Master Data
                       </SelectItem>
-                    ))}
+                    ) : (
+                      otRooms
+                        .filter((r) => r.status === 'AVAILABLE' || surgeryFormData.otRoomId === r.id)
+                        .map((room) => (
+                          <SelectItem key={room.id} value={room.id}>
+                            {room.roomNumber}
+                          </SelectItem>
+                        ))
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -730,11 +830,19 @@ export default function OperationTheatre() {
               </div>
               <div className="space-y-2">
                 <Label>Anesthetist</Label>
-                <Input
-                  placeholder="Anesthetist ID"
+                <Select
                   value={surgeryFormData.anesthetistId}
-                  onChange={(e) => setSurgeryFormData({ ...surgeryFormData, anesthetistId: e.target.value })}
-                />
+                  onValueChange={(value) => setSurgeryFormData({ ...surgeryFormData, anesthetistId: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={doctors.length ? 'Select anesthetist' : 'No doctors found'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {doctors.map((d) => (
+                      <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 
