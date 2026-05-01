@@ -53,6 +53,7 @@ const MainLayout = () => {
       title: 'Core',
       items: [
         { path: '/', icon: Home, label: 'Dashboard' },
+        { path: '/live-dashboard', icon: Activity, label: 'Live Dashboard' },
         { path: '/patients', icon: Users, label: 'Front Office' },
         { path: '/appointment', icon: Calendar, label: 'Appointments' },
       ]

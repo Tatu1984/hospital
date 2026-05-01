@@ -54,7 +54,7 @@ export const rolePermissions: Record<Role, string[]> = {
 
   // DOCTOR - Clinical focus
   DOCTOR: [
-    '/', 'patients', 'appointment', 'opd', 'opd-clinical', 'health-checkup',
+    '/', 'live-dashboard', 'patients', 'appointment', 'opd', 'opd-clinical', 'health-checkup',
     'laboratory', 'radiology', 'pathology', 'inpatient', 'emergency', 'icu',
     'operation-theatre', 'pharmacy', 'doctor-assistant', 'video-conversation',
     'nurse-station', 'mrd-management', 'dicom-pacs', 'billing'
@@ -62,13 +62,13 @@ export const rolePermissions: Record<Role, string[]> = {
 
   // NURSE - Patient care focus
   NURSE: [
-    '/', 'patients', 'appointment', 'nurse-station', 'inpatient', 'emergency', 'icu',
+    '/', 'live-dashboard', 'patients', 'appointment', 'nurse-station', 'inpatient', 'emergency', 'icu',
     'laboratory', 'radiology', 'pharmacy', 'diet', 'blood-bank'
   ],
 
   // FRONT_OFFICE - Registration & Appointments
   FRONT_OFFICE: [
-    '/', 'patients', 'appointment', 'billing', 'tpa', 'inpatient'
+    '/', 'live-dashboard', 'patients', 'appointment', 'billing', 'tpa', 'inpatient'
   ],
 
   // BILLING - Finance focus
@@ -123,7 +123,7 @@ export const rolePermissions: Record<Role, string[]> = {
 
   // INVENTORY - Inventory management
   INVENTORY: [
-    '/', 'inventory', 'store-management', 'asset-management',
+    '/', 'inventory', 'store-management', 'asset-management', 'assets',
     'equipment-maintenance', 'mis-report'
   ],
 

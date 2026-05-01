@@ -31,6 +31,7 @@ import IPDBilling from './pages/IPDBilling';
 import TPA from './pages/TPA';
 import MasterData from './pages/MasterData';
 import SystemControl from './pages/SystemControl';
+import LiveDashboard from './pages/LiveDashboard';
 
 // Import all remaining modules from AllModules
 import {
@@ -112,6 +113,7 @@ const AppRoutes = () => {
         }
       >
         <Route index element={<NewDashboard />} />
+        <Route path="live-dashboard" element={<RoleProtectedRoute path="live-dashboard"><LiveDashboard /></RoleProtectedRoute>} />
 
         {/* Core Clinical Modules */}
         <Route path="patients" element={<RoleProtectedRoute path="patients"><PatientRegistration /></RoleProtectedRoute>} />
@@ -156,6 +158,8 @@ const AppRoutes = () => {
         <Route path="inventory" element={<RoleProtectedRoute path="inventory"><Inventory /></RoleProtectedRoute>} />
         <Route path="store-management" element={<RoleProtectedRoute path="store-management"><StoreManagement /></RoleProtectedRoute>} />
         <Route path="asset-management" element={<RoleProtectedRoute path="asset-management"><AssetManagement /></RoleProtectedRoute>} />
+        {/* Sidebar links to /assets — keep this as an alias to AssetManagement so the sidebar works. */}
+        <Route path="assets" element={<RoleProtectedRoute path="assets"><AssetManagement /></RoleProtectedRoute>} />
         <Route path="equipment-maintenance" element={<RoleProtectedRoute path="equipment-maintenance"><EquipmentMaintenance /></RoleProtectedRoute>} />
         <Route path="medical-device" element={<RoleProtectedRoute path="medical-device"><MedicalDevice /></RoleProtectedRoute>} />
 

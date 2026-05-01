@@ -64,21 +64,37 @@ export default function Inventory() {
     fetchPurchaseOrders();
   }, []);
 
+  // Different backend versions return either a bare array or a paginated
+  // wrapper like `{ items: [...], pagination: {...} }`. Normalize both so the
+  // page never crashes on `.filter is not a function`.
+  const toArray = <T,>(data: unknown): T[] => {
+    if (Array.isArray(data)) return data as T[];
+    if (data && typeof data === 'object') {
+      const obj = data as Record<string, unknown>;
+      if (Array.isArray(obj.items)) return obj.items as T[];
+      if (Array.isArray(obj.data)) return obj.data as T[];
+      if (Array.isArray(obj.results)) return obj.results as T[];
+    }
+    return [];
+  };
+
   const fetchItems = async () => {
     try {
       const response = await api.get('/api/inventory/items');
-      setItems(response.data);
+      setItems(toArray<InventoryItem>(response.data));
     } catch (error) {
       console.error('Error fetching items:', error);
+      setItems([]);
     }
   };
 
   const fetchPurchaseOrders = async () => {
     try {
       const response = await api.get('/api/inventory/purchase-orders');
-      setPurchaseOrders(response.data);
+      setPurchaseOrders(toArray<PurchaseOrder>(response.data));
     } catch (error) {
       console.error('Error fetching purchase orders:', error);
+      setPurchaseOrders([]);
     }
   };
 
