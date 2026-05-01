@@ -95,6 +95,9 @@ import { logger, auditLogger } from './utils/logger';
 // Tenant-scope helpers + pagination
 import { paginate } from './utils/tenantScope';
 
+// Audit log writer (persists to AuditLog table)
+import { writeAudit } from './utils/audit';
+
 dotenv.config();
 
 // ============================================
@@ -373,6 +376,7 @@ app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (r
 
     if (!user || !user.isActive) {
       auditLogger.securityEvent('LOGIN_FAILED', { username, reason: 'invalid_user', ip: req.ip });
+      void writeAudit({ prisma, req, userId: user?.id ?? null, action: 'LOGIN_FAILED', resource: 'Authentication', resourceId: username });
       return res.status(401).json({
         error: 'INVALID_CREDENTIALS',
         message: 'Invalid username or password',
@@ -382,6 +386,7 @@ app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (r
     const validPassword = await bcrypt.compare(password, user.passwordHash);
     if (!validPassword) {
       auditLogger.securityEvent('LOGIN_FAILED', { username, reason: 'invalid_password', ip: req.ip });
+      void writeAudit({ prisma, req, userId: user.id, action: 'LOGIN_FAILED', resource: 'Authentication', resourceId: username });
       return res.status(401).json({
         error: 'INVALID_CREDENTIALS',
         message: 'Invalid username or password',
@@ -413,6 +418,7 @@ app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (r
     });
 
     auditLogger.securityEvent('LOGIN_SUCCESS', { userId: user.id, username, ip: req.ip });
+    void writeAudit({ prisma, req, userId: user.id, action: 'LOGIN_SUCCESS', resource: 'Authentication', resourceId: user.id });
 
     // Get user permissions based on roles
     const permissions = getUserPermissions(user.roleIds);
@@ -585,6 +591,7 @@ app.post('/api/patients', authenticateToken, requirePermission('patients:create'
       },
     });
 
+    void writeAudit({ prisma, req, action: 'PATIENT_CREATE', resource: 'Patient', resourceId: patient.id, newValue: { mrn: patient.mrn, name: patient.name } });
     res.status(201).json(patient);
   } catch (error) {
     console.error('Create patient error:', error);
@@ -3716,6 +3723,7 @@ app.post('/api/assets', authenticateToken, async (req: any, res: Response) => {
         status: status || 'active',
       },
     });
+    void writeAudit({ prisma, req, action: 'ASSET_CREATE', resource: 'Asset', resourceId: asset.id, newValue: { code: asset.assetCode, name: asset.name } });
     res.status(201).json(asset);
   } catch (error: any) {
     if (error?.code === 'P2002') {
@@ -3745,6 +3753,7 @@ app.put('/api/assets/:id', authenticateToken, async (req: any, res: Response) =>
     if (amcExpiry !== undefined) data.amcExpiry = amcExpiry ? new Date(amcExpiry) : null;
     if (status !== undefined) data.status = status;
     const asset = await prisma.asset.update({ where: { id: req.params.id }, data });
+    void writeAudit({ prisma, req, action: 'ASSET_UPDATE', resource: 'Asset', resourceId: asset.id, oldValue: { name: existing.name, status: existing.status }, newValue: data });
     res.json(asset);
   } catch (error: any) {
     if (error?.code === 'P2002') return res.status(409).json({ error: 'assetCode already exists for this tenant' });
@@ -3759,6 +3768,7 @@ app.delete('/api/assets/:id', authenticateToken, async (req: any, res: Response)
     const existing = await prisma.asset.findFirst({ where: { id: req.params.id, tenantId: req.user.tenantId } });
     if (!existing) return res.status(404).json({ error: 'Asset not found' });
     await prisma.asset.update({ where: { id: req.params.id }, data: { isActive: false } });
+    void writeAudit({ prisma, req, action: 'ASSET_DELETE', resource: 'Asset', resourceId: existing.id, oldValue: { code: existing.assetCode, name: existing.name } });
     res.status(204).end();
   } catch (error) {
     console.error('Delete asset error:', error);
@@ -3777,6 +3787,7 @@ app.post('/api/assets/:id/status', authenticateToken, async (req: any, res: Resp
     const existing = await prisma.asset.findFirst({ where: { id: req.params.id, tenantId: req.user.tenantId } });
     if (!existing) return res.status(404).json({ error: 'Asset not found' });
     const asset = await prisma.asset.update({ where: { id: req.params.id }, data: { status } });
+    void writeAudit({ prisma, req, action: 'ASSET_STATUS_CHANGE', resource: 'Asset', resourceId: asset.id, oldValue: { status: existing.status }, newValue: { status } });
     res.json(asset);
   } catch (error) {
     console.error('Change asset status error:', error);
@@ -4844,8 +4855,16 @@ app.get('/api/audit-logs', authenticateToken, async (req: any, res: Response) =>
     const { module, dateFrom, dateTo, action, userId } = req.query;
     const { skip, take } = paginate(req);
 
-    // AuditLog has no tenantId column; scope through the User relation.
-    const where: any = { user: { tenantId: req.user.tenantId } };
+    // AuditLog has no tenantId column. Scope via the User relation, but
+    // also allow the row through if it's already restricted by performedBy
+    // belonging to this tenant. This surfaces both attributed events and
+    // system rows where userId might be null.
+    const where: any = {
+      OR: [
+        { user: { tenantId: req.user.tenantId } },
+        { performedByUser: { tenantId: req.user.tenantId } },
+      ],
+    };
     if (module) where.resource = module;
     if (action) where.action = { contains: action as string, mode: 'insensitive' };
     if (userId) where.userId = userId;
@@ -4857,7 +4876,10 @@ app.get('/api/audit-logs', authenticateToken, async (req: any, res: Response) =>
 
     const logs = await prisma.auditLog.findMany({
       where,
-      include: { user: { select: { name: true, username: true } } },
+      include: {
+        user: { select: { name: true, username: true } },
+        performedByUser: { select: { name: true, username: true } },
+      },
       orderBy: { timestamp: 'desc' },
       skip,
       take,
@@ -4866,10 +4888,16 @@ app.get('/api/audit-logs', authenticateToken, async (req: any, res: Response) =>
     res.json(logs.map(log => ({
       id: log.id,
       userId: log.userId,
-      userName: log.user?.username || log.performedBy || 'System',
+      userName:
+        log.user?.username ||
+        log.performedByUser?.username ||
+        log.performedBy ||
+        'System',
       action: log.action,
       module: log.resource,
-      details: log.resourceId ? `Resource ID: ${log.resourceId}` : '',
+      details: log.resourceId
+        ? `${log.resource} · id ${log.resourceId}`
+        : (log.newValue ? JSON.stringify(log.newValue).slice(0, 120) : ''),
       ipAddress: log.ipAddress || 'N/A',
       timestamp: log.timestamp.toISOString(),
     })));

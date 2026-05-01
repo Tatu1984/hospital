@@ -1,0 +1,54 @@
+import type { PrismaClient } from '@prisma/client';
+import type { Request } from 'express';
+import { logger } from './logger';
+
+interface AuthedReq extends Request {
+  user?: { userId?: string; username?: string; tenantId?: string };
+}
+
+interface WriteAuditParams {
+  prisma: PrismaClient;
+  req?: AuthedReq;
+  userId?: string | null;
+  action: string;
+  resource: string;
+  resourceId?: string | null;
+  oldValue?: unknown;
+  newValue?: unknown;
+}
+
+/**
+ * Persist an audit log entry. Fire-and-forget — logs to Winston instead of
+ * throwing if the DB write fails, so a transient DB hiccup never breaks the
+ * caller's flow. Use for security events (LOGIN_SUCCESS, LOGIN_FAILED) and
+ * mutations (patient.create, asset.update, asset.delete, etc.).
+ */
+export async function writeAudit({
+  prisma,
+  req,
+  userId,
+  action,
+  resource,
+  resourceId,
+  oldValue,
+  newValue,
+}: WriteAuditParams): Promise<void> {
+  try {
+    await prisma.auditLog.create({
+      data: {
+        userId: userId ?? req?.user?.userId ?? null,
+        performedBy: req?.user?.userId ?? null,
+        action,
+        resource,
+        resourceId: resourceId ?? null,
+        oldValue: oldValue === undefined ? undefined : (oldValue as any),
+        newValue: newValue === undefined ? undefined : (newValue as any),
+        ipAddress: req?.ip ?? null,
+        userAgent: (req?.headers?.['user-agent'] as string) ?? null,
+      },
+    });
+  } catch (e: any) {
+    // Don't crash request flow if audit write fails. Winston still has it.
+    logger.warn('writeAudit failed', { action, resource, error: e?.message });
+  }
+}
