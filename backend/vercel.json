@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "./node_modules/.bin/prisma generate && ./node_modules/.bin/prisma migrate deploy",
+  "buildCommand": "./node_modules/.bin/prisma generate && (./node_modules/.bin/prisma migrate resolve --rolled-back 20251231000000_add_prescription_pharmacy_integration || true) && ./node_modules/.bin/prisma migrate deploy",
   "installCommand": "npm ci --include=dev",
   "framework": null,
   "rewrites": [
