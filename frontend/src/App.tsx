@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ToastProvider } from './components/Toast';
@@ -5,60 +6,63 @@ import Login from './pages/Login';
 import NewDashboard from './pages/NewDashboard';
 import MainLayout from './components/MainLayout';
 
-// Import all module pages
-import PatientRegistration from './pages/PatientRegistration';
-import Appointment from './pages/Appointment';
-import OPD from './pages/OPD';
-import Laboratory from './pages/Laboratory';
-import Radiology from './pages/Radiology';
-import Inpatient from './pages/Inpatient';
-import BillingPage from './pages/BillingPage';
-import NurseStation from './pages/NurseStation';
-import OperationTheatre from './pages/OperationTheatre';
-import BloodBank from './pages/BloodBank';
-import Pharmacy from './pages/Pharmacy';
-import MISReport from './pages/MISReport';
-import Emergency from './pages/Emergency';
-import ICU from './pages/ICU';
-import HR from './pages/HR';
-import Inventory from './pages/Inventory';
-import Ambulance from './pages/Ambulance';
-import Housekeeping from './pages/Housekeeping';
-import Diet from './pages/Diet';
-import Quality from './pages/Quality';
-import ReferralCommission from './pages/ReferralCommission';
-import IPDBilling from './pages/IPDBilling';
-import TPA from './pages/TPA';
-import MasterData from './pages/MasterData';
-import SystemControl from './pages/SystemControl';
-import LiveDashboard from './pages/LiveDashboard';
-import AuditLog from './pages/AuditLog';
+// Each non-landing route is lazy-loaded. Vite/Rollup splits each into its own
+// chunk, dropping the initial bundle from ~1.7 MB to ~250 KB. The first time
+// you click a sidebar item, that page's chunk fetches; subsequent visits are
+// cached. Login and NewDashboard stay eager — they're the entry points.
+const PatientRegistration = lazy(() => import('./pages/PatientRegistration'));
+const Appointment = lazy(() => import('./pages/Appointment'));
+const OPD = lazy(() => import('./pages/OPD'));
+const Laboratory = lazy(() => import('./pages/Laboratory'));
+const Radiology = lazy(() => import('./pages/Radiology'));
+const Inpatient = lazy(() => import('./pages/Inpatient'));
+const BillingPage = lazy(() => import('./pages/BillingPage'));
+const NurseStation = lazy(() => import('./pages/NurseStation'));
+const OperationTheatre = lazy(() => import('./pages/OperationTheatre'));
+const BloodBank = lazy(() => import('./pages/BloodBank'));
+const Pharmacy = lazy(() => import('./pages/Pharmacy'));
+const MISReport = lazy(() => import('./pages/MISReport'));
+const Emergency = lazy(() => import('./pages/Emergency'));
+const ICU = lazy(() => import('./pages/ICU'));
+const HR = lazy(() => import('./pages/HR'));
+const Inventory = lazy(() => import('./pages/Inventory'));
+const Ambulance = lazy(() => import('./pages/Ambulance'));
+const Housekeeping = lazy(() => import('./pages/Housekeeping'));
+const Diet = lazy(() => import('./pages/Diet'));
+const Quality = lazy(() => import('./pages/Quality'));
+const ReferralCommission = lazy(() => import('./pages/ReferralCommission'));
+const IPDBilling = lazy(() => import('./pages/IPDBilling'));
+const TPA = lazy(() => import('./pages/TPA'));
+const MasterData = lazy(() => import('./pages/MasterData'));
+const SystemControl = lazy(() => import('./pages/SystemControl'));
+const LiveDashboard = lazy(() => import('./pages/LiveDashboard'));
+const AuditLog = lazy(() => import('./pages/AuditLog'));
+const AssetManagement = lazy(() => import('./pages/AssetManagement'));
 
-// Import all remaining modules from AllModules
-import {
-  HealthCheckup,
-  SoftwareManagement,
-  Phlebotomy,
-  DoctorAssistant,
-  StoreManagement,
-  OPDClinical,
-  Tally,
-  MRDManagement,
-  DoctorAccounting,
-  AssetManagement,
-  VideoConversation,
-  CSSD,
-  EquipmentMaintenance,
-  Physiotherapy,
-  Mortuary,
-  BiometricAttendance,
-  DICOMPACS,
-  MedicalDevice,
-  PayrollManagement,
-  Pathology,
-  DoctorRegistration,
-  InpatientBilling
-} from './pages/AllModules';
+// Some smaller modules still live in AllModules.tsx — split that into one
+// async chunk. Each named import resolves once the chunk loads.
+const allModules = () => import('./pages/AllModules');
+const HealthCheckup = lazy(() => allModules().then((m) => ({ default: m.HealthCheckup })));
+const SoftwareManagement = lazy(() => allModules().then((m) => ({ default: m.SoftwareManagement })));
+const Phlebotomy = lazy(() => allModules().then((m) => ({ default: m.Phlebotomy })));
+const DoctorAssistant = lazy(() => allModules().then((m) => ({ default: m.DoctorAssistant })));
+const StoreManagement = lazy(() => allModules().then((m) => ({ default: m.StoreManagement })));
+const OPDClinical = lazy(() => allModules().then((m) => ({ default: m.OPDClinical })));
+const Tally = lazy(() => allModules().then((m) => ({ default: m.Tally })));
+const MRDManagement = lazy(() => allModules().then((m) => ({ default: m.MRDManagement })));
+const DoctorAccounting = lazy(() => allModules().then((m) => ({ default: m.DoctorAccounting })));
+const VideoConversation = lazy(() => allModules().then((m) => ({ default: m.VideoConversation })));
+const CSSD = lazy(() => allModules().then((m) => ({ default: m.CSSD })));
+const EquipmentMaintenance = lazy(() => allModules().then((m) => ({ default: m.EquipmentMaintenance })));
+const Physiotherapy = lazy(() => allModules().then((m) => ({ default: m.Physiotherapy })));
+const Mortuary = lazy(() => allModules().then((m) => ({ default: m.Mortuary })));
+const BiometricAttendance = lazy(() => allModules().then((m) => ({ default: m.BiometricAttendance })));
+const DICOMPACS = lazy(() => allModules().then((m) => ({ default: m.DICOMPACS })));
+const MedicalDevice = lazy(() => allModules().then((m) => ({ default: m.MedicalDevice })));
+const PayrollManagement = lazy(() => allModules().then((m) => ({ default: m.PayrollManagement })));
+const Pathology = lazy(() => allModules().then((m) => ({ default: m.Pathology })));
+const DoctorRegistration = lazy(() => allModules().then((m) => ({ default: m.DoctorRegistration })));
+const InpatientBilling = lazy(() => allModules().then((m) => ({ default: m.InpatientBilling })));
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { token, loading } = useAuth();
@@ -102,6 +106,13 @@ const RoleProtectedRoute = ({ children, path }: { children: React.ReactNode; pat
 };
 
 const AppRoutes = () => {
+  // Suspense fallback shown while a lazy route's chunk is downloading.
+  const RouteSpinner = () => (
+    <div className="flex items-center justify-center h-full p-12">
+      <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600" />
+    </div>
+  );
+
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
@@ -109,7 +120,9 @@ const AppRoutes = () => {
         path="/"
         element={
           <ProtectedRoute>
-            <MainLayout />
+            <Suspense fallback={<RouteSpinner />}>
+              <MainLayout />
+            </Suspense>
           </ProtectedRoute>
         }
       >
