@@ -32,6 +32,7 @@ import TPA from './pages/TPA';
 import MasterData from './pages/MasterData';
 import SystemControl from './pages/SystemControl';
 import LiveDashboard from './pages/LiveDashboard';
+import AuditLog from './pages/AuditLog';
 
 // Import all remaining modules from AllModules
 import {
@@ -183,6 +184,7 @@ const AppRoutes = () => {
         <Route path="master-data" element={<RoleProtectedRoute path="master-data"><MasterData /></RoleProtectedRoute>} />
         <Route path="software-management" element={<RoleProtectedRoute path="software-management"><SoftwareManagement /></RoleProtectedRoute>} />
         <Route path="system-control" element={<RoleProtectedRoute path="system-control"><SystemControl /></RoleProtectedRoute>} />
+        <Route path="audit-log" element={<RoleProtectedRoute path="audit-log"><AuditLog /></RoleProtectedRoute>} />
       </Route>
     </Routes>
   );

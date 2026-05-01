@@ -59,6 +59,11 @@ jobs:
       - name: Run linting
         run: npm run lint
 
+      - name: npm audit (backend, high+ severity)
+        run: npm audit --audit-level=high --omit=dev || true
+        # `|| true` while we triage existing advisories. Tighten to required
+        # once they're patched (see POA P2 #22).
+
       - name: Run tests (vitest, gates merge)
         run: npm test
         env:
@@ -118,6 +123,9 @@ jobs:
 
       - name: Run linting
         run: npm run lint --if-present
+
+      - name: npm audit (frontend, high+ severity)
+        run: npm audit --audit-level=high --omit=dev || true
 
       - name: Run tests
         run: npm test --if-present

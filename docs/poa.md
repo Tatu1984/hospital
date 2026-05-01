@@ -135,7 +135,7 @@ The rest inherit tenancy transitively (e.g. `Encounter.patientId → Patient.ten
 **Fix:** Hash or nonce inline styles; strip `'unsafe-inline'` from `style-src`.
 **Effort:** 2 h.
 
-### 16. [ ] Audit-log viewer UI
+### 16. [x] Audit-log viewer UI shipped
 **Where:** Frontend has no `/audit-log` page.
 **Risk:** Compliance reviewers can't actually use the audit log.
 **Fix:** Build a paginated, filterable viewer (already have `/api/audit-logs` endpoint) — date range, user, action, resource.
@@ -173,7 +173,7 @@ The rest inherit tenancy transitively (e.g. `Encounter.patientId → Patient.ten
 **Fix:** Use `rate-limit-redis` against an Upstash Redis URL.
 **Effort:** 2 h.
 
-### 22. [ ] Dependency scanning in CI
+### 22. [x] Dependency scanning in CI (advisory mode)
 **Risk:** 12 npm vulnerabilities outstanding, no fail-fast.
 **Fix:** Add `npm audit --audit-level=high` step in GitHub Actions.
 **Effort:** 1 h.
@@ -196,7 +196,7 @@ The rest inherit tenancy transitively (e.g. `Encounter.patientId → Patient.ten
 
 ## 🟢 P3 — LOW
 
-- [ ] **26.** Add a real favicon to the frontend.
+- [x] **26.** Frontend favicon added (`frontend/public/favicon.svg`, 64×64, blue cross).
 - [ ] **27.** Implement password reset flow (`/forgot-password`, `/reset-password`) end-to-end (page exists in some bundles, no working backend).
 - [x] **28.** Inventory, AssetManagement, and PatientRegistration use the toast component instead of `alert()`.
 - [x] **29.** Hide Swagger UI in production — Swagger only mounted when `NODE_ENV !== 'production'` or explicit opt-in via `EXPOSE_API_DOCS=true`.

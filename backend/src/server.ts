@@ -4841,10 +4841,14 @@ app.post('/api/users/:id/reset-password', authenticateToken, async (req: any, re
 // Get audit logs
 app.get('/api/audit-logs', authenticateToken, async (req: any, res: Response) => {
   try {
-    const { module, dateFrom, dateTo } = req.query;
+    const { module, dateFrom, dateTo, action, userId } = req.query;
+    const { skip, take } = paginate(req);
 
-    const where: any = {};
+    // AuditLog has no tenantId column; scope through the User relation.
+    const where: any = { user: { tenantId: req.user.tenantId } };
     if (module) where.resource = module;
+    if (action) where.action = { contains: action as string, mode: 'insensitive' };
+    if (userId) where.userId = userId;
     if (dateFrom || dateTo) {
       where.timestamp = {};
       if (dateFrom) where.timestamp.gte = new Date(dateFrom as string);
@@ -4853,11 +4857,10 @@ app.get('/api/audit-logs', authenticateToken, async (req: any, res: Response) =>
 
     const logs = await prisma.auditLog.findMany({
       where,
-      include: {
-        user: { select: { name: true, username: true } },
-      },
+      include: { user: { select: { name: true, username: true } } },
       orderBy: { timestamp: 'desc' },
-      take: 100,
+      skip,
+      take,
     });
 
     res.json(logs.map(log => ({
