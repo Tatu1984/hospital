@@ -8,8 +8,10 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Bed, LogOut, Search } from 'lucide-react';
+import { Plus, Bed, LogOut, Search, ArrowLeftRight } from 'lucide-react';
 import api from '../services/api';
+import { useToast } from '../components/Toast';
+import { toArray } from '../utils/list';
 
 interface Admission {
   id: string;
@@ -28,13 +30,12 @@ interface Admission {
 interface Bed {
   id: string;
   bedNumber: string;
-  ward: {
-    name: string;
-    building: string;
-    floor: string;
-  };
+  category?: string;
   status: string;
-  bedType: string;
+  wardId?: string | null;
+  ward?: { id: string; name: string } | null;
+  branchId?: string;
+  floor?: string | null;
 }
 
 interface Patient {
@@ -47,11 +48,14 @@ interface Patient {
 }
 
 export default function Inpatient() {
+  const toast = useToast();
   const [admissions, setAdmissions] = useState<Admission[]>([]);
   const [beds, setBeds] = useState<Bed[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [isAdmitDialogOpen, setIsAdmitDialogOpen] = useState(false);
   const [isDischargeDialogOpen, setIsDischargeDialogOpen] = useState(false);
+  const [isTransferDialogOpen, setIsTransferDialogOpen] = useState(false);
+  const [transferTargetBedId, setTransferTargetBedId] = useState<string>('');
   const [selectedAdmission, setSelectedAdmission] = useState<Admission | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(false);
@@ -102,38 +106,84 @@ export default function Inpatient() {
   const fetchBeds = async () => {
     try {
       const response = await api.get('/api/beds');
-      setBeds(response.data);
+      setBeds(toArray<Bed>(response.data));
     } catch (error) {
       console.error('Error fetching beds:', error);
+      setBeds([]);
     }
   };
 
   const fetchPatients = async () => {
     try {
-      const response = await api.get('/api/patients');
-      setPatients(response.data);
+      const response = await api.get('/api/patients', { params: { limit: 500 } });
+      setPatients(toArray<Patient>(response.data));
     } catch (error) {
       console.error('Error fetching patients:', error);
+      setPatients([]);
     }
   };
 
+  const errMsg = (e: any, fallback: string) => {
+    const data = e?.response?.data;
+    if (data?.details?.[0]) {
+      const d = data.details[0];
+      return d.field ? `${d.field}: ${d.message}` : d.message;
+    }
+    return data?.error || data?.message || e?.message || fallback;
+  };
+
   const handleAdmit = async () => {
+    if (!admitFormData.patientId) { toast.warning('Patient required'); return; }
+
     setLoading(true);
     try {
       await api.post('/api/admissions', {
         patientId: admitFormData.patientId,
         bedId: admitFormData.bedId || null,
-        diagnosis: admitFormData.diagnosis,
-        admissionNotes: admitFormData.admissionNotes
+        diagnosis: admitFormData.diagnosis || undefined,
+        admissionNotes: admitFormData.admissionNotes || undefined,
       });
 
       await fetchAdmissions();
       await fetchBeds();
       setIsAdmitDialogOpen(false);
       setAdmitFormData({ patientId: '', bedId: '', diagnosis: '', admissionNotes: '' });
-    } catch (error) {
+      toast.success('Patient admitted');
+    } catch (error: any) {
       console.error('Error admitting patient:', error);
-      alert('Failed to admit patient');
+      toast.error('Could not admit patient', errMsg(error, 'Try again.'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Bed transfer (cross-ward re-allocation). Calls a backend endpoint to swap
+  // the admission's bedId; the backend frees the old bed and occupies the new.
+  const openTransferDialog = (admission: Admission) => {
+    setSelectedAdmission(admission);
+    setTransferTargetBedId('');
+    setIsTransferDialogOpen(true);
+  };
+
+  const handleTransferBed = async () => {
+    if (!selectedAdmission || !transferTargetBedId) {
+      toast.warning('Pick a bed', 'Select the destination bed.');
+      return;
+    }
+    setLoading(true);
+    try {
+      await api.post(`/api/admissions/${selectedAdmission.id}/transfer-bed`, {
+        bedId: transferTargetBedId,
+      });
+      await fetchAdmissions();
+      await fetchBeds();
+      setIsTransferDialogOpen(false);
+      setSelectedAdmission(null);
+      setTransferTargetBedId('');
+      toast.success('Bed transferred');
+    } catch (error: any) {
+      console.error('Error transferring bed:', error);
+      toast.error('Could not transfer bed', errMsg(error, 'Try again.'));
     } finally {
       setLoading(false);
     }
@@ -155,9 +205,9 @@ export default function Inpatient() {
       setIsDischargeDialogOpen(false);
       setSelectedAdmission(null);
       setDischargeFormData({ dischargeSummary: '', followUpDate: '', instructions: '' });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error discharging patient:', error);
-      alert('Failed to discharge patient');
+      toast.error('Could not discharge patient', errMsg(error, 'Try again.'));
     } finally {
       setLoading(false);
     }
@@ -174,8 +224,12 @@ export default function Inpatient() {
     adm.ward.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const availableBeds = beds.filter(bed => bed.status === 'available');
-  const occupiedBeds = beds.filter(bed => bed.status === 'occupied');
+  // Backend bed.status defaults to 'vacant'; legacy seeds may use 'available'.
+  // Normalize so the filter catches both.
+  const isVacant = (s: string) => ['vacant', 'available'].includes((s || '').toLowerCase());
+  const isOccupied = (s: string) => (s || '').toLowerCase() === 'occupied';
+  const availableBeds = beds.filter(bed => isVacant(bed.status));
+  const occupiedBeds = beds.filter(bed => isOccupied(bed.status));
   const activeAdmissions = admissions.filter(adm => adm.status === 'active');
 
   const stats = {
@@ -225,12 +279,13 @@ export default function Inpatient() {
                 <Label htmlFor="bed">Bed Assignment</Label>
                 <Select value={admitFormData.bedId} onValueChange={(value) => setAdmitFormData(prev => ({ ...prev, bedId: value }))}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Select bed (optional)" />
+                    <SelectValue placeholder={availableBeds.length ? 'Select bed (optional)' : 'No vacant beds — admit first, assign later'} />
                   </SelectTrigger>
                   <SelectContent>
                     {availableBeds.map((bed) => (
                       <SelectItem key={bed.id} value={bed.id}>
-                        {bed.ward.name} - {bed.bedNumber} ({bed.bedType})
+                        {(bed.ward?.name || 'Ward')} — {bed.bedNumber}
+                        {bed.category ? ` · ${bed.category}` : ''}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -369,6 +424,15 @@ export default function Inpatient() {
                           <div className="flex gap-2">
                             <Button
                               size="sm"
+                              variant="outline"
+                              onClick={() => openTransferDialog(admission)}
+                              title="Move patient to a different ward / bed"
+                            >
+                              <ArrowLeftRight className="w-4 h-4 mr-1" />
+                              Transfer
+                            </Button>
+                            <Button
+                              size="sm"
                               onClick={() => openDischargeDialog(admission)}
                             >
                               <LogOut className="w-4 h-4 mr-1" />
@@ -463,6 +527,58 @@ export default function Inpatient() {
             </Button>
             <Button onClick={handleDischarge} disabled={loading || !dischargeFormData.dischargeSummary}>
               {loading ? 'Discharging...' : 'Confirm Discharge'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Transfer-bed dialog: re-allocate a patient between wards / beds.
+          Lists every vacant bed across all wards (ICU, regular, etc.) so
+          an ICU patient can be moved to general and vice-versa. */}
+      <Dialog open={isTransferDialogOpen} onOpenChange={setIsTransferDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Transfer Patient to Another Bed</DialogTitle>
+            <DialogDescription>
+              {selectedAdmission ? (
+                <>
+                  {selectedAdmission.patientName} ({selectedAdmission.patientMRN}) — currently in
+                  {' '}<span className="font-medium">{selectedAdmission.ward || 'unassigned ward'}</span>
+                  {selectedAdmission.bedNumber && selectedAdmission.bedNumber !== 'Unassigned'
+                    ? ` · bed ${selectedAdmission.bedNumber}` : ''}
+                </>
+              ) : 'Select a destination bed.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="space-y-2">
+              <Label>Destination bed</Label>
+              <Select value={transferTargetBedId} onValueChange={setTransferTargetBedId}>
+                <SelectTrigger>
+                  <SelectValue placeholder={availableBeds.length ? 'Pick a vacant bed' : 'No vacant beds available'} />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableBeds
+                    .filter((b) => b.id !== selectedAdmission?.bedId)
+                    .map((bed) => (
+                      <SelectItem key={bed.id} value={bed.id}>
+                        {(bed.ward?.name || 'Ward')} — {bed.bedNumber}
+                        {bed.category ? ` · ${bed.category}` : ''}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-slate-500">
+                The current bed will be marked vacant and the destination bed marked occupied.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsTransferDialogOpen(false)} disabled={loading}>
+              Cancel
+            </Button>
+            <Button onClick={handleTransferBed} disabled={loading || !transferTargetBedId}>
+              {loading ? 'Transferring…' : 'Transfer'}
             </Button>
           </DialogFooter>
         </DialogContent>

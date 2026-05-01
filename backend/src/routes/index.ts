@@ -136,6 +136,7 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   'GET /api/admissions': ['admissions:view'],
   'POST /api/admissions': ['admissions:create'],
   'POST /api/admissions/:id/discharge': ['admissions:discharge'],
+  'POST /api/admissions/:id/transfer-bed': ['ipd:edit', 'beds:manage'],
   'GET /api/beds': ['beds:view'],
   'GET /api/wards': ['master_data:view'],
   'GET /api/nurse/medications': ['nurse_station:view'],

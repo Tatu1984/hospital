@@ -2373,20 +2373,87 @@ app.post('/api/admissions/:id/discharge', authenticateToken, async (req: any, re
 
 app.get('/api/beds', authenticateToken, async (req: any, res: Response) => {
   try {
-    const { status, category } = req.query;
+    const { status, category, wardId } = req.query;
     const where: any = { branchId: req.user.branchId };
 
     if (status) where.status = status;
     if (category) where.category = category;
+    if (wardId) where.wardId = wardId;
 
+    // Bed has wardId but the schema's relation isn't a foreign key on Bed
+    // (Ward isn't relation-linked in this Prisma schema). Manually join the
+    // ward record so the frontend can render 'Ward Name — Bed Number'.
     const beds = await prisma.bed.findMany({
       where,
-      orderBy: { bedNumber: 'asc' },
+      orderBy: [{ category: 'asc' }, { bedNumber: 'asc' }],
     });
+    const wardIds = Array.from(new Set(beds.map((b: any) => b.wardId).filter(Boolean)));
+    const wards = wardIds.length
+      ? await prisma.ward.findMany({ where: { id: { in: wardIds as string[] } } })
+      : [];
+    const wardById = new Map(wards.map((w: any) => [w.id, w]));
+    const enriched = beds.map((b: any) => ({
+      ...b,
+      ward: b.wardId ? (wardById.get(b.wardId) || null) : null,
+    }));
 
-    res.json(beds);
+    res.json(enriched);
   } catch (error) {
     console.error('Get beds error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Bed transfer — move an admission from one bed to another. Frees the old
+// bed, occupies the new one, updates the admission's bedId. Cross-ward
+// transfer (ICU ↔ general) is allowed.
+app.post('/api/admissions/:id/transfer-bed', authenticateToken, async (req: any, res: Response) => {
+  const { bedId } = req.body || {};
+  if (!bedId || typeof bedId !== 'string') {
+    return res.status(400).json({ error: 'bedId is required' });
+  }
+  try {
+    const admission = await prisma.admission.findFirst({
+      where: { id: req.params.id, patient: { tenantId: req.user.tenantId }, status: 'active' },
+    });
+    if (!admission) return res.status(404).json({ error: 'Active admission not found' });
+
+    const targetBed = await prisma.bed.findFirst({
+      where: { id: bedId, branchId: req.user.branchId },
+    });
+    if (!targetBed) return res.status(404).json({ error: 'Destination bed not found in this branch' });
+    const isVacant = ['vacant', 'available'].includes((targetBed.status || '').toLowerCase());
+    if (!isVacant) return res.status(409).json({ error: 'Destination bed is not vacant' });
+
+    const oldBedId = admission.bedId;
+
+    await prisma.$transaction(async (tx: any) => {
+      if (oldBedId && oldBedId !== bedId) {
+        await tx.bed.update({ where: { id: oldBedId }, data: { status: 'vacant' } });
+      }
+      await tx.bed.update({ where: { id: bedId }, data: { status: 'occupied' } });
+      await tx.admission.update({ where: { id: admission.id }, data: { bedId } });
+    });
+
+    void writeAudit({
+      prisma, req,
+      action: 'BED_TRANSFER',
+      resource: 'Admission',
+      resourceId: admission.id,
+      oldValue: { bedId: oldBedId },
+      newValue: { bedId },
+    });
+
+    const updated = await prisma.admission.findUnique({
+      where: { id: admission.id },
+      include: {
+        bed: true,
+        patient: { select: { name: true, mrn: true } },
+      },
+    });
+    res.json(updated);
+  } catch (error) {
+    console.error('Bed transfer error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
