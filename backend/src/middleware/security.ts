@@ -6,6 +6,17 @@ import { Request, Response, NextFunction } from 'express';
 import { config } from '../config';
 import { logger, auditLogger } from '../utils/logger';
 
+// CSP `connect-src` must be a list of individual origins, not a single
+// comma-separated string. CORS_ORIGIN is comma-separated, so split it here
+// (and drop any "*" entries — they aren't valid CSP values either).
+const cspConnectSources = [
+  "'self'",
+  ...config.cors.origin
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s && s !== '*'),
+];
+
 // Helmet security headers
 export const securityHeaders = helmet({
   contentSecurityPolicy: {
@@ -15,7 +26,7 @@ export const securityHeaders = helmet({
       scriptSrc: ["'self'"],
       imgSrc: ["'self'", 'data:', 'blob:'],
       fontSrc: ["'self'"],
-      connectSrc: ["'self'", config.cors.origin],
+      connectSrc: cspConnectSources,
     },
   },
   crossOriginEmbedderPolicy: false,
