@@ -119,15 +119,16 @@ export const createPrescriptionSchema = z.object({
   notes: z.string().max(1000).optional(),
 });
 
-// Admission validators
+// Admission validators. Optional fields tolerate `null` because the frontend
+// forms send blank slots as null rather than omitting the key.
 export const createAdmissionSchema = z.object({
   patientId: idSchema,
-  wardId: idSchema,
-  bedId: idSchema,
-  admittingDoctorId: idSchema,
+  wardId: idSchema.optional().nullable(),
+  bedId: idSchema.optional().nullable(),
+  admittingDoctorId: idSchema.optional().nullable(),
   admissionType: z.enum(['EMERGENCY', 'ELECTIVE', 'TRANSFER']).default('ELECTIVE'),
-  provisionalDiagnosis: z.string().max(1000).optional(),
-  admissionNotes: z.string().max(5000).optional(),
+  provisionalDiagnosis: z.string().max(1000).optional().nullable(),
+  admissionNotes: z.string().max(5000).optional().nullable(),
 });
 
 export const dischargeSchema = z.object({
@@ -137,16 +138,24 @@ export const dischargeSchema = z.object({
   followUpInstructions: z.string().max(2000).optional(),
 });
 
-// Lab order validators
+// Lab order validators. The frontend may send a single testId in the legacy
+// shape OR an array; preprocess and accept either, and don't require UUIDs
+// for testId — some forms send display names (slug) until master data wiring.
 export const createLabOrderSchema = z.object({
   patientId: idSchema,
-  encounterId: idSchema.optional(),
-  tests: z.array(z.object({
-    testId: idSchema,
+  encounterId: idSchema.optional().nullable(),
+  // Accept either { tests: [...] } or a flat { testId, priority, notes } and
+  // normalize to an array. Each test's id is just a non-empty string here.
+  tests: z.preprocess((v) => {
+    if (Array.isArray(v)) return v;
+    if (v && typeof v === 'object') return [v];
+    return v;
+  }, z.array(z.object({
+    testId: z.string().min(1),
     priority: z.enum(['ROUTINE', 'URGENT', 'STAT']).default('ROUTINE'),
-    notes: z.string().max(500).optional(),
-  })).min(1),
-  clinicalInfo: z.string().max(1000).optional(),
+    notes: z.string().max(500).optional().nullable(),
+  })).min(1)),
+  clinicalInfo: z.string().max(1000).optional().nullable(),
 });
 
 export const labResultSchema = z.object({
@@ -183,56 +192,97 @@ export const paymentSchema = z.object({
   notes: z.string().max(500).optional(),
 });
 
-// Emergency validators
+// Emergency validators. Optional fields accept null. Triage level uses a
+// preprocess to normalize lower-case input ('red' → 'RED').
 export const createEmergencySchema = z.object({
-  patientId: idSchema.optional(),
+  patientId: idSchema.optional().nullable(),
   patientName: z.string().min(1).max(100),
-  patientContact: z.string().regex(phoneRegex).optional(),
-  patientAge: z.number().int().min(0).max(150).optional(),
-  patientGender: z.enum(['MALE', 'FEMALE', 'OTHER']).optional(),
-  triageLevel: z.enum(['RED', 'YELLOW', 'GREEN']),
+  patientContact: z.string().regex(phoneRegex).optional().nullable(),
+  patientAge: z.preprocess(
+    (v) => (typeof v === 'string' && v ? Number(v) : v),
+    z.number().int().min(0).max(150).optional().nullable()
+  ),
+  patientGender: z.preprocess(
+    (v) => (typeof v === 'string' ? v.toUpperCase() : v),
+    z.enum(['MALE', 'FEMALE', 'OTHER']).optional().nullable()
+  ),
+  triageLevel: z.preprocess(
+    (v) => (typeof v === 'string' ? v.toUpperCase() : v),
+    z.enum(['RED', 'YELLOW', 'GREEN'])
+  ),
   chiefComplaint: z.string().min(1).max(1000),
-  arrivalMode: z.enum(['WALK_IN', 'AMBULANCE', 'POLICE', 'REFERRED']).default('WALK_IN'),
+  arrivalMode: z.preprocess(
+    (v) => (typeof v === 'string' ? v.toUpperCase().replace(/[ -]/g, '_') : v),
+    z.enum(['WALK_IN', 'AMBULANCE', 'POLICE', 'REFERRED']).default('WALK_IN')
+  ),
   isMLC: z.boolean().default(false),
-  mlcNumber: z.string().max(50).optional(),
-  attendantName: z.string().max(100).optional(),
-  attendantContact: z.string().regex(phoneRegex).optional(),
+  mlcNumber: z.string().max(50).optional().nullable(),
+  attendantName: z.string().max(100).optional().nullable(),
+  attendantContact: z.string().regex(phoneRegex).optional().nullable(),
 });
 
-// Surgery validators
+// Surgery validators. patientId/procedureId/surgeonId/otRoomId may arrive as
+// free strings (display name slugs) until the OT page is wired to master data
+// dropdowns — accept either a UUID or any non-empty string for now, and let
+// the handler resolve it.
 export const scheduleSurgerySchema = z.object({
-  patientId: idSchema,
-  admissionId: idSchema.optional(),
-  procedureId: idSchema,
-  surgeonId: idSchema,
-  otRoomId: idSchema,
-  scheduledDate: z.string().datetime(),
-  estimatedDuration: z.number().int().min(15).max(1440),
-  anesthesiaType: z.enum(['GENERAL', 'SPINAL', 'EPIDURAL', 'LOCAL', 'REGIONAL', 'SEDATION']),
-  preOpDiagnosis: z.string().max(1000).optional(),
-  preOpNotes: z.string().max(5000).optional(),
+  patientId: z.string().min(1),
+  admissionId: z.string().min(1).optional().nullable(),
+  procedureId: z.string().min(1).optional().nullable(),
+  procedureName: z.string().max(200).optional().nullable(),
+  surgeonId: z.string().min(1).optional().nullable(),
+  surgeonName: z.string().max(100).optional().nullable(),
+  otRoomId: z.string().min(1).optional().nullable(),
+  otRoom: z.string().max(50).optional().nullable(),
+  anesthetistId: z.string().min(1).optional().nullable(),
+  anesthetistName: z.string().max(100).optional().nullable(),
+  scheduledDate: z.string(),
+  scheduledTime: z.string().optional().nullable(),
+  estimatedDuration: z.preprocess(
+    (v) => (typeof v === 'string' && v ? Number(v) : v),
+    z.number().int().min(15).max(1440).optional().nullable()
+  ),
+  anesthesiaType: z.preprocess(
+    (v) => (typeof v === 'string' ? v.toUpperCase() : v),
+    z.enum(['GENERAL', 'SPINAL', 'EPIDURAL', 'LOCAL', 'REGIONAL', 'SEDATION']).optional().nullable()
+  ),
+  preOpDiagnosis: z.string().max(1000).optional().nullable(),
+  preOpNotes: z.string().max(5000).optional().nullable(),
 });
 
-// Blood Bank validators
+// Blood Bank validators. Forms send display values for some fields (gender,
+// blood group). Preprocess uppercase and accept null/missing for soft fields.
 export const bloodDonorSchema = z.object({
   name: z.string().min(2).max(100),
   contact: z.string().regex(phoneRegex),
-  email: z.string().email().optional(),
+  email: z.string().email().optional().nullable(),
   dob: dateSchema,
-  gender: z.enum(['MALE', 'FEMALE']),
-  bloodGroup: z.enum(['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']),
-  address: z.string().max(500),
+  gender: z.preprocess(
+    (v) => (typeof v === 'string' ? v.toUpperCase() : v),
+    z.enum(['MALE', 'FEMALE', 'OTHER'])
+  ),
+  bloodGroup: z.string().min(1).max(3),
+  address: z.string().max(500).optional().nullable(),
   lastDonationDate: optionalDateSchema,
 });
 
 export const bloodRequestSchema = z.object({
-  patientId: idSchema,
-  bloodGroup: z.enum(['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']),
-  component: z.enum(['WHOLE_BLOOD', 'PRBC', 'FFP', 'PLATELETS', 'CRYOPRECIPITATE']),
-  units: z.number().int().min(1).max(20),
-  priority: z.enum(['ROUTINE', 'URGENT', 'EMERGENCY']).default('ROUTINE'),
-  reason: z.string().max(500),
-  requestedBy: idSchema,
+  patientId: z.string().min(1),
+  bloodGroup: z.string().min(1).max(3),
+  component: z.preprocess(
+    (v) => (typeof v === 'string' ? v.toUpperCase().replace(/[ -]/g, '_') : v),
+    z.enum(['WHOLE_BLOOD', 'PRBC', 'FFP', 'PLATELETS', 'CRYOPRECIPITATE']).optional().nullable()
+  ),
+  units: z.preprocess(
+    (v) => (typeof v === 'string' && v ? Number(v) : v),
+    z.number().int().min(1).max(20)
+  ),
+  priority: z.preprocess(
+    (v) => (typeof v === 'string' ? v.toUpperCase() : v),
+    z.enum(['ROUTINE', 'URGENT', 'EMERGENCY']).default('ROUTINE')
+  ),
+  reason: z.string().max(500).optional().nullable(),
+  requestedBy: z.string().min(1).optional().nullable(),
 });
 
 // Inventory validators
@@ -297,13 +347,22 @@ export const icuBedAssignmentSchema = z.object({
 
 // Radiology validators
 export const createRadiologyOrderSchema = z.object({
-  patientId: idSchema,
-  encounterId: idSchema.optional(),
-  testId: idSchema,
-  modality: z.enum(['X-RAY', 'CT', 'MRI', 'ULTRASOUND', 'MAMMOGRAPHY', 'FLUOROSCOPY', 'PET', 'NUCLEAR']),
-  priority: z.enum(['ROUTINE', 'URGENT', 'STAT']).default('ROUTINE'),
-  clinicalHistory: z.string().max(2000).optional(),
-  specialInstructions: z.string().max(1000).optional(),
+  patientId: z.string().min(1),
+  encounterId: z.string().min(1).optional().nullable(),
+  // testId may be a UUID OR a display name slug ("X-Ray Chest") until master
+  // data wiring lands. Accept either; the handler resolves it.
+  testId: z.string().min(1).optional().nullable(),
+  testName: z.string().max(200).optional().nullable(),
+  modality: z.preprocess(
+    (v) => (typeof v === 'string' ? v.toUpperCase().replace(/[ ]/g, '_') : v),
+    z.enum(['X-RAY', 'CT', 'MRI', 'ULTRASOUND', 'MAMMOGRAPHY', 'FLUOROSCOPY', 'PET', 'NUCLEAR']).optional().nullable()
+  ),
+  priority: z.preprocess(
+    (v) => (typeof v === 'string' ? v.toUpperCase() : v),
+    z.enum(['ROUTINE', 'URGENT', 'STAT']).default('ROUTINE')
+  ),
+  clinicalHistory: z.string().max(2000).optional().nullable(),
+  specialInstructions: z.string().max(1000).optional().nullable(),
 });
 
 export const radiologyResultSchema = z.object({
@@ -329,15 +388,36 @@ export const pharmacyDispenseSchema = z.object({
 
 export const drugMasterSchema = z.object({
   name: z.string().min(2).max(200),
-  genericName: z.string().max(200).optional(),
-  category: z.string().max(100),
-  form: z.enum(['TABLET', 'CAPSULE', 'SYRUP', 'INJECTION', 'CREAM', 'OINTMENT', 'DROPS', 'INHALER', 'PATCH', 'POWDER', 'GEL', 'LOTION', 'SUPPOSITORY', 'OTHER']),
-  strength: z.string().max(100),
-  manufacturer: z.string().max(200).optional(),
-  unitPrice: z.number().min(0).max(1000000),
-  isNarcotic: z.boolean().default(false),
-  requiresPrescription: z.boolean().default(true),
-  reorderLevel: z.number().int().min(0).max(100000).optional(),
+  genericName: z.string().max(200).optional().nullable(),
+  category: z.string().max(100).optional().nullable(),
+  form: z.preprocess(
+    (v) => (typeof v === 'string' ? v.toUpperCase() : v),
+    z.enum(['TABLET', 'CAPSULE', 'SYRUP', 'INJECTION', 'CREAM', 'OINTMENT', 'DROPS', 'INHALER', 'PATCH', 'POWDER', 'GEL', 'LOTION', 'SUPPOSITORY', 'OTHER']).optional().nullable()
+  ),
+  strength: z.string().max(100).optional().nullable(),
+  manufacturer: z.string().max(200).optional().nullable(),
+  unitPrice: z.preprocess(
+    (v) => (typeof v === 'string' && v ? Number(v) : v),
+    z.number().min(0).max(1000000).optional().nullable()
+  ),
+  // Accept both 'price' and 'unitPrice' for forms that use the shorter key.
+  price: z.preprocess(
+    (v) => (typeof v === 'string' && v ? Number(v) : v),
+    z.number().min(0).max(1000000).optional().nullable()
+  ),
+  isNarcotic: z.boolean().default(false).optional(),
+  requiresPrescription: z.boolean().default(true).optional(),
+  reorderLevel: z.preprocess(
+    (v) => (typeof v === 'string' && v ? Number(v) : v),
+    z.number().int().min(0).max(100000).optional().nullable()
+  ),
+  // Stock fields the Pharmacy "Add Stock" form may include directly:
+  quantity: z.preprocess(
+    (v) => (typeof v === 'string' && v ? Number(v) : v),
+    z.number().int().min(0).max(10_000_000).optional().nullable()
+  ),
+  batchNumber: z.string().max(50).optional().nullable(),
+  expiryDate: optionalDateSchema,
 });
 
 // Ambulance validators
