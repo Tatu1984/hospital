@@ -154,9 +154,27 @@ export default function PatientRegistration() {
     }
   };
 
+  // Compute age (in whole years) from a YYYY-MM-DD date string. Returns ''
+  // for empty / unparseable input so the age field clears.
+  const ageFromDateString = (yyyymmdd: string): string => {
+    if (!yyyymmdd) return '';
+    const d = new Date(yyyymmdd);
+    if (Number.isNaN(d.getTime())) return '';
+    const now = new Date();
+    let years = now.getFullYear() - d.getFullYear();
+    const m = now.getMonth() - d.getMonth();
+    if (m < 0 || (m === 0 && now.getDate() < d.getDate())) years -= 1;
+    return years >= 0 ? String(years) : '';
+  };
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
+    setFormData((prev) => {
+      const next = { ...prev, [name]: value };
+      // Keep `age` in sync whenever DOB changes — derived field, no manual edit.
+      if (name === 'dateOfBirth') next.age = ageFromDateString(value);
+      return next;
+    });
   };
 
   const buildNotes = () => {
@@ -345,8 +363,16 @@ export default function PatientRegistration() {
                 <Input id="dateOfBirth" name="dateOfBirth" type="date" value={formData.dateOfBirth} onChange={handleInputChange} required />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="age">Age</Label>
-                <Input id="age" name="age" type="number" value={formData.age} onChange={handleInputChange} />
+                <Label htmlFor="age">Age (auto)</Label>
+                <Input
+                  id="age"
+                  name="age"
+                  type="number"
+                  value={formData.age}
+                  readOnly
+                  placeholder="from date of birth"
+                  className="bg-slate-50"
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="gender">Gender *</Label>
