@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { ErrorBoundary } from './ErrorBoundary';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -257,9 +258,13 @@ const MainLayout = () => {
           </div>
         </header>
 
-        {/* Main Content Area */}
+        {/* Main Content Area — wrapped in a per-page ErrorBoundary so a
+            render error in one route only blanks that page. The sidebar,
+            header, and routing stay usable. */}
         <main className="flex-1 overflow-y-auto bg-slate-50">
-          <Outlet />
+          <ErrorBoundary key={location.pathname}>
+            <Outlet />
+          </ErrorBoundary>
         </main>
       </div>
     </div>

@@ -12,11 +12,46 @@ const TAG_LENGTH = 16;
 const KEY_LENGTH = 32;
 const ITERATIONS = 100000;
 
-// Get encryption key from environment or generate one
+// PHI encryption key. Must be a dedicated secret in production — sharing it
+// with JWT_SECRET means a single key compromise breaks both layers.
+//
+// In dev/test we still allow falling back to JWT_SECRET so local workflows
+// (`npm test`, `npm run dev`) don't require an extra env var. In production
+// the boot sequence in server.ts refuses to start without PHI_ENCRYPTION_KEY.
 const getEncryptionKey = (): Buffer => {
   const secret = process.env.PHI_ENCRYPTION_KEY || config.jwt.secret;
   return crypto.scryptSync(secret, 'phi-salt', KEY_LENGTH);
 };
+
+/**
+ * Validate that PHI_ENCRYPTION_KEY is configured well enough for the current
+ * environment. Call once at boot (before any request hits the encrypt/decrypt
+ * helpers) and throw if it's not safe to start.
+ */
+export function assertPHIEncryptionKeyOK(): void {
+  const key = process.env.PHI_ENCRYPTION_KEY;
+  const isProd = process.env.NODE_ENV === 'production';
+
+  if (isProd) {
+    if (!key) {
+      throw new Error(
+        'PHI_ENCRYPTION_KEY must be set in production. Falling back to JWT_SECRET ' +
+        'is no longer permitted — a single key compromise would break two layers.'
+      );
+    }
+    if (key.length < 32) {
+      throw new Error('PHI_ENCRYPTION_KEY must be at least 32 characters in production.');
+    }
+    if (key === config.jwt.secret) {
+      throw new Error('PHI_ENCRYPTION_KEY must NOT equal JWT_SECRET. Use a distinct value.');
+    }
+  } else if (!key) {
+    logger.warn(
+      'PHI_ENCRYPTION_KEY not set — falling back to JWT_SECRET. OK for dev/test, ' +
+      'never for production.'
+    );
+  }
+}
 
 /**
  * Encrypt sensitive PHI data

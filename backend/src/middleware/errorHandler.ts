@@ -127,6 +127,7 @@ export const errorHandler = (
     method: req.method,
     ip: req.ip,
     userId: (req as any).user?.userId,
+    requestId: (req as any).requestId,
   });
 
   // Handle specific error types
@@ -151,8 +152,12 @@ export const errorHandler = (
     );
   }
 
-  // Send response
-  const response = formatErrorResponse(appError, config.isDevelopment);
+  // Send response — include request id so callers can quote it when
+  // reporting an issue.
+  const response = {
+    ...formatErrorResponse(appError, config.isDevelopment),
+    requestId: (req as any).requestId,
+  };
   res.status(appError.statusCode).json(response);
 };
 

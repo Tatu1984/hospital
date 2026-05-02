@@ -35,6 +35,7 @@ import {
   apiSecurityHeaders,
   dynamicRBAC,
   dynamicValidation,
+  requestId,
 } from './middleware';
 
 // Import validators
@@ -120,6 +121,21 @@ if ((process.env.JWT_SECRET || '').length < 32) {
   process.exit(1);
 }
 
+// PHI encryption key gate — blocks production boot if PHI_ENCRYPTION_KEY is
+// missing, weak, or reuses JWT_SECRET. Lazy-imported so this file doesn't
+// pull the hipaa middleware module before the env-var check above runs.
+{
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { assertPHIEncryptionKeyOK } = require('./middleware/hipaa');
+  try {
+    assertPHIEncryptionKeyOK();
+  } catch (e: any) {
+    // eslint-disable-next-line no-console
+    console.error(`❌ ${e.message}`);
+    process.exit(1);
+  }
+}
+
 const app = express();
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 4000;
@@ -149,6 +165,14 @@ if (process.env.SENTRY_DSN) {
   });
   app.use(SentryRef.Handlers.requestHandler({ user: ['userId', 'username', 'tenantId'] }));
   app.use(SentryRef.Handlers.tracingHandler());
+  // Tag every Sentry event with the request id so a single error can be
+  // pivoted across Sentry / Winston / audit log without timestamp guessing.
+  app.use((req: any, _res: Response, next: NextFunction) => {
+    if (req.requestId) {
+      SentryRef.configureScope((scope: any) => scope.setTag('request_id', req.requestId));
+    }
+    next();
+  });
   // eslint-disable-next-line no-console
   console.log('[sentry] enabled');
 } else {
@@ -159,6 +183,10 @@ if (process.env.SENTRY_DSN) {
 // ============================================
 // GLOBAL MIDDLEWARE SETUP
 // ============================================
+
+// Request correlation ID — runs before everything else so subsequent
+// middleware (Sentry, error handler, audit, Winston) can quote the same id.
+app.use(requestId);
 
 // Security headers
 app.use(securityHeaders);

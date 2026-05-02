@@ -8,6 +8,7 @@ export * from './csrf';
 export * from './validation';
 export * from './rateLimit';
 export * from './rbacMiddleware';
+export * from './requestId';
 
 // Re-export commonly used items
 export {
