@@ -7,6 +7,17 @@ import Login from './pages/Login';
 import NewDashboard from './pages/NewDashboard';
 import MainLayout from './components/MainLayout';
 
+// Public marketing website. Lazy-loaded so the portal bundle doesn't pay
+// for it. Mounted at /website/* — the operator can add a Vercel rewrite
+// to map a public domain (e.g. www.asha-hospital.com) → /website if they
+// want clean URLs for the marketing deployment.
+const WebsiteLayout = lazy(() => import('./website/WebsiteLayout'));
+const WebsiteHome = lazy(() => import('./website/pages/Home'));
+const WebsiteAbout = lazy(() => import('./website/pages/About'));
+const WebsiteServices = lazy(() => import('./website/pages/Services'));
+const WebsiteDoctors = lazy(() => import('./website/pages/Doctors'));
+const WebsiteContact = lazy(() => import('./website/pages/Contact'));
+
 // Each non-landing route is lazy-loaded. Vite/Rollup splits each into its own
 // chunk, dropping the initial bundle from ~1.7 MB to ~250 KB. The first time
 // you click a sidebar item, that page's chunk fetches; subsequent visits are
@@ -118,6 +129,22 @@ const AppRoutes = () => {
 
   return (
     <Routes>
+      {/* Public marketing website — no auth, public CMS-style content. */}
+      <Route
+        path="/website"
+        element={
+          <Suspense fallback={<RouteSpinner />}>
+            <WebsiteLayout />
+          </Suspense>
+        }
+      >
+        <Route index element={<Suspense fallback={<RouteSpinner />}><WebsiteHome /></Suspense>} />
+        <Route path="about" element={<Suspense fallback={<RouteSpinner />}><WebsiteAbout /></Suspense>} />
+        <Route path="services" element={<Suspense fallback={<RouteSpinner />}><WebsiteServices /></Suspense>} />
+        <Route path="doctors" element={<Suspense fallback={<RouteSpinner />}><WebsiteDoctors /></Suspense>} />
+        <Route path="contact" element={<Suspense fallback={<RouteSpinner />}><WebsiteContact /></Suspense>} />
+      </Route>
+
       <Route path="/login" element={<Login />} />
       <Route
         path="/forgot-password"
