@@ -438,7 +438,9 @@ app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (r
 
     if (!user || !user.isActive) {
       auditLogger.securityEvent('LOGIN_FAILED', { username, reason: 'invalid_user', ip: req.ip });
-      void writeAudit({ prisma, req, userId: user?.id ?? null, action: 'LOGIN_FAILED', resource: 'Authentication', resourceId: username });
+      // Unknown / disabled user: no tenantId to attach to the audit row, so
+      // writeAudit() will skip the DB write but Winston still has it.
+      void writeAudit({ prisma, req, userId: user?.id ?? null, tenantId: user?.tenantId ?? null, action: 'LOGIN_FAILED', resource: 'Authentication', resourceId: username });
       return res.status(401).json({
         error: 'INVALID_CREDENTIALS',
         message: 'Invalid username or password',
@@ -448,7 +450,7 @@ app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (r
     const validPassword = await bcrypt.compare(password, user.passwordHash);
     if (!validPassword) {
       auditLogger.securityEvent('LOGIN_FAILED', { username, reason: 'invalid_password', ip: req.ip });
-      void writeAudit({ prisma, req, userId: user.id, action: 'LOGIN_FAILED', resource: 'Authentication', resourceId: username });
+      void writeAudit({ prisma, req, userId: user.id, tenantId: user.tenantId, action: 'LOGIN_FAILED', resource: 'Authentication', resourceId: username });
       return res.status(401).json({
         error: 'INVALID_CREDENTIALS',
         message: 'Invalid username or password',
@@ -480,7 +482,7 @@ app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (r
     });
 
     auditLogger.securityEvent('LOGIN_SUCCESS', { userId: user.id, username, ip: req.ip });
-    void writeAudit({ prisma, req, userId: user.id, action: 'LOGIN_SUCCESS', resource: 'Authentication', resourceId: user.id });
+    void writeAudit({ prisma, req, userId: user.id, tenantId: user.tenantId, action: 'LOGIN_SUCCESS', resource: 'Authentication', resourceId: user.id });
 
     // Set the refresh token as an httpOnly cookie so JS in the page (and
     // therefore an XSS payload) can't read it. Cross-site cookie because
@@ -592,7 +594,7 @@ app.post('/api/auth/forgot-password', async (req: Request, res: Response) => {
         { expiresIn: '30m' } as jwt.SignOptions
       );
       auditLogger.securityEvent('PASSWORD_RESET_REQUESTED', { userId: user.id, email, ip: req.ip });
-      void writeAudit({ prisma, req, userId: user.id, action: 'PASSWORD_RESET_REQUESTED', resource: 'Authentication', resourceId: user.id });
+      void writeAudit({ prisma, req, userId: user.id, tenantId: user.tenantId, action: 'PASSWORD_RESET_REQUESTED', resource: 'Authentication', resourceId: user.id });
       // No email gateway wired yet — surface the link via server logs so the
       // operator can hand it to the user. Replace with SMTP/SES once configured.
       // eslint-disable-next-line no-console
@@ -626,7 +628,7 @@ app.post('/api/auth/reset-password', async (req: Request, res: Response) => {
     const passwordHash = await bcrypt.hash(password, 10);
     await prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
     auditLogger.securityEvent('PASSWORD_RESET_COMPLETED', { userId: user.id, ip: req.ip });
-    void writeAudit({ prisma, req, userId: user.id, action: 'PASSWORD_RESET_COMPLETED', resource: 'Authentication', resourceId: user.id });
+    void writeAudit({ prisma, req, userId: user.id, tenantId: user.tenantId, action: 'PASSWORD_RESET_COMPLETED', resource: 'Authentication', resourceId: user.id });
     return res.status(204).end();
   } catch (error: any) {
     if (error?.name === 'TokenExpiredError' || error?.name === 'JsonWebTokenError') {
@@ -2347,7 +2349,7 @@ app.get('/api/admissions', authenticateToken, async (req: any, res: Response) =>
     });
 
     // Transform for frontend compatibility
-    res.json(admissions.map((adm: { patient: { name: any; mrn: any; }; bed: { category: any; bedNumber: any; }; admittingDoctor: { name: any; }; diagnosis: any; encounter: { invoices: string | any[]; }; }, index: number) => ({
+    res.json(admissions.map((adm, index) => ({
       ...adm,
       admissionId: `ADM-${String(index + 1).padStart(4, '0')}`,
       patientName: adm.patient?.name || 'Unknown',
@@ -2356,7 +2358,7 @@ app.get('/api/admissions', authenticateToken, async (req: any, res: Response) =>
       bedNumber: adm.bed?.bedNumber || 'N/A',
       doctorName: adm.admittingDoctor?.name || 'Not Assigned',
       diagnosis: adm.diagnosis || 'Not specified',
-      hasInvoice: adm.encounter?.invoices?.length > 0,
+      hasInvoice: (adm.encounter?.invoices?.length ?? 0) > 0,
       invoiceId: adm.encounter?.invoices?.[0]?.id || null,
       invoiceStatus: adm.encounter?.invoices?.[0]?.status || null,
     })));
@@ -2489,12 +2491,9 @@ app.post('/api/admissions/:id/transfer-bed', authenticateToken, async (req: any,
 app.get('/api/emergency/cases', authenticateToken, async (req: any, res: Response) => {
   try {
     const { status } = req.query;
-    // EmergencyCase.patientId is nullable (walk-ins). Scope through patient
-    // when set; for unregistered walk-ins, scope through createdBy/branchId
-    // is not available either (schema gap — see POA P0 #1). For now we only
-    // surface cases that have an associated patient in this tenant.
-    // TODO: add tenantId/branchId directly on EmergencyCase via migration.
-    const where: any = { patient: { tenantId: req.user.tenantId } };
+    // EmergencyCase now has its own tenantId (added in 20260502010000_tenant_isolation_phase2),
+    // so walk-ins (patientId NULL) are scoped correctly too.
+    const where: any = { tenantId: req.user.tenantId };
 
     if (status) where.status = status;
 
@@ -2521,6 +2520,7 @@ app.post('/api/emergency/cases', authenticateToken, async (req: any, res: Respon
 
     const emergencyCase = await prisma.emergencyCase.create({
       data: {
+        tenantId: req.user.tenantId,
         patientName,
         patientAge: patientAge ? parseInt(patientAge) : null,
         patientGender,
@@ -2542,17 +2542,11 @@ app.post('/api/emergency/cases', authenticateToken, async (req: any, res: Respon
   }
 });
 
-// Helper: refuse the operation if the ER case belongs to a patient outside
-// this tenant. Returns null on success (proceed), Response on rejection.
+// Helper: refuse the operation if the ER case belongs to a different tenant.
+// Returns null on success (proceed), Response on rejection.
 async function ensureTenantOwnsEmergencyCase(req: any, res: Response, id: string): Promise<true | null> {
   const owned = await prisma.emergencyCase.findFirst({
-    where: {
-      id,
-      OR: [
-        { patient: { tenantId: req.user.tenantId } },
-        { patientId: null }, // walk-ins; allow until EmergencyCase gets its own tenantId column
-      ],
-    },
+    where: { id, tenantId: req.user.tenantId },
     select: { id: true },
   });
   if (!owned) {
@@ -2757,10 +2751,9 @@ app.post('/api/icu/ventilator', authenticateToken, async (req: any, res: Respons
 app.get('/api/surgeries', authenticateToken, async (req: any, res: Response) => {
   try {
     const { status, date } = req.query;
-    // Surgery.patientId is nullable (some are scheduled before patient is registered).
-    // Scope to surgeries with a patient in this tenant. TODO (POA P0 #1): add
-    // tenantId column on Surgery so unlinked rows can be tenant-scoped too.
-    const where: any = { patient: { tenantId: req.user.tenantId } };
+    // Surgery now has its own tenantId (added in 20260502010000_tenant_isolation_phase2),
+    // so unlinked rows scheduled before patient registration are scoped correctly.
+    const where: any = { tenantId: req.user.tenantId };
 
     if (status) where.status = status;
     if (date) {
@@ -2789,8 +2782,15 @@ app.post('/api/surgeries', authenticateToken, async (req: any, res: Response) =>
   try {
     const { patientId, patientName, patientMRN, procedureName, surgeonId, surgeonName, anesthetistName, otRoom, scheduledDate, scheduledTime, estimatedDuration, anesthesiaType, priority, notes } = req.body;
 
+    // If a patient is supplied, make sure they belong to this tenant.
+    if (patientId) {
+      const owned = await prisma.patient.findFirst({ where: { id: patientId, tenantId: req.user.tenantId } });
+      if (!owned) return res.status(404).json({ error: 'Patient not found' });
+    }
+
     const surgery = await prisma.surgery.create({
       data: {
+        tenantId: req.user.tenantId,
         patientId,
         patientName,
         patientMRN,
@@ -2818,7 +2818,7 @@ app.post('/api/surgeries', authenticateToken, async (req: any, res: Response) =>
 app.get('/api/ot-rooms', authenticateToken, async (req: any, res: Response) => {
   try {
     const { status } = req.query;
-    const where: any = {};
+    const where: any = { tenantId: req.user.tenantId };
 
     if (status) where.status = status;
 
@@ -2840,6 +2840,7 @@ app.post('/api/ot-rooms', authenticateToken, async (req: any, res: Response) => 
 
     const room = await prisma.oTRoom.create({
       data: {
+        tenantId: req.user.tenantId,
         name,
         type,
         floor,
@@ -2856,13 +2857,7 @@ app.post('/api/ot-rooms', authenticateToken, async (req: any, res: Response) => 
 
 async function ensureTenantOwnsSurgery(req: any, res: Response, id: string): Promise<true | null> {
   const owned = await prisma.surgery.findFirst({
-    where: {
-      id,
-      OR: [
-        { patient: { tenantId: req.user.tenantId } },
-        { patientId: null }, // not yet linked to a patient record
-      ],
-    },
+    where: { id, tenantId: req.user.tenantId },
     select: { id: true },
   });
   if (!owned) {
@@ -2885,10 +2880,10 @@ app.post('/api/surgeries/:id/start', authenticateToken, async (req: any, res: Re
       },
     });
 
-    // Update OT room status
+    // Update OT room status (scoped — OT room names are per-tenant unique now)
     if (surgery.otRoom) {
       await prisma.oTRoom.updateMany({
-        where: { name: surgery.otRoom },
+        where: { tenantId: req.user.tenantId, name: surgery.otRoom },
         data: { status: 'in_use', currentSurgery: surgery.procedureName },
       });
     }
@@ -2916,10 +2911,10 @@ app.post('/api/surgeries/:id/complete', authenticateToken, async (req: any, res:
       },
     });
 
-    // Free up OT room
+    // Free up OT room (scoped — OT room names are per-tenant unique now)
     if (surgery.otRoom) {
       await prisma.oTRoom.updateMany({
-        where: { name: surgery.otRoom },
+        where: { tenantId: req.user.tenantId, name: surgery.otRoom },
         data: { status: 'cleaning', currentSurgery: null },
       });
     }
@@ -3226,11 +3221,11 @@ app.get('/api/hr/attendance', authenticateToken, async (req: any, res: Response)
       orderBy: { date: 'desc' },
     });
 
-    res.json(attendance.map((a: { employee: { name: any; }; checkIn: { toLocaleTimeString: () => any; }; checkOut: { toLocaleTimeString: () => any; }; }) => ({
+    res.json(attendance.map((a) => ({
       ...a,
       employeeName: a.employee.name,
-      checkIn: a.checkIn?.toLocaleTimeString(),
-      checkOut: a.checkOut?.toLocaleTimeString(),
+      checkIn: a.checkIn?.toLocaleTimeString() ?? null,
+      checkOut: a.checkOut?.toLocaleTimeString() ?? null,
     })));
   } catch (error) {
     console.error('Get attendance error:', error);
@@ -3556,7 +3551,7 @@ app.put('/api/inventory/purchase-orders/:id', authenticateToken, async (req: any
 app.get('/api/ambulance/vehicles', authenticateToken, async (req: any, res: Response) => {
   try {
     const { status } = req.query;
-    const where: any = {};
+    const where: any = { tenantId: req.user.tenantId };
 
     if (status) where.status = status;
 
@@ -3582,6 +3577,7 @@ app.post('/api/ambulance/vehicles', authenticateToken, async (req: any, res: Res
 
     const vehicle = await prisma.ambulanceVehicle.create({
       data: {
+        tenantId: req.user.tenantId,
         vehicleNumber,
         type,
         driverName,
@@ -3651,7 +3647,8 @@ app.post('/api/ambulance/trips/:id/assign', authenticateToken, async (req: any, 
     const ownedTrip = await prisma.ambulanceTrip.findFirst({ where: { id, tenantId: req.user.tenantId } });
     if (!ownedTrip) return res.status(404).json({ error: 'Trip not found' });
 
-    const vehicle = await prisma.ambulanceVehicle.findUnique({ where: { id: vehicleId } });
+    // Vehicle must also belong to this tenant — can't assign another tenant's truck.
+    const vehicle = await prisma.ambulanceVehicle.findFirst({ where: { id: vehicleId, tenantId: req.user.tenantId } });
     if (!vehicle) {
       return res.status(404).json({ error: 'Vehicle not found' });
     }
@@ -3693,9 +3690,9 @@ app.post('/api/ambulance/trips/:id/complete', authenticateToken, async (req: any
       },
     });
 
-    // Free up the vehicle
+    // Free up the vehicle (scoped — vehicleNumber is per-tenant unique now)
     await prisma.ambulanceVehicle.updateMany({
-      where: { vehicleNumber: trip.vehicleNumber },
+      where: { tenantId: req.user.tenantId, vehicleNumber: trip.vehicleNumber },
       data: { status: 'available' },
     });
 
@@ -3722,7 +3719,7 @@ app.get('/api/housekeeping/tasks', authenticateToken, async (req: any, res: Resp
       orderBy: { createdAt: 'desc' },
     });
 
-    res.json(tasks.map((t: { bedId: any; remarks: any; scheduledAt: { toLocaleTimeString: () => any; }; }) => ({
+    res.json(tasks.map((t) => ({
       ...t,
       location: t.bedId || 'General Area',
       area: t.remarks || '',
@@ -4172,9 +4169,9 @@ app.get('/api/bills', authenticateToken, async (req: any, res: Response) => {
       take: 100,
     });
 
-    const bills = invoices.map((inv: { payments: any[]; items: any[]; id: string; patientId: any; patient: { name: any; mrn: any; }; type: any; subtotal: any; discount: any; tax: any; total: any; status: string; createdAt: { toISOString: () => any; }; }) => {
+    const bills = invoices.map((inv) => {
       const paidAmount = inv.payments.reduce((sum: number, p: any) => sum + Number(p.amount), 0);
-      const items = inv.items as any[] || [];
+      const items = (inv.items as any[]) || [];
       return {
         id: inv.id,
         billNo: `INV-${inv.id.substring(0, 8)}`,
@@ -4208,6 +4205,7 @@ app.get('/api/bills', authenticateToken, async (req: any, res: Response) => {
 app.get('/api/emergency', authenticateToken, async (req: any, res: Response) => {
   try {
     const cases = await prisma.emergencyCase.findMany({
+      where: { tenantId: req.user.tenantId },
       orderBy: { arrivalTime: 'desc' },
     });
 
@@ -4239,6 +4237,7 @@ app.get('/api/emergency', authenticateToken, async (req: any, res: Response) => 
 app.get('/api/ot/rooms', authenticateToken, async (req: any, res: Response) => {
   try {
     const rooms = await prisma.oTRoom.findMany({
+      where: { tenantId: req.user.tenantId },
       orderBy: { name: 'asc' },
     });
 
@@ -4321,7 +4320,7 @@ app.get('/api/employees', authenticateToken, async (req: any, res: Response) => 
       orderBy: { name: 'asc' },
     });
 
-    res.json(employees.map((emp: { id: any; employeeId: any; name: any; email: any; phone: any; department: any; designation: any; joiningDate: { toISOString: () => any; }; salary: any; status: any; shift: any; }) => ({
+    res.json(employees.map((emp) => ({
       id: emp.id,
       employeeId: emp.employeeId,
       employeeCode: emp.employeeId,
@@ -4357,7 +4356,7 @@ app.get('/api/attendance', authenticateToken, async (req: any, res: Response) =>
       take: 100,
     });
 
-    res.json(attendance.map((a: { id: any; employeeId: any; employee: { name: any; employeeId: any; }; date: { toISOString: () => any; }; checkIn: { toISOString: () => any; }; checkOut: { toISOString: () => any; }; status: any; remarks: any; }) => ({
+    res.json(attendance.map((a) => ({
       id: a.id,
       employeeId: a.employeeId,
       employeeName: a.employee?.name || '',
@@ -4378,10 +4377,11 @@ app.get('/api/attendance', authenticateToken, async (req: any, res: Response) =>
 app.get('/api/ambulances', authenticateToken, async (req: any, res: Response) => {
   try {
     const vehicles = await prisma.ambulanceVehicle.findMany({
+      where: { tenantId: req.user.tenantId },
       orderBy: { vehicleNumber: 'asc' },
     });
 
-    res.json(vehicles.map((v: { id: any; vehicleNumber: any; type: any; status: any; driverName: any; driverPhone: any; currentLocation: any; lastMaintenance: { toISOString: () => any; }; }) => ({
+    res.json(vehicles.map((v) => ({
       id: v.id,
       vehicleNumber: v.vehicleNumber,
       type: v.type,
@@ -5312,16 +5312,10 @@ app.get('/api/audit-logs', authenticateToken, async (req: any, res: Response) =>
     const { module, dateFrom, dateTo, action, userId } = req.query;
     const { skip, take } = paginate(req);
 
-    // AuditLog has no tenantId column. Scope via the User relation, but
-    // also allow the row through if it's already restricted by performedBy
-    // belonging to this tenant. This surfaces both attributed events and
-    // system rows where userId might be null.
-    const where: any = {
-      OR: [
-        { user: { tenantId: req.user.tenantId } },
-        { performedByUser: { tenantId: req.user.tenantId } },
-      ],
-    };
+    // AuditLog now has a direct tenantId column (added in
+    // 20260502010000_tenant_isolation_phase2). Direct filter — much faster
+    // than the old OR-on-relation pattern.
+    const where: any = { tenantId: req.user.tenantId };
     if (module) where.resource = module;
     if (action) where.action = { contains: action as string, mode: 'insensitive' };
     if (userId) where.userId = userId;

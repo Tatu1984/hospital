@@ -388,6 +388,7 @@ model Feedback {
 
 model AuditLog {
   id              String   @id @default(uuid())
+  tenantId        String
   userId          String?
   action          String
   resource        String
@@ -401,6 +402,7 @@ model AuditLog {
   performedByUser User?    @relation("PerformedBy", fields: [performedBy], references: [id])
   user            User?    @relation("CreatedBy", fields: [userId], references: [id])
 
+  @@index([tenantId, timestamp])
   @@map("audit_logs")
 }
 
@@ -1204,7 +1206,8 @@ model LeaveRequest {
 
 model AmbulanceVehicle {
   id              String    @id @default(uuid())
-  vehicleNumber   String    @unique
+  tenantId        String
+  vehicleNumber   String
   type            String // ALS, BLS, patient_transport
   driverName      String?
   driverPhone     String?
@@ -1214,6 +1217,8 @@ model AmbulanceVehicle {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
+  @@unique([tenantId, vehicleNumber])
+  @@index([tenantId])
   @@map("ambulance_vehicles")
 }
 
@@ -1223,6 +1228,7 @@ model AmbulanceVehicle {
 
 model EmergencyCase {
   id             String    @id @default(uuid())
+  tenantId       String
   patientId      String?
   patientName    String
   patientAge     Int?
@@ -1242,6 +1248,7 @@ model EmergencyCase {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
+  @@index([tenantId])
   @@map("emergency_cases")
 }
 
@@ -1296,6 +1303,7 @@ model ICUVitals {
 
 model Surgery {
   id                String    @id @default(uuid())
+  tenantId          String
   patientId         String?
   patientName       String
   patientMRN        String?
@@ -1322,12 +1330,14 @@ model Surgery {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
+  @@index([tenantId])
   @@map("surgeries")
 }
 
 model OTRoom {
   id             String   @id @default(uuid())
-  name           String   @unique
+  tenantId       String
+  name           String
   type           String // general, cardiac, neuro, orthopedic, etc.
   floor          String?
   status         String   @default("available") // available, in_use, cleaning, maintenance
@@ -1336,5 +1346,7 @@ model OTRoom {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
+  @@unique([tenantId, name])
+  @@index([tenantId])
   @@map("ot_rooms")
 }

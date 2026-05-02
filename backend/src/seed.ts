@@ -704,7 +704,7 @@ async function main() {
   ];
 
   for (const amb of ambulances) {
-    await prisma.ambulanceVehicle.create({ data: amb });
+    await prisma.ambulanceVehicle.create({ data: { ...amb, tenantId: tenant.id } });
   }
   console.log('✅ Ambulance vehicles:', ambulances.length);
 
@@ -744,7 +744,7 @@ async function main() {
   ];
 
   for (const room of otRooms) {
-    await prisma.oTRoom.create({ data: room });
+    await prisma.oTRoom.create({ data: { ...room, tenantId: tenant.id } });
   }
   console.log('✅ OT rooms:', otRooms.length);
 
@@ -819,6 +819,7 @@ async function main() {
       update: {},
       create: {
         id: `audit-${log.action.toLowerCase().replace(/\s/g, '-')}`,
+        tenantId: tenant.id,
         userId: log.userId,
         action: log.action,
         resource: log.resource,
