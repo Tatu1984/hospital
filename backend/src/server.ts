@@ -2635,7 +2635,7 @@ app.post('/api/emergency/cases/:id/discharge', authenticateToken, async (req: an
 app.get('/api/icu/beds', authenticateToken, async (req: any, res: Response) => {
   try {
     const { icuUnit, status } = req.query;
-    const where: any = {};
+    const where: any = { tenantId: req.user.tenantId };
 
     if (icuUnit) where.icuUnit = icuUnit;
     if (status) where.status = status;
@@ -2677,6 +2677,7 @@ app.post('/api/icu/beds', authenticateToken, async (req: any, res: Response) => 
 
     const bed = await prisma.iCUBed.create({
       data: {
+        tenantId: req.user.tenantId,
         bedNumber,
         icuUnit,
       },
@@ -2693,8 +2694,13 @@ app.post('/api/icu/vitals', authenticateToken, async (req: any, res: Response) =
   try {
     const { icuBedId, patientId, heartRate, systolicBP, diastolicBP, temperature, spo2, respiratoryRate, gcs, ventilatorMode, fio2, peep } = req.body;
 
+    // Verify the bed belongs to this tenant before recording vitals against it.
+    const bed = await prisma.iCUBed.findFirst({ where: { id: icuBedId, tenantId: req.user.tenantId } });
+    if (!bed) return res.status(404).json({ error: 'ICU bed not found' });
+
     const vitals = await prisma.iCUVitals.create({
       data: {
+        tenantId: req.user.tenantId,
         icuBedId,
         patientId,
         heartRate: heartRate ? parseInt(heartRate) : null,
@@ -2722,9 +2728,13 @@ app.post('/api/icu/ventilator', authenticateToken, async (req: any, res: Respons
   try {
     const { icuBedId, ventilatorMode, fio2, peep } = req.body;
 
+    const bed = await prisma.iCUBed.findFirst({ where: { id: icuBedId, tenantId: req.user.tenantId } });
+    if (!bed) return res.status(404).json({ error: 'ICU bed not found' });
+
     // Record as a vitals entry with ventilator params
     const vitals = await prisma.iCUVitals.create({
       data: {
+        tenantId: req.user.tenantId,
         icuBedId,
         ventilatorMode,
         fio2: fio2 ? parseInt(fio2) : null,
@@ -2954,7 +2964,7 @@ app.get('/api/blood-bank/inventory', authenticateToken, async (req: any, res: Re
 
     const inventory = await prisma.bloodInventory.groupBy({
       by: ['bloodType', 'component'],
-      where: { status: 'available' },
+      where: { tenantId: req.user.tenantId, status: 'available' },
       _count: { id: true },
     });
 
@@ -2962,6 +2972,7 @@ app.get('/api/blood-bank/inventory', authenticateToken, async (req: any, res: Re
       inventory.map(async (item: { bloodType: any; component: any; _count: { id: any; }; }) => {
         const expiringIn3Days = await prisma.bloodInventory.count({
           where: {
+            tenantId: req.user.tenantId,
             bloodType: item.bloodType,
             component: item.component,
             status: 'available',
@@ -2970,6 +2981,7 @@ app.get('/api/blood-bank/inventory', authenticateToken, async (req: any, res: Re
         });
         const expiringIn7Days = await prisma.bloodInventory.count({
           where: {
+            tenantId: req.user.tenantId,
             bloodType: item.bloodType,
             component: item.component,
             status: 'available',
@@ -2998,7 +3010,7 @@ app.get('/api/blood-bank/inventory', authenticateToken, async (req: any, res: Re
 app.get('/api/blood-bank/donors', authenticateToken, async (req: any, res: Response) => {
   try {
     const { search, bloodType } = req.query;
-    const where: any = {};
+    const where: any = { tenantId: req.user.tenantId };
 
     if (bloodType) where.bloodType = bloodType;
     if (search) {
@@ -3028,11 +3040,12 @@ app.post('/api/blood-bank/donors', authenticateToken, async (req: any, res: Resp
   try {
     const { name, age, gender, bloodType, phone, email, address } = req.body;
 
-    const donorCount = await prisma.bloodDonor.count();
+    const donorCount = await prisma.bloodDonor.count({ where: { tenantId: req.user.tenantId } });
     const donorId = `D${String(donorCount + 1).padStart(4, '0')}`;
 
     const donor = await prisma.bloodDonor.create({
       data: {
+        tenantId: req.user.tenantId,
         donorId,
         name,
         age: parseInt(age),
@@ -3054,7 +3067,7 @@ app.post('/api/blood-bank/donors', authenticateToken, async (req: any, res: Resp
 app.get('/api/blood-bank/requests', authenticateToken, async (req: any, res: Response) => {
   try {
     const { status } = req.query;
-    const where: any = {};
+    const where: any = { tenantId: req.user.tenantId };
 
     if (status) where.status = status;
 
@@ -3081,6 +3094,7 @@ app.post('/api/blood-bank/requests', authenticateToken, async (req: any, res: Re
 
     const request = await prisma.bloodRequest.create({
       data: {
+        tenantId: req.user.tenantId,
         patientName,
         patientMRN,
         bloodType,
@@ -3104,6 +3118,9 @@ app.post('/api/blood-bank/requests/:id/cross-match', authenticateToken, async (r
     const { id } = req.params;
     const { result } = req.body;
 
+    const owned = await prisma.bloodRequest.findFirst({ where: { id, tenantId: req.user.tenantId } });
+    if (!owned) return res.status(404).json({ error: 'Blood request not found' });
+
     const request = await prisma.bloodRequest.update({
       where: { id },
       data: {
@@ -3125,6 +3142,9 @@ app.post('/api/blood-bank/requests/:id/issue', authenticateToken, async (req: an
   try {
     const { id } = req.params;
 
+    const owned = await prisma.bloodRequest.findFirst({ where: { id, tenantId: req.user.tenantId } });
+    if (!owned) return res.status(404).json({ error: 'Blood request not found' });
+
     const request = await prisma.bloodRequest.update({
       where: { id },
       data: { status: 'issued' },
@@ -3144,7 +3164,7 @@ app.post('/api/blood-bank/requests/:id/issue', authenticateToken, async (req: an
 app.get('/api/hr/employees', authenticateToken, async (req: any, res: Response) => {
   try {
     const { department, status } = req.query;
-    const where: any = {};
+    const where: any = { tenantId: req.user.tenantId };
 
     if (department) where.department = department;
     if (status) where.status = status;
@@ -3165,11 +3185,12 @@ app.post('/api/hr/employees', authenticateToken, async (req: any, res: Response)
   try {
     const { name, email, phone, department, designation, joiningDate, salary, shift } = req.body;
 
-    const employeeCount = await prisma.employee.count();
+    const employeeCount = await prisma.employee.count({ where: { tenantId: req.user.tenantId } });
     const employeeId = `EMP${String(employeeCount + 1).padStart(4, '0')}`;
 
     const employee = await prisma.employee.create({
       data: {
+        tenantId: req.user.tenantId,
         employeeId,
         name,
         email,
@@ -3192,7 +3213,7 @@ app.post('/api/hr/employees', authenticateToken, async (req: any, res: Response)
 app.get('/api/hr/attendance', authenticateToken, async (req: any, res: Response) => {
   try {
     const { date, employeeId } = req.query;
-    const where: any = {};
+    const where: any = { tenantId: req.user.tenantId };
 
     if (date) {
       where.date = new Date(date as string);
@@ -3221,6 +3242,9 @@ app.post('/api/hr/attendance', authenticateToken, async (req: any, res: Response
   try {
     const { employeeId, date, checkIn, checkOut, status } = req.body;
 
+    const employee = await prisma.employee.findFirst({ where: { id: employeeId, tenantId: req.user.tenantId } });
+    if (!employee) return res.status(404).json({ error: 'Employee not found' });
+
     const attendance = await prisma.employeeAttendance.upsert({
       where: {
         employeeId_date: {
@@ -3229,6 +3253,7 @@ app.post('/api/hr/attendance', authenticateToken, async (req: any, res: Response
         },
       },
       create: {
+        tenantId: req.user.tenantId,
         employeeId,
         date: new Date(date),
         checkIn: checkIn ? new Date(checkIn) : null,
@@ -3252,7 +3277,7 @@ app.post('/api/hr/attendance', authenticateToken, async (req: any, res: Response
 app.get('/api/hr/leaves', authenticateToken, async (req: any, res: Response) => {
   try {
     const { status, employeeId } = req.query;
-    const where: any = {};
+    const where: any = { tenantId: req.user.tenantId };
 
     if (status) where.status = status;
     if (employeeId) where.employeeId = employeeId;
@@ -3278,8 +3303,12 @@ app.post('/api/hr/leaves', authenticateToken, async (req: any, res: Response) =>
   try {
     const { employeeId, leaveType, fromDate, toDate, reason } = req.body;
 
+    const employee = await prisma.employee.findFirst({ where: { id: employeeId, tenantId: req.user.tenantId } });
+    if (!employee) return res.status(404).json({ error: 'Employee not found' });
+
     const leave = await prisma.leaveRequest.create({
       data: {
+        tenantId: req.user.tenantId,
         employeeId,
         leaveType,
         fromDate: new Date(fromDate),
@@ -3298,6 +3327,9 @@ app.post('/api/hr/leaves', authenticateToken, async (req: any, res: Response) =>
 app.post('/api/hr/leaves/:id/approve', authenticateToken, async (req: any, res: Response) => {
   try {
     const { id } = req.params;
+
+    const owned = await prisma.leaveRequest.findFirst({ where: { id, tenantId: req.user.tenantId } });
+    if (!owned) return res.status(404).json({ error: 'Leave request not found' });
 
     const leave = await prisma.leaveRequest.update({
       where: { id },
@@ -3319,6 +3351,9 @@ app.post('/api/hr/leaves/:id/reject', authenticateToken, async (req: any, res: R
   try {
     const { id } = req.params;
     const { remarks } = req.body;
+
+    const owned = await prisma.leaveRequest.findFirst({ where: { id, tenantId: req.user.tenantId } });
+    if (!owned) return res.status(404).json({ error: 'Leave request not found' });
 
     const leave = await prisma.leaveRequest.update({
       where: { id },
@@ -3344,7 +3379,7 @@ app.post('/api/hr/leaves/:id/reject', authenticateToken, async (req: any, res: R
 app.get('/api/inventory/items', authenticateToken, async (req: any, res: Response) => {
   try {
     const { category, lowStock, search } = req.query;
-    const where: any = { isActive: true };
+    const where: any = { isActive: true, tenantId: req.user.tenantId };
 
     if (category) where.category = category;
     if (search) {
@@ -3387,11 +3422,12 @@ app.post('/api/inventory/items', authenticateToken, async (req: any, res: Respon
   try {
     const { name, category, unit, reorderLevel, price } = req.body;
 
-    const itemCount = await prisma.inventoryItem.count();
+    const itemCount = await prisma.inventoryItem.count({ where: { tenantId: req.user.tenantId } });
     const code = `ITM${String(itemCount + 1).padStart(4, '0')}`;
 
     const item = await prisma.inventoryItem.create({
       data: {
+        tenantId: req.user.tenantId,
         name,
         code,
         category,
@@ -3411,7 +3447,7 @@ app.post('/api/inventory/items', authenticateToken, async (req: any, res: Respon
 app.get('/api/inventory/purchase-orders', authenticateToken, async (req: any, res: Response) => {
   try {
     const { status } = req.query;
-    const where: any = {};
+    const where: any = { tenantId: req.user.tenantId };
 
     if (status) where.status = status;
 
@@ -3447,13 +3483,26 @@ app.post('/api/inventory/purchase-orders', authenticateToken, async (req: any, r
   try {
     const { vendorName, vendorContact, expectedDate, items, remarks } = req.body;
 
-    const poCount = await prisma.purchaseOrder.count();
+    // Reject line items that reference inventory belonging to another tenant.
+    const itemIds = (items || []).map((i: any) => i.itemId).filter(Boolean);
+    if (itemIds.length) {
+      const ownedItems = await prisma.inventoryItem.findMany({
+        where: { id: { in: itemIds }, tenantId: req.user.tenantId },
+        select: { id: true },
+      });
+      if (ownedItems.length !== itemIds.length) {
+        return res.status(400).json({ error: 'One or more inventory items do not belong to this tenant' });
+      }
+    }
+
+    const poCount = await prisma.purchaseOrder.count({ where: { tenantId: req.user.tenantId } });
     const poNumber = `PO${new Date().getFullYear()}${String(poCount + 1).padStart(4, '0')}`;
 
     const totalAmount = items.reduce((sum: number, item: any) => sum + (item.quantity * item.rate), 0);
 
     const order = await prisma.purchaseOrder.create({
       data: {
+        tenantId: req.user.tenantId,
         poNumber,
         vendorName,
         vendorContact,
@@ -3484,6 +3533,9 @@ app.put('/api/inventory/purchase-orders/:id', authenticateToken, async (req: any
   try {
     const { id } = req.params;
     const { status } = req.body;
+
+    const owned = await prisma.purchaseOrder.findFirst({ where: { id, tenantId: req.user.tenantId } });
+    if (!owned) return res.status(404).json({ error: 'Purchase order not found' });
 
     const order = await prisma.purchaseOrder.update({
       where: { id },
@@ -3547,7 +3599,7 @@ app.post('/api/ambulance/vehicles', authenticateToken, async (req: any, res: Res
 app.get('/api/ambulance/trips', authenticateToken, async (req: any, res: Response) => {
   try {
     const { status } = req.query;
-    const where: any = {};
+    const where: any = { tenantId: req.user.tenantId };
 
     if (status) where.status = status;
 
@@ -3574,6 +3626,7 @@ app.post('/api/ambulance/trips', authenticateToken, async (req: any, res: Respon
 
     const trip = await prisma.ambulanceTrip.create({
       data: {
+        tenantId: req.user.tenantId,
         vehicleNumber: vehicleNumber || 'UNASSIGNED',
         pickupLocation,
         dropLocation,
@@ -3594,6 +3647,9 @@ app.post('/api/ambulance/trips/:id/assign', authenticateToken, async (req: any, 
   try {
     const { id } = req.params;
     const { vehicleId } = req.body;
+
+    const ownedTrip = await prisma.ambulanceTrip.findFirst({ where: { id, tenantId: req.user.tenantId } });
+    if (!ownedTrip) return res.status(404).json({ error: 'Trip not found' });
 
     const vehicle = await prisma.ambulanceVehicle.findUnique({ where: { id: vehicleId } });
     if (!vehicle) {
@@ -3626,6 +3682,9 @@ app.post('/api/ambulance/trips/:id/complete', authenticateToken, async (req: any
   try {
     const { id } = req.params;
 
+    const owned = await prisma.ambulanceTrip.findFirst({ where: { id, tenantId: req.user.tenantId } });
+    if (!owned) return res.status(404).json({ error: 'Trip not found' });
+
     const trip = await prisma.ambulanceTrip.update({
       where: { id },
       data: {
@@ -3654,7 +3713,7 @@ app.post('/api/ambulance/trips/:id/complete', authenticateToken, async (req: any
 app.get('/api/housekeeping/tasks', authenticateToken, async (req: any, res: Response) => {
   try {
     const { status } = req.query;
-    const where: any = {};
+    const where: any = { tenantId: req.user.tenantId };
 
     if (status) where.status = status;
 
@@ -3681,6 +3740,7 @@ app.post('/api/housekeeping/tasks', authenticateToken, async (req: any, res: Res
 
     const task = await prisma.housekeepingTask.create({
       data: {
+        tenantId: req.user.tenantId,
         bedId,
         taskType,
         assignedTo,
@@ -3701,6 +3761,9 @@ app.post('/api/housekeeping/tasks/:id/complete', authenticateToken, async (req: 
   try {
     const { id } = req.params;
 
+    const owned = await prisma.housekeepingTask.findFirst({ where: { id, tenantId: req.user.tenantId } });
+    if (!owned) return res.status(404).json({ error: 'Task not found' });
+
     const task = await prisma.housekeepingTask.update({
       where: { id },
       data: {
@@ -3720,7 +3783,7 @@ app.get('/api/housekeeping/laundry', authenticateToken, async (req: any, res: Re
   try {
     // Using housekeeping tasks with taskType = 'laundry'
     const laundry = await prisma.housekeepingTask.findMany({
-      where: { taskType: { contains: 'laundry', mode: 'insensitive' } },
+      where: { tenantId: req.user.tenantId, taskType: { contains: 'laundry', mode: 'insensitive' } },
       orderBy: { createdAt: 'desc' },
     });
 
@@ -3745,7 +3808,7 @@ app.get('/api/housekeeping/laundry', authenticateToken, async (req: any, res: Re
 app.get('/api/diet/orders', authenticateToken, async (req: any, res: Response) => {
   try {
     const { mealType, date } = req.query;
-    const where: any = {};
+    const where: any = { tenantId: req.user.tenantId };
 
     if (mealType) where.mealType = mealType;
     if (date) {
@@ -3779,8 +3842,12 @@ app.post('/api/diet/orders', authenticateToken, async (req: any, res: Response) 
   try {
     const { patientId, admissionId, dietType, mealType, remarks } = req.body;
 
+    const patient = await prisma.patient.findFirst({ where: { id: patientId, tenantId: req.user.tenantId } });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+
     const order = await prisma.dietOrder.create({
       data: {
+        tenantId: req.user.tenantId,
         patientId,
         admissionId,
         dietType,
@@ -3802,6 +3869,9 @@ app.put('/api/diet/orders/:id', authenticateToken, async (req: any, res: Respons
     const { id } = req.params;
     const { status } = req.body;
 
+    const owned = await prisma.dietOrder.findFirst({ where: { id, tenantId: req.user.tenantId } });
+    if (!owned) return res.status(404).json({ error: 'Diet order not found' });
+
     const order = await prisma.dietOrder.update({
       where: { id },
       data: { status },
@@ -3821,21 +3891,20 @@ app.put('/api/diet/orders/:id', authenticateToken, async (req: any, res: Respons
 app.get('/api/quality/incidents', authenticateToken, async (req: any, res: Response) => {
   try {
     const { status } = req.query;
+    const where: any = { tenantId: req.user.tenantId };
+    if (status) where.status = status;
 
-    // Mock data
-    const incidents = [
-      {
-        id: '1',
-        type: 'Medication Error',
-        description: 'Wrong dosage administered',
-        reportedBy: 'Nurse Wilson',
-        date: new Date().toISOString(),
-        severity: 'MEDIUM',
-        status: 'PENDING'
-      }
-    ];
+    const incidents = await prisma.incident.findMany({
+      where,
+      orderBy: { reportedAt: 'desc' },
+      include: { patient: { select: { name: true, mrn: true } } },
+    });
 
-    res.json(incidents);
+    res.json(incidents.map(i => ({
+      ...i,
+      date: i.reportedAt,
+      patientName: i.patient?.name ?? null,
+    })));
   } catch (error) {
     console.error('Get incidents error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -3844,27 +3913,17 @@ app.get('/api/quality/incidents', authenticateToken, async (req: any, res: Respo
 
 app.get('/api/quality/feedbacks', authenticateToken, async (req: any, res: Response) => {
   try {
-    // Mock data
-    const feedbacks = [
-      {
-        id: '1',
-        patientName: 'David Lee',
-        department: 'Emergency',
-        rating: 4,
-        comments: 'Good service, prompt attention',
-        date: new Date().toISOString()
-      },
-      {
-        id: '2',
-        patientName: 'Susan White',
-        department: 'OPD',
-        rating: 5,
-        comments: 'Excellent care and friendly staff',
-        date: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
-      }
-    ];
+    const feedbacks = await prisma.feedback.findMany({
+      where: { tenantId: req.user.tenantId },
+      orderBy: { createdAt: 'desc' },
+      include: { patient: { select: { name: true } } },
+    });
 
-    res.json(feedbacks);
+    res.json(feedbacks.map(f => ({
+      ...f,
+      patientName: f.patient?.name ?? null,
+      date: f.createdAt,
+    })));
   } catch (error) {
     console.error('Get feedbacks error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -4258,6 +4317,7 @@ app.get('/api/pharmacy/stock', authenticateToken, async (req: any, res: Response
 app.get('/api/employees', authenticateToken, async (req: any, res: Response) => {
   try {
     const employees = await prisma.employee.findMany({
+      where: { tenantId: req.user.tenantId },
       orderBy: { name: 'asc' },
     });
 
@@ -4289,6 +4349,7 @@ app.get('/api/attendance', authenticateToken, async (req: any, res: Response) =>
 
     const attendance = await prisma.employeeAttendance.findMany({
       where: {
+        tenantId: req.user.tenantId,
         date: targetDate,
       },
       include: { employee: { select: { name: true, employeeId: true } } },
@@ -4394,6 +4455,7 @@ app.get('/api/nurse/vitals', authenticateToken, async (req: any, res: Response) 
   try {
     // Get vitals from ICU records
     const vitals = await prisma.iCUVitals.findMany({
+      where: { tenantId: req.user.tenantId },
       include: {
         icuBed: true,
       },
@@ -5612,6 +5674,7 @@ app.get('/api/icu/patients', authenticateToken, async (req: any, res: Response) 
   try {
     const icuBeds = await prisma.iCUBed.findMany({
       where: {
+        tenantId: req.user.tenantId,
         status: 'occupied',
       },
     });

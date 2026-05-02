@@ -634,7 +634,7 @@ async function main() {
   ];
 
   for (const donor of bloodDonors) {
-    await prisma.bloodDonor.create({ data: { ...donor, totalDonations: Math.floor(Math.random() * 10) } });
+    await prisma.bloodDonor.create({ data: { ...donor, tenantId: tenant.id, totalDonations: Math.floor(Math.random() * 10) } });
   }
   console.log('✅ Blood donors:', bloodDonors.length);
 
@@ -648,6 +648,7 @@ async function main() {
       for (let i = 0; i < qty; i++) {
         await prisma.bloodInventory.create({
           data: {
+            tenantId: tenant.id,
             bloodType,
             component,
             bagNumber: `BAG-${bloodType}-${component.substring(0,3).toUpperCase()}-${Date.now()}-${i}`,
@@ -683,6 +684,7 @@ async function main() {
     await prisma.employee.create({
       data: {
         ...emp,
+        tenantId: tenant.id,
         joiningDate: new Date(Date.now() - Math.random() * 365 * 3 * 24 * 60 * 60 * 1000),
         salary: 25000 + Math.floor(Math.random() * 75000),
       },
@@ -724,7 +726,7 @@ async function main() {
   ];
 
   for (const bed of icuBeds) {
-    await prisma.iCUBed.create({ data: bed });
+    await prisma.iCUBed.create({ data: { ...bed, tenantId: tenant.id } });
   }
   console.log('✅ ICU beds:', icuBeds.length);
 
@@ -765,10 +767,11 @@ async function main() {
   ];
 
   for (const item of inventoryItems) {
-    const invItem = await prisma.inventoryItem.create({ data: item });
+    const invItem = await prisma.inventoryItem.create({ data: { ...item, tenantId: tenant.id } });
     // Add some stock
     await prisma.stock.create({
       data: {
+        tenantId: tenant.id,
         itemId: invItem.id,
         storeId: 'main-store',
         batchNumber: `BATCH-${item.code}-001`,
