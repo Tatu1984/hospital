@@ -1071,8 +1071,9 @@ app.post('/api/invoices/:id/payment', authenticateToken, async (req: any, res: R
     const { id } = req.params;
     const { amount, mode, transactionRef } = req.body;
 
-    const invoice = await prisma.invoice.findUnique({
-      where: { id },
+    // Tenant-scope through patient.tenantId (Invoice has no direct tenantId).
+    const invoice = await prisma.invoice.findFirst({
+      where: { id, patient: { tenantId: req.user.tenantId } },
       include: {
         patient: { include: { referralSource: true } },
       },
@@ -1082,50 +1083,57 @@ app.post('/api/invoices/:id/payment', authenticateToken, async (req: any, res: R
       return res.status(404).json({ error: 'Invoice not found' });
     }
 
-    const payment = await prisma.payment.create({
-      data: {
-        invoiceId: id,
-        amount: parseFloat(amount),
-        mode,
-        transactionRef,
-        receivedBy: req.user.userId,
-      },
-    });
+    // Payment + invoice paid/balance + (optional) commission must land
+    // atomically. A crash between payment.create and invoice.update would
+    // double-count the amount on retry; a crash before commission.create
+    // would leave the brokerage unpaid even though the invoice shows paid.
+    const payment = await prisma.$transaction(async (tx) => {
+      const created = await tx.payment.create({
+        data: {
+          invoiceId: id,
+          amount: parseFloat(amount),
+          mode,
+          transactionRef,
+          receivedBy: req.user.userId,
+        },
+      });
 
-    const totalPaid = parseFloat(invoice.paid.toString()) + parseFloat(amount);
-    const newBalance = parseFloat(invoice.total.toString()) - totalPaid;
+      const totalPaid = parseFloat(invoice.paid.toString()) + parseFloat(amount);
+      const newBalance = parseFloat(invoice.total.toString()) - totalPaid;
 
-    await prisma.invoice.update({
-      where: { id },
-      data: {
-        paid: totalPaid,
-        balance: newBalance,
-        status: newBalance <= 0 ? 'paid' : 'final',
-      },
-    });
+      await tx.invoice.update({
+        where: { id },
+        data: {
+          paid: totalPaid,
+          balance: newBalance,
+          status: newBalance <= 0 ? 'paid' : 'final',
+        },
+      });
 
-    // Auto-create commission if patient has referral source and invoice is fully paid
-    if (newBalance <= 0 && invoice.patient.referralSourceId && invoice.patient.referralSource) {
-      const referralSource = invoice.patient.referralSource;
-      const invoiceTotal = parseFloat(invoice.total.toString());
+      // Auto-create commission if patient has referral source and invoice is fully paid
+      if (newBalance <= 0 && invoice.patient.referralSourceId && invoice.patient.referralSource) {
+        const referralSource = invoice.patient.referralSource;
+        const invoiceTotal = parseFloat(invoice.total.toString());
+        const commissionAmount = calculateCommission(invoiceTotal, referralSource);
 
-      const commissionAmount = calculateCommission(invoiceTotal, referralSource);
-
-      if (commissionAmount > 0) {
-        await prisma.commission.create({
-          data: {
-            referralSourceId: referralSource.id,
-            patientId: invoice.patientId,
-            invoiceId: invoice.id,
-            invoiceAmount: invoiceTotal,
-            commissionType: referralSource.commissionType,
-            commissionRate: referralSource.commissionType === 'percentage' ? parseFloat(referralSource.commissionValue.toString()) : null,
-            commissionAmount,
-            status: 'pending',
-          },
-        });
+        if (commissionAmount > 0) {
+          await tx.commission.create({
+            data: {
+              referralSourceId: referralSource.id,
+              patientId: invoice.patientId,
+              invoiceId: invoice.id,
+              invoiceAmount: invoiceTotal,
+              commissionType: referralSource.commissionType,
+              commissionRate: referralSource.commissionType === 'percentage' ? parseFloat(referralSource.commissionValue.toString()) : null,
+              commissionAmount,
+              status: 'pending',
+            },
+          });
+        }
       }
-    }
+
+      return created;
+    });
 
     res.json(payment);
   } catch (error) {
@@ -2319,28 +2327,34 @@ app.post('/api/admissions', authenticateToken, async (req: any, res: Response) =
   try {
     const { encounterId, patientId, bedId, diagnosis } = req.body;
 
-    const admission = await prisma.admission.create({
-      data: {
-        encounterId,
-        patientId,
-        bedId,
-        admittingDoctorId: req.user.userId,
-        diagnosis,
-        status: 'active',
-      },
-      include: {
-        patient: { select: { name: true, mrn: true } },
-        bed: { select: { bedNumber: true, category: true } },
-      },
-    });
-
-    // Update bed status
-    if (bedId) {
-      await prisma.bed.update({
-        where: { id: bedId },
-        data: { status: 'occupied' },
+    // Admission + bed status flip in a single transaction so we can never
+    // end up with an active admission whose bed is still marked vacant
+    // (or vice versa) if the second write fails.
+    const admission = await prisma.$transaction(async (tx) => {
+      const created = await tx.admission.create({
+        data: {
+          encounterId,
+          patientId,
+          bedId,
+          admittingDoctorId: req.user.userId,
+          diagnosis,
+          status: 'active',
+        },
+        include: {
+          patient: { select: { name: true, mrn: true } },
+          bed: { select: { bedNumber: true, category: true } },
+        },
       });
-    }
+
+      if (bedId) {
+        await tx.bed.update({
+          where: { id: bedId },
+          data: { status: 'occupied' },
+        });
+      }
+
+      return created;
+    });
 
     res.status(201).json(admission);
   } catch (error) {
@@ -2401,22 +2415,27 @@ app.post('/api/admissions/:id/discharge', authenticateToken, async (req: any, re
     const { id } = req.params;
     const { dischargeSummary } = req.body;
 
-    const admission = await prisma.admission.update({
-      where: { id },
-      data: {
-        status: 'discharged',
-        dischargeDate: new Date(),
-      },
-      include: { bed: true },
-    });
-
-    // Update bed status
-    if (admission.bedId) {
-      await prisma.bed.update({
-        where: { id: admission.bedId },
-        data: { status: 'dirty' },
+    // Discharge + bed flip in a single transaction; otherwise a crash between
+    // the two updates leaves the bed marked occupied with no active admission.
+    const admission = await prisma.$transaction(async (tx) => {
+      const updated = await tx.admission.update({
+        where: { id },
+        data: {
+          status: 'discharged',
+          dischargeDate: new Date(),
+        },
+        include: { bed: true },
       });
-    }
+
+      if (updated.bedId) {
+        await tx.bed.update({
+          where: { id: updated.bedId },
+          data: { status: 'dirty' },
+        });
+      }
+
+      return updated;
+    });
 
     res.json(admission);
   } catch (error) {
@@ -2900,21 +2919,25 @@ app.post('/api/surgeries/:id/start', authenticateToken, async (req: any, res: Re
     const { id } = req.params;
     if (!(await ensureTenantOwnsSurgery(req, res, id))) return;
 
-    const surgery = await prisma.surgery.update({
-      where: { id },
-      data: {
-        status: 'in_progress',
-        actualStartTime: new Date(),
-      },
-    });
-
-    // Update OT room status (scoped — OT room names are per-tenant unique now)
-    if (surgery.otRoom) {
-      await prisma.oTRoom.updateMany({
-        where: { tenantId: req.user.tenantId, name: surgery.otRoom },
-        data: { status: 'in_use', currentSurgery: surgery.procedureName },
+    const surgery = await prisma.$transaction(async (tx) => {
+      const updated = await tx.surgery.update({
+        where: { id },
+        data: {
+          status: 'in_progress',
+          actualStartTime: new Date(),
+        },
       });
-    }
+
+      // Update OT room status (scoped — OT room names are per-tenant unique now)
+      if (updated.otRoom) {
+        await tx.oTRoom.updateMany({
+          where: { tenantId: req.user.tenantId, name: updated.otRoom },
+          data: { status: 'in_use', currentSurgery: updated.procedureName },
+        });
+      }
+
+      return updated;
+    });
 
     res.json({ message: 'Surgery started', surgery });
   } catch (error) {
@@ -2929,23 +2952,27 @@ app.post('/api/surgeries/:id/complete', authenticateToken, async (req: any, res:
     if (!(await ensureTenantOwnsSurgery(req, res, id))) return;
     const { postOpNotes, complications } = req.body;
 
-    const surgery = await prisma.surgery.update({
-      where: { id },
-      data: {
-        status: 'completed',
-        actualEndTime: new Date(),
-        postOpNotes,
-        complications,
-      },
-    });
-
-    // Free up OT room (scoped — OT room names are per-tenant unique now)
-    if (surgery.otRoom) {
-      await prisma.oTRoom.updateMany({
-        where: { tenantId: req.user.tenantId, name: surgery.otRoom },
-        data: { status: 'cleaning', currentSurgery: null },
+    const surgery = await prisma.$transaction(async (tx) => {
+      const updated = await tx.surgery.update({
+        where: { id },
+        data: {
+          status: 'completed',
+          actualEndTime: new Date(),
+          postOpNotes,
+          complications,
+        },
       });
-    }
+
+      // Free up OT room (scoped — OT room names are per-tenant unique now)
+      if (updated.otRoom) {
+        await tx.oTRoom.updateMany({
+          where: { tenantId: req.user.tenantId, name: updated.otRoom },
+          data: { status: 'cleaning', currentSurgery: null },
+        });
+      }
+
+      return updated;
+    });
 
     res.json({ message: 'Surgery completed', surgery });
   } catch (error) {
@@ -3681,19 +3708,24 @@ app.post('/api/ambulance/trips/:id/assign', authenticateToken, async (req: any, 
       return res.status(404).json({ error: 'Vehicle not found' });
     }
 
-    const trip = await prisma.ambulanceTrip.update({
-      where: { id },
-      data: {
-        vehicleNumber: vehicle.vehicleNumber,
-        driverName: vehicle.driverName,
-        driverContact: vehicle.driverPhone,
-        status: 'in_progress',
-      },
-    });
-
-    await prisma.ambulanceVehicle.update({
-      where: { id: vehicleId },
-      data: { status: 'on_trip' },
+    // Trip + vehicle status atomically — partial assignment (trip in_progress
+    // but vehicle still 'available') would let the same truck get assigned
+    // to a second trip seconds later.
+    const trip = await prisma.$transaction(async (tx) => {
+      const updated = await tx.ambulanceTrip.update({
+        where: { id },
+        data: {
+          vehicleNumber: vehicle.vehicleNumber,
+          driverName: vehicle.driverName,
+          driverContact: vehicle.driverPhone,
+          status: 'in_progress',
+        },
+      });
+      await tx.ambulanceVehicle.update({
+        where: { id: vehicleId },
+        data: { status: 'on_trip' },
+      });
+      return updated;
     });
 
     res.json({ message: 'Vehicle assigned to trip', trip });
@@ -3710,18 +3742,20 @@ app.post('/api/ambulance/trips/:id/complete', authenticateToken, async (req: any
     const owned = await prisma.ambulanceTrip.findFirst({ where: { id, tenantId: req.user.tenantId } });
     if (!owned) return res.status(404).json({ error: 'Trip not found' });
 
-    const trip = await prisma.ambulanceTrip.update({
-      where: { id },
-      data: {
-        status: 'completed',
-        endTime: new Date(),
-      },
-    });
-
-    // Free up the vehicle (scoped — vehicleNumber is per-tenant unique now)
-    await prisma.ambulanceVehicle.updateMany({
-      where: { tenantId: req.user.tenantId, vehicleNumber: trip.vehicleNumber },
-      data: { status: 'available' },
+    const trip = await prisma.$transaction(async (tx) => {
+      const updated = await tx.ambulanceTrip.update({
+        where: { id },
+        data: {
+          status: 'completed',
+          endTime: new Date(),
+        },
+      });
+      // Free up the vehicle (scoped — vehicleNumber is per-tenant unique now)
+      await tx.ambulanceVehicle.updateMany({
+        where: { tenantId: req.user.tenantId, vehicleNumber: updated.vehicleNumber },
+        data: { status: 'available' },
+      });
+      return updated;
     });
 
     res.json({ message: 'Trip completed', trip });
@@ -5968,9 +6002,9 @@ app.post('/api/ipd-billing/:admissionId/pay', authenticateToken, async (req: any
       return res.status(400).json({ error: 'Invalid payment amount' });
     }
 
-    // Find admission and existing invoice
-    const admission = await prisma.admission.findUnique({
-      where: { id: admissionId },
+    // Tenant-scope through patient.tenantId.
+    const admission = await prisma.admission.findFirst({
+      where: { id: admissionId, patient: { tenantId: req.user.tenantId } },
       include: {
         encounter: {
           include: {
@@ -5984,64 +6018,75 @@ app.post('/api/ipd-billing/:admissionId/pay', authenticateToken, async (req: any
       return res.status(404).json({ error: 'Admission not found' });
     }
 
-    let invoice = invoiceId
-      ? await prisma.invoice.findUnique({ where: { id: invoiceId } })
-      : admission?.encounter?.invoices?.[0];
+    // Bill creation (if needed) + payment + invoice update — all atomic.
+    // Without the wrapper, a crash between steps could record a payment that
+    // never updates the invoice balance, and the next retry would charge
+    // the patient twice.
+    const result = await prisma.$transaction(async (tx) => {
+      let invoice = invoiceId
+        ? await tx.invoice.findFirst({
+            where: { id: invoiceId, patient: { tenantId: req.user.tenantId } },
+          })
+        : admission?.encounter?.invoices?.[0];
 
-    // If no invoice exists but billData is provided, create the invoice first
-    if (!invoice && billData) {
-      invoice = await prisma.invoice.create({
+      if (!invoice && billData) {
+        invoice = await tx.invoice.create({
+          data: {
+            patientId: admission.patientId,
+            encounterId: admission.encounterId,
+            type: 'ipd',
+            items: billData.charges || [],
+            subtotal: billData.subtotal || 0,
+            discount: billData.discount || 0,
+            tax: billData.tax || 0,
+            total: billData.total || 0,
+            paid: 0,
+            balance: billData.total || 0,
+            status: 'pending',
+          },
+        });
+      }
+
+      if (!invoice) {
+        // Throw so the transaction aborts cleanly; caught below as a 400.
+        throw new AppError('Please save the bill first before recording payment', 400, 'BILL_NOT_SAVED');
+      }
+
+      const payment = await tx.payment.create({
         data: {
-          patientId: admission.patientId,
-          encounterId: admission.encounterId,
-          type: 'ipd',
-          items: billData.charges || [],
-          subtotal: billData.subtotal || 0,
-          discount: billData.discount || 0,
-          tax: billData.tax || 0,
-          total: billData.total || 0,
-          paid: 0,
-          balance: billData.total || 0,
-          status: 'pending',
+          invoiceId: invoice.id,
+          amount: amount,
+          mode: paymentMode || 'cash',
+          transactionRef: reference,
+          receivedBy: req.user.userId,
         },
       });
-    }
 
-    if (!invoice) {
-      return res.status(400).json({ error: 'Please save the bill first before recording payment' });
-    }
+      const newPaid = Number(invoice.paid) + Number(amount);
+      const newBalance = Number(invoice.total) - newPaid;
 
-    // Create payment
-    const payment = await prisma.payment.create({
-      data: {
-        invoiceId: invoice.id,
-        amount: amount,
-        mode: paymentMode || 'cash',
-        transactionRef: reference,
-        receivedBy: req.user.userId,
-      },
-    });
+      await tx.invoice.update({
+        where: { id: invoice.id },
+        data: {
+          paid: newPaid,
+          balance: newBalance,
+          status: newBalance <= 0 ? 'paid' : 'partial',
+        },
+      });
 
-    // Update invoice paid amount and balance
-    const newPaid = Number(invoice.paid) + Number(amount);
-    const newBalance = Number(invoice.total) - newPaid;
-
-    const updatedInvoice = await prisma.invoice.update({
-      where: { id: invoice.id },
-      data: {
-        paid: newPaid,
-        balance: newBalance,
-        status: newBalance <= 0 ? 'paid' : 'partial',
-      },
+      return { paymentId: payment.id, newPaid, newBalance };
     });
 
     res.json({
-      paymentId: payment.id,
+      paymentId: result.paymentId,
       message: 'Payment recorded successfully',
-      newPaid,
-      newBalance,
+      newPaid: result.newPaid,
+      newBalance: result.newBalance,
     });
-  } catch (error) {
+  } catch (error: any) {
+    if (error instanceof AppError) {
+      return res.status(error.statusCode).json({ error: error.message });
+    }
     console.error('IPD payment error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
