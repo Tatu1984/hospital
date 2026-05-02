@@ -6,7 +6,9 @@ describe('normalizePatient()', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-05-01T12:00:00Z'));
   });
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it('maps backend `contact` to `phone` and computes age from dob', () => {
     const out = normalizePatient({
