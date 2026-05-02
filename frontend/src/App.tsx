@@ -129,9 +129,11 @@ const AppRoutes = () => {
 
   return (
     <Routes>
-      {/* Public marketing website — no auth, public CMS-style content. */}
+      {/* Public marketing website — root of hospital-vnyb.vercel.app.
+          No auth required; the "Sign In" button on every page routes to
+          /login (relative on same domain). */}
       <Route
-        path="/website"
+        path="/"
         element={
           <Suspense fallback={<RouteSpinner />}>
             <WebsiteLayout />
@@ -162,8 +164,11 @@ const AppRoutes = () => {
           </Suspense>
         }
       />
+      {/* Authenticated portal — every clinical/operational module lives
+          under /app/*. Sidebar paths inside MainLayout already use this
+          prefix. After login, users are routed to /app. */}
       <Route
-        path="/"
+        path="/app"
         element={
           <ProtectedRoute>
             <Suspense fallback={<RouteSpinner />}>

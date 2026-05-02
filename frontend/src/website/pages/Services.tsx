@@ -176,13 +176,13 @@ export default function Services() {
               </p>
             </div>
             <div className="flex lg:justify-end gap-3 flex-wrap">
-              <Link to="/website/contact#book">
+              <Link to="/contact#book">
                 <ShimmerButton className="h-12 px-8">
                   <Calendar className="h-4 w-4" /> Book appointment
                 </ShimmerButton>
               </Link>
               <Link
-                to="/website/doctors"
+                to="/doctors"
                 className="inline-flex items-center gap-1 px-6 h-12 rounded-xl border border-slate-300 hover:border-teal-500 hover:text-teal-700 font-medium text-sm"
               >
                 Browse doctors <ArrowRight className="h-4 w-4" />

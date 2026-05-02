@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -12,8 +12,16 @@ const Login = () => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
+  const { login, token, loading: authLoading } = useAuth();
   const navigate = useNavigate();
+
+  // Already signed in? Skip the form and go straight to the portal. Keeps
+  // navigation in this app symmetrical: anonymous → /, authenticated → /app.
+  useEffect(() => {
+    if (!authLoading && token) {
+      navigate('/app', { replace: true });
+    }
+  }, [authLoading, token, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -22,7 +30,8 @@ const Login = () => {
 
     try {
       await login(username, password);
-      navigate('/');
+      // / is the public marketing home now. The portal lives at /app.
+      navigate('/app');
     } catch (err: any) {
       setError(err.response?.data?.message || 'Invalid username or password');
     } finally {

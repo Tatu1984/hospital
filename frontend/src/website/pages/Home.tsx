@@ -63,14 +63,14 @@ function Hero() {
             </BlurFade>
             <BlurFade delay={0.9}>
               <div className="mt-8 flex flex-wrap gap-3">
-                <Link to="/website/contact#book">
+                <Link to="/contact#book">
                   <ShimmerButton className="h-12 px-8">
                     <Calendar className="h-4 w-4" />
                     Book Appointment
                   </ShimmerButton>
                 </Link>
                 <Button asChild variant="outline" size="lg" className="h-12 border-slate-300 hover:border-teal-500 hover:text-teal-700">
-                  <Link to="/website/services">Explore services <ArrowRight className="ml-1 h-4 w-4" /></Link>
+                  <Link to="/services">Explore services <ArrowRight className="ml-1 h-4 w-4" /></Link>
                 </Button>
               </div>
             </BlurFade>
@@ -191,7 +191,7 @@ function Specialities() {
                 <div className="font-semibold text-slate-900">{name}</div>
                 <p className="mt-1.5 text-sm text-slate-600 leading-relaxed">{desc}</p>
                 <Link
-                  to="/website/services"
+                  to="/services"
                   className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-teal-700 hover:gap-2 transition-all"
                 >
                   Learn more <ArrowRight className="h-3.5 w-3.5" />
@@ -295,7 +295,7 @@ function DoctorsTeaser() {
           </div>
           <BlurFade delay={0.2}>
             <Button asChild variant="outline" className="border-slate-300 hover:border-teal-500 hover:text-teal-700">
-              <Link to="/website/doctors">View all doctors <ArrowRight className="ml-1 h-4 w-4" /></Link>
+              <Link to="/doctors">View all doctors <ArrowRight className="ml-1 h-4 w-4" /></Link>
             </Button>
           </BlurFade>
         </div>
@@ -392,16 +392,16 @@ function CTA() {
               available within 90 minutes.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
-              <Link to="/website/contact#book">
+              <Link to="/contact#book">
                 <ShimmerButton className="h-12 px-8 bg-white text-slate-900 hover:bg-white">
                   Book appointment
                 </ShimmerButton>
               </Link>
-              <a href={PORTAL_URL} target="_blank" rel="noreferrer">
+              <Link to={PORTAL_URL}>
                 <Button variant="outline" size="lg" className="h-12 bg-transparent border-white/40 text-white hover:bg-white/10 hover:text-white">
                   Open patient portal
                 </Button>
-              </a>
+              </Link>
             </div>
           </div>
         </div>

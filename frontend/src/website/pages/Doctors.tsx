@@ -130,7 +130,7 @@ export default function Doctors() {
                       </div>
                     </div>
                     <Link
-                      to="/website/contact#book"
+                      to="/contact#book"
                       className="mt-5 inline-flex w-full justify-center items-center px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800"
                     >
                       Book consultation
@@ -153,7 +153,7 @@ export default function Doctors() {
             scheduled days. Call our help desk to book.
           </p>
           <div className="mt-6">
-            <Link to="/website/contact">
+            <Link to="/contact">
               <ShimmerButton className="h-12 px-8">Contact us</ShimmerButton>
             </Link>
           </div>

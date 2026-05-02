@@ -5,16 +5,18 @@ import { Button } from '@/components/ui/button';
 import { ShimmerButton } from '@/components/reactbits/ShimmerButton';
 import { cn } from '@/lib/utils';
 
-// The portal sign-in URL — the existing Vercel deployment of the HMS app.
-// Externalised as a const so it's the one place to swap when prod URL changes.
-const PORTAL_URL = 'https://hospital-vnyb.vercel.app/';
+// The portal sign-in URL — same domain, /login route. The website lives
+// at the root of hospital-vnyb.vercel.app and the portal is at /app
+// (login form at /login). PORTAL_URL is left as an absolute URL so any
+// future split-deployment (separate marketing domain) keeps working.
+const PORTAL_URL = '/login';
 
 const NAV = [
-  { to: '/website', label: 'Home' },
-  { to: '/website/about', label: 'About' },
-  { to: '/website/services', label: 'Services' },
-  { to: '/website/doctors', label: 'Doctors' },
-  { to: '/website/contact', label: 'Contact' },
+  { to: '/', label: 'Home' },
+  { to: '/about', label: 'About' },
+  { to: '/services', label: 'Services' },
+  { to: '/doctors', label: 'Doctors' },
+  { to: '/contact', label: 'Contact' },
 ];
 
 export default function WebsiteLayout() {
@@ -41,7 +43,7 @@ export default function WebsiteLayout() {
       {/* Main header */}
       <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/85 backdrop-blur supports-[backdrop-filter]:bg-white/70">
         <div className="mx-auto max-w-7xl px-6 h-16 flex items-center justify-between">
-          <Link to="/website" className="flex items-center gap-2 group">
+          <Link to="/" className="flex items-center gap-2 group">
             <div className="h-9 w-9 rounded-xl bg-teal-600 text-white grid place-items-center transition-transform group-hover:scale-105">
               <Heart className="h-5 w-5" fill="currentColor" />
             </div>
@@ -56,7 +58,7 @@ export default function WebsiteLayout() {
               <NavLink
                 key={n.to}
                 to={n.to}
-                end={n.to === '/website'}
+                end={n.to === '/'}
                 className={({ isActive }) =>
                   cn(
                     'px-3 py-2 text-sm font-medium rounded-md transition-colors',
@@ -75,11 +77,11 @@ export default function WebsiteLayout() {
             <Button variant="ghost" asChild className="text-slate-700">
               <a href="#book">Book Appointment</a>
             </Button>
-            <a href={PORTAL_URL} target="_blank" rel="noreferrer">
+            <Link to={PORTAL_URL}>
               <ShimmerButton className="h-10 px-6 text-sm">
                 Sign In
               </ShimmerButton>
-            </a>
+            </Link>
           </div>
 
           <button
@@ -99,7 +101,7 @@ export default function WebsiteLayout() {
                 <NavLink
                   key={n.to}
                   to={n.to}
-                  end={n.to === '/website'}
+                  end={n.to === '/'}
                   onClick={() => setOpen(false)}
                   className={({ isActive }) =>
                     cn(
@@ -111,14 +113,13 @@ export default function WebsiteLayout() {
                   {n.label}
                 </NavLink>
               ))}
-              <a
-                href={PORTAL_URL}
-                target="_blank"
-                rel="noreferrer"
+              <Link
+                to={PORTAL_URL}
+                onClick={() => setOpen(false)}
                 className="mt-2 inline-flex items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white"
               >
                 Sign In to Portal
-              </a>
+              </Link>
             </div>
           </div>
         )}
@@ -165,11 +166,11 @@ function Footer() {
         <div>
           <h4 className="text-white font-medium mb-3 text-sm uppercase tracking-wider">Quick Links</h4>
           <ul className="space-y-2 text-sm">
-            <li><Link to="/website/about" className="hover:text-teal-400">About Us</Link></li>
-            <li><Link to="/website/services" className="hover:text-teal-400">Services</Link></li>
-            <li><Link to="/website/doctors" className="hover:text-teal-400">Our Doctors</Link></li>
-            <li><Link to="/website/contact" className="hover:text-teal-400">Contact</Link></li>
-            <li><a href={PORTAL_URL} target="_blank" rel="noreferrer" className="hover:text-teal-400">Patient Portal</a></li>
+            <li><Link to="/about" className="hover:text-teal-400">About Us</Link></li>
+            <li><Link to="/services" className="hover:text-teal-400">Services</Link></li>
+            <li><Link to="/doctors" className="hover:text-teal-400">Our Doctors</Link></li>
+            <li><Link to="/contact" className="hover:text-teal-400">Contact</Link></li>
+            <li><Link to={PORTAL_URL} className="hover:text-teal-400">Patient Portal</Link></li>
           </ul>
         </div>
 
