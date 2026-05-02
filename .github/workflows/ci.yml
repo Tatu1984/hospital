@@ -92,6 +92,24 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Upload source maps to Sentry
+        # Skips silently if SENTRY_AUTH_TOKEN / SENTRY_ORG / SENTRY_PROJECT
+        # aren't configured (forks, dev branches without secrets). When all
+        # three are present we tag the release with the commit SHA so server
+        # stack traces in Sentry symbolicate back to TypeScript.
+        if: github.ref == 'refs/heads/main' && env.SENTRY_AUTH_TOKEN != ''
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+          SENTRY_RELEASE: ${{ github.sha }}
+        run: |
+          npx --yes @sentry/cli releases new "$SENTRY_RELEASE"
+          npx --yes @sentry/cli releases files "$SENTRY_RELEASE" upload-sourcemaps ./dist \
+            --url-prefix '~/' --rewrite
+          npx --yes @sentry/cli releases set-commits "$SENTRY_RELEASE" --auto
+          npx --yes @sentry/cli releases finalize "$SENTRY_RELEASE"
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:

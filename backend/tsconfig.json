@@ -10,8 +10,12 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "moduleResolution": "node"
+    "moduleResolution": "node",
+    // Source maps land next to the .js files so Sentry can symbolicate
+    // production stack traces back to TypeScript line numbers. The CI step
+    // 'Upload source maps to Sentry' uploads them post-build and pre-deploy.
+    "sourceMap": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules"]
+  "exclude": ["node_modules", "src/__tests__"]
 }

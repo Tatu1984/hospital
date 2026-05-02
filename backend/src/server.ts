@@ -36,6 +36,8 @@ import {
   dynamicRBAC,
   dynamicValidation,
   requestId,
+  metricsMiddleware,
+  metricsSnapshot,
 } from './middleware';
 
 // Import validators
@@ -150,14 +152,25 @@ let SentryRef: any = null;
 if (process.env.SENTRY_DSN) {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   SentryRef = require('@sentry/node');
+  // Release tag — pinned to the deployed git SHA so each Sentry event maps
+  // to a specific commit. Vercel exposes VERCEL_GIT_COMMIT_SHA automatically;
+  // CI/Docker can pass SENTRY_RELEASE explicitly. If neither is set we leave
+  // it undefined and Sentry falls back to "no release" (worse symbolication
+  // but still functional).
+  const release =
+    process.env.SENTRY_RELEASE ||
+    process.env.VERCEL_GIT_COMMIT_SHA ||
+    process.env.GIT_COMMIT_SHA ||
+    undefined;
   SentryRef.init({
     dsn: process.env.SENTRY_DSN,
+    release,
     environment: process.env.NODE_ENV || 'production',
     tracesSampleRate: parseFloat(process.env.SENTRY_TRACES_SAMPLE_RATE || '0.1'),
     // Drop healthcheck noise so we don't burn the quota on uptime probes.
     beforeSend(event: any) {
       const url = event?.request?.url || '';
-      if (url.includes('/api/health') || url.includes('/api/ready') || url.includes('/api/live') || url === '/health') {
+      if (url.includes('/api/health') || url.includes('/api/ready') || url.includes('/api/live') || url.includes('/api/metrics') || url === '/health') {
         return null;
       }
       return event;
@@ -174,7 +187,7 @@ if (process.env.SENTRY_DSN) {
     next();
   });
   // eslint-disable-next-line no-console
-  console.log('[sentry] enabled');
+  console.log(`[sentry] enabled${release ? ` (release ${release.slice(0, 12)})` : ''}`);
 } else {
   // eslint-disable-next-line no-console
   console.log('[sentry] disabled — set SENTRY_DSN to enable');
@@ -187,6 +200,11 @@ if (process.env.SENTRY_DSN) {
 // Request correlation ID — runs before everything else so subsequent
 // middleware (Sentry, error handler, audit, Winston) can quote the same id.
 app.use(requestId);
+
+// Per-request latency timer. Records on response 'finish', emits slow-request
+// warnings (>SLOW_REQUEST_MS, default 1s) to Winston, and feeds the
+// /api/metrics endpoint with p50/p95/p99 by route.
+app.use(metricsMiddleware);
 
 // Security headers
 app.use(securityHeaders);
@@ -388,6 +406,45 @@ app.get('/api/ready', async (req: Request, res: Response) => {
 app.get('/api/live', (req: Request, res: Response) => {
   res.json({ alive: true, timestamp: new Date().toISOString() });
 });
+
+// Latency snapshot — p50/p95/p99 per route, sorted by p95 desc. Restricted to
+// authenticated users with system:manage so we don't leak hospital traffic
+// shape to anonymous probes (Sentry filters /api/metrics from event capture).
+app.get('/api/metrics', authenticateToken, requirePermission('system:manage'), (_req: any, res: Response) => {
+  res.json({
+    generatedAt: new Date().toISOString(),
+    slowRequestThresholdMs: parseInt(process.env.SLOW_REQUEST_MS || '1000', 10),
+    routes: metricsSnapshot(),
+  });
+});
+
+// Audit-log retention sweep. Designed for Vercel cron (GET, Authorization:
+// Bearer ${CRON_SECRET}) but also accepts an X-Cron-Secret header for
+// non-Vercel callers. Vercel is serverless so the in-process timer in
+// jobs/auditRetention.ts isn't reachable there.
+const auditRetentionHandler = async (req: Request, res: Response) => {
+  const expected = process.env.CRON_SECRET;
+  if (!expected) {
+    return res.status(503).json({ error: 'CRON_SECRET not configured' });
+  }
+  const bearer = (req.header('authorization') || '').replace(/^Bearer\s+/i, '').trim();
+  const explicit = req.header('x-cron-secret') || '';
+  const provided = bearer || explicit;
+  if (provided !== expected) {
+    return res.status(401).json({ error: 'invalid cron secret' });
+  }
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { runAuditRetention } = require('./jobs/auditRetention');
+  try {
+    const result = await runAuditRetention(prisma);
+    res.json(result);
+  } catch (e: any) {
+    logger.error('audit retention manual run failed', { error: e?.message });
+    res.status(500).json({ error: 'retention sweep failed' });
+  }
+};
+app.get('/api/internal/audit-retention/run', auditRetentionHandler);
+app.post('/api/internal/audit-retention/run', auditRetentionHandler);
 
 // ============================================
 // REFRESH TOKEN — httpOnly cookie helpers
@@ -623,10 +680,15 @@ app.post('/api/auth/forgot-password', async (req: Request, res: Response) => {
       );
       auditLogger.securityEvent('PASSWORD_RESET_REQUESTED', { userId: user.id, email, ip: req.ip });
       void writeAudit({ prisma, req, userId: user.id, tenantId: user.tenantId, action: 'PASSWORD_RESET_REQUESTED', resource: 'Authentication', resourceId: user.id });
-      // No email gateway wired yet — surface the link via server logs so the
-      // operator can hand it to the user. Replace with SMTP/SES once configured.
-      // eslint-disable-next-line no-console
-      console.log(`[password-reset] for ${email} — token: ${resetToken}`);
+      // No email gateway wired yet. Until SMTP/SES is configured, the token
+      // is delivered out-of-band by an operator who reads it from a private
+      // channel (not stdout). Set PASSWORD_RESET_LOG_TOKEN=true ONLY in dev.
+      if (process.env.PASSWORD_RESET_LOG_TOKEN === 'true' && process.env.NODE_ENV !== 'production') {
+        // eslint-disable-next-line no-console
+        console.log(`[password-reset:DEV] userId=${user.id} token=${resetToken}`);
+      } else {
+        logger.info('password-reset token issued', { userId: user.id });
+      }
     }
     // Don't reveal whether the email matched a user.
     return res.status(204).end();
@@ -7056,7 +7118,9 @@ app.use(errorHandler);
 // ============================================
 // Vercel and other serverless runtimes import the app and route requests to
 // it directly — they never want app.listen(). Only bind a port when running
-// as a long-lived process (local dev, Docker, plain Node).
+// as a long-lived process (local dev, Docker, plain Node). The audit-log
+// retention job is also long-running; gate it on the same condition so each
+// serverless invocation doesn't spawn a second timer.
 if (!process.env.VERCEL && process.env.NODE_ENV !== 'test') {
   app.listen(PORT, () => {
     logger.info(`Hospital ERP Backend running on http://localhost:${PORT}`);
@@ -7064,6 +7128,10 @@ if (!process.env.VERCEL && process.env.NODE_ENV !== 'test') {
     console.log(`🏥 HMS Backend running on http://localhost:${PORT}`);
     console.log(`📊 API Health: http://localhost:${PORT}/api/health`);
   });
+
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { startAuditRetentionJob } = require('./jobs/auditRetention');
+  startAuditRetentionJob(prisma);
 }
 
 export default app;

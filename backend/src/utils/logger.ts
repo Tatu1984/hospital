@@ -4,6 +4,61 @@ import path from 'path';
 import fs from 'fs';
 import { config } from '../config';
 
+/**
+ * PHI redactor for log output.
+ *
+ * HIPAA-equivalent rule of thumb: don't write Patient Health Information into
+ * application logs. Logs leak through stdout, log shippers, third-party
+ * platforms, and ops dashboards — none of which carry the same access
+ * controls as the database itself.
+ *
+ * This format walks log metadata recursively and replaces values for known
+ * PHI keys with "[REDACTED]". Caller can still log the IDs (`patientId`,
+ * `mrn`) so an investigator can pivot back to the DB; what's scrubbed is the
+ * personally-identifying free text.
+ *
+ * Override the list with LOG_REDACT_KEYS=key1,key2,... (additive).
+ */
+const DEFAULT_PHI_KEYS = new Set([
+  'name', 'patientName', 'firstName', 'lastName', 'fullName',
+  'email', 'phone', 'contact', 'phoneNumber', 'mobile',
+  'address', 'street', 'city', 'pincode', 'zip',
+  'dob', 'dateOfBirth', 'aadhaar', 'pan', 'ssn',
+  'emergencyContact', 'kin', 'relativeName',
+  'allergies', 'diagnosis', 'symptoms', 'chiefComplaint',
+  'password', 'passwordHash', 'token', 'authorization',
+  'sessionToken', 'refreshToken', 'apiKey', 'secret',
+]);
+const extraKeys = (process.env.LOG_REDACT_KEYS || '').split(',').map((s) => s.trim()).filter(Boolean);
+const PHI_KEYS: Set<string> = new Set([...DEFAULT_PHI_KEYS, ...extraKeys]);
+
+function redactPHI(value: any, depth = 0): any {
+  if (depth > 6 || value == null) return value;
+  if (Array.isArray(value)) return value.map((v) => redactPHI(v, depth + 1));
+  if (typeof value === 'object') {
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = PHI_KEYS.has(k) ? '[REDACTED]' : redactPHI(v, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
+
+// Winston format that scrubs PHI keys from every entry's meta. Applied
+// before consoleFormat / fileFormat so both transports get scrubbed output.
+const phiRedactor = winston.format((info) => {
+  for (const [k, v] of Object.entries(info)) {
+    if (k === 'level' || k === 'message' || k === 'timestamp') continue;
+    if (PHI_KEYS.has(k)) {
+      (info as any)[k] = '[REDACTED]';
+    } else {
+      (info as any)[k] = redactPHI(v);
+    }
+  }
+  return info;
+});
+
 // Serverless platforms (Vercel, Lambda, etc.) run from a read-only filesystem
 // — only stdout/stderr is durable. Skip file transports there. Anywhere else
 // (local dev, Docker, plain VPS) keep file logs as before.
@@ -24,6 +79,7 @@ if (!isServerless) {
 
 // Custom format for console output
 const consoleFormat = winston.format.combine(
+  phiRedactor(),
   winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
   winston.format.colorize(),
   winston.format.printf(({ timestamp, level, message, ...meta }) => {
@@ -34,6 +90,7 @@ const consoleFormat = winston.format.combine(
 
 // Custom format for file output (JSON)
 const fileFormat = winston.format.combine(
+  phiRedactor(),
   winston.format.timestamp(),
   winston.format.errors({ stack: true }),
   winston.format.json()

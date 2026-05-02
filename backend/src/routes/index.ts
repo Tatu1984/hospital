@@ -85,6 +85,11 @@ export const PUBLIC_ROUTES: ReadonlySet<string> = new Set([
   'POST /api/auth/logout',
   'POST /api/auth/forgot-password',
   'POST /api/auth/reset-password',
+  // Internal cron entry. Bypasses RBAC because it auths via X-Cron-Secret
+  // header (the handler verifies it). Never expose this through the UI.
+  // Vercel cron sends GET; we also accept POST for non-Vercel triggers.
+  'GET /api/internal/audit-retention/run',
+  'POST /api/internal/audit-retention/run',
 ]);
 
 // ============================================
@@ -93,6 +98,9 @@ export const PUBLIC_ROUTES: ReadonlySet<string> = new Set([
 export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   // Detailed health (admin-only)
   'GET /api/health/detailed': ['system:manage'],
+
+  // Latency snapshot (p50/p95/p99 per route, admin-only)
+  'GET /api/metrics': ['system:manage'],
 
   // Current user
   'GET /api/auth/me': ['dashboard:view'],
