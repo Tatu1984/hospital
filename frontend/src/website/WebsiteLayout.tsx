@@ -49,7 +49,7 @@ export default function WebsiteLayout() {
               <Heart className="h-5 w-5" fill="currentColor" />
             </div>
             <div className="leading-tight">
-              <div className="font-semibold text-slate-900">Shree Vishalyajarni</div>
+              <div className="font-semibold text-slate-900">INFPS-Hospital</div>
               <div className="text-[11px] text-slate-500 tracking-wide uppercase">Care · Cure · Compassion</div>
             </div>
           </Link>
@@ -152,7 +152,7 @@ function Footer() {
             <div className="h-9 w-9 rounded-xl bg-teal-500 text-white grid place-items-center">
               <Heart className="h-5 w-5" fill="currentColor" />
             </div>
-            <span className="font-semibold text-white text-lg">Shree Vishalyajarni</span>
+            <span className="font-semibold text-white text-lg">INFPS-Hospital</span>
           </div>
           <p className="mt-4 text-sm leading-relaxed text-slate-400 max-w-md">
             A multi-speciality hospital in West Bengal delivering compassionate
@@ -195,7 +195,7 @@ function Footer() {
 
       <div className="border-t border-slate-800">
         <div className="mx-auto max-w-7xl px-6 py-5 text-xs text-slate-500 flex flex-col sm:flex-row justify-between gap-2">
-          <span>© {new Date().getFullYear()} Shree Vishalyajarni. All rights reserved.</span>
+          <span>© {new Date().getFullYear()} INFPS-Hospital. All rights reserved.</span>
           <div className="flex gap-4">
             <a href="#" className="hover:text-slate-300">Privacy Policy</a>
             <a href="#" className="hover:text-slate-300">Terms of Service</a>
