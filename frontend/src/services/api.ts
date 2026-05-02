@@ -1,6 +1,20 @@
 import axios, { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios';
 
+// VITE_API_URL is required in prod and validated at build time below.
+// In dev we fall back to '' so the Vite proxy (vite.config.ts) handles
+// /api/* — that's the path of least friction for `npm run dev`.
 const API_URL = import.meta.env.VITE_API_URL || '';
+if (import.meta.env.PROD && !import.meta.env.VITE_API_URL) {
+  // Production builds without VITE_API_URL would silently call same-origin,
+  // which is wrong because the SPA and API are on different Vercel domains.
+  // Surface the misconfiguration loudly instead of letting the user hit a
+  // confusing CORS error on every request.
+  // eslint-disable-next-line no-console
+  console.error(
+    '[api] VITE_API_URL is not set in this production build. ' +
+    'Set it in the Vercel project env (e.g. https://hospital-api-xxx.vercel.app) and redeploy.'
+  );
+}
 
 // Token storage. Access token lives in sessionStorage (cleared on tab close);
 // refresh token now lives in an httpOnly cookie set by the backend so JS
@@ -26,10 +40,23 @@ export const tokenStore = {
 // /api/auth/refresh and /api/auth/logout (cross-site, so it's required).
 const api = axios.create({ baseURL: API_URL, withCredentials: true });
 
-// Attach access token to every outgoing request.
+// Attach access token to every outgoing request, plus a per-request id so
+// the backend can echo it back into Sentry / Winston / audit logs and we can
+// correlate a UI report with server logs.
+function newRequestId(): string {
+  // crypto.randomUUID is widely supported but missing on iOS < 14 / older
+  // Edge — fall back to a Math.random-based id if it's not available.
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const token = tokenStore.getAccess();
   if (token) config.headers.Authorization = `Bearer ${token}`;
+  if (!config.headers['X-Request-ID']) {
+    config.headers['X-Request-ID'] = newRequestId();
+  }
   return config;
 });
 
