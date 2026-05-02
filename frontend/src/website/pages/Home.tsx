@@ -14,6 +14,7 @@ import { ShimmerButton } from '@/components/reactbits/ShimmerButton';
 import { AnimatedGridPattern } from '@/components/reactbits/AnimatedGridPattern';
 import { SpotlightCard } from '@/components/reactbits/SpotlightCard';
 import { PORTAL_URL } from '../WebsiteLayout';
+import { doctorAvatarUrl } from '../doctors/avatar';
 
 export default function Home() {
   return (
@@ -303,17 +304,22 @@ function DoctorsTeaser() {
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
           {DOCTORS.map((d, i) => (
             <BlurFade key={d.name} delay={0.05 * i}>
-              <SpotlightCard className="h-full">
-                <div className="aspect-[4/3] rounded-lg bg-gradient-to-br from-teal-100 to-teal-50 grid place-items-center mb-4 overflow-hidden">
-                  <div className="text-5xl font-bold text-teal-700/50 select-none">
-                    {d.name.split(' ').map((n) => n[0]).join('').slice(0, 2)}
-                  </div>
+              <SpotlightCard className="h-full !p-0 overflow-hidden">
+                <div className="aspect-[4/5] bg-slate-50 overflow-hidden border-b border-slate-100">
+                  <img
+                    src={doctorAvatarUrl(d.name)}
+                    alt={d.name}
+                    className="w-full h-full object-cover"
+                    loading="lazy"
+                  />
                 </div>
-                <div className="font-semibold text-slate-900">{d.name}</div>
-                <div className="text-sm text-teal-700">{d.spec}</div>
-                <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
-                  <span>{d.exp} experience</span>
-                  <span className="text-slate-400">{d.from}</span>
+                <div className="p-5">
+                  <div className="font-semibold text-slate-900">{d.name}</div>
+                  <div className="text-sm text-teal-700">{d.spec}</div>
+                  <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
+                    <span>{d.exp} experience</span>
+                    <span className="text-slate-400">{d.from}</span>
+                  </div>
                 </div>
               </SpotlightCard>
             </BlurFade>

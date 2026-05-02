@@ -7,6 +7,7 @@ import { BlurFade } from '@/components/reactbits/BlurFade';
 import { SpotlightCard } from '@/components/reactbits/SpotlightCard';
 import { Link } from 'react-router-dom';
 import { ShimmerButton } from '@/components/reactbits/ShimmerButton';
+import { doctorAvatarUrl } from '../doctors/avatar';
 
 interface Doctor {
   name: string;
@@ -105,36 +106,43 @@ export default function Doctors() {
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
               {filtered.map((d, i) => (
                 <BlurFade key={d.name} delay={0.04 * (i % 6)}>
-                  <SpotlightCard className="h-full">
-                    <div className="flex items-start gap-4">
-                      <div className="h-16 w-16 shrink-0 rounded-full bg-gradient-to-br from-teal-100 to-teal-50 grid place-items-center text-teal-700 text-lg font-bold">
-                        {d.name.split(' ').slice(0, 2).map((n) => n[0]).join('')}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="font-semibold text-slate-900 truncate">{d.name}</div>
-                        <div className="text-sm text-teal-700">{d.spec}</div>
-                        <div className="mt-1 text-xs text-slate-500">{d.exp} years experience</div>
-                      </div>
+                  <SpotlightCard className="h-full !p-0 overflow-hidden">
+                    {/* Large portrait — illustrated avatar deterministically
+                        derived from the doctor's name, so the same doctor
+                        looks consistent across pages. Replace with real
+                        photos by editing services/doctors/avatar.ts. */}
+                    <div className="aspect-[4/5] bg-slate-50 overflow-hidden border-b border-slate-100">
+                      <img
+                        src={doctorAvatarUrl(d.name)}
+                        alt={d.name}
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                      />
                     </div>
-                    <div className="mt-4 pt-4 border-t border-slate-100 space-y-2 text-sm">
-                      <div className="flex gap-2 text-slate-600">
-                        <GraduationCap className="h-4 w-4 mt-0.5 shrink-0 text-slate-400" />
-                        <div>
-                          <div>{d.qual}</div>
-                          <div className="text-xs text-slate-500">{d.from}</div>
+                    <div className="p-5">
+                      <div className="font-semibold text-slate-900 text-lg leading-tight">{d.name}</div>
+                      <div className="mt-0.5 text-sm text-teal-700">{d.spec}</div>
+                      <div className="mt-1 text-xs text-slate-500">{d.exp} years experience</div>
+                      <div className="mt-4 pt-4 border-t border-slate-100 space-y-2 text-sm">
+                        <div className="flex gap-2 text-slate-600">
+                          <GraduationCap className="h-4 w-4 mt-0.5 shrink-0 text-slate-400" />
+                          <div>
+                            <div>{d.qual}</div>
+                            <div className="text-xs text-slate-500">{d.from}</div>
+                          </div>
+                        </div>
+                        <div className="flex gap-2 text-slate-600">
+                          <Calendar className="h-4 w-4 mt-0.5 shrink-0 text-slate-400" />
+                          <span>{d.days}</span>
                         </div>
                       </div>
-                      <div className="flex gap-2 text-slate-600">
-                        <Calendar className="h-4 w-4 mt-0.5 shrink-0 text-slate-400" />
-                        <span>{d.days}</span>
-                      </div>
+                      <Link
+                        to="/contact#book"
+                        className="mt-5 inline-flex w-full justify-center items-center px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800"
+                      >
+                        Book consultation
+                      </Link>
                     </div>
-                    <Link
-                      to="/contact#book"
-                      className="mt-5 inline-flex w-full justify-center items-center px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800"
-                    >
-                      Book consultation
-                    </Link>
                   </SpotlightCard>
                 </BlurFade>
               ))}

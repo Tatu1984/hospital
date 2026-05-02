@@ -15,6 +15,7 @@ const WebsiteLayout = lazy(() => import('./website/WebsiteLayout'));
 const WebsiteHome = lazy(() => import('./website/pages/Home'));
 const WebsiteAbout = lazy(() => import('./website/pages/About'));
 const WebsiteServices = lazy(() => import('./website/pages/Services'));
+const WebsiteServiceDetail = lazy(() => import('./website/pages/ServiceDetail'));
 const WebsiteDoctors = lazy(() => import('./website/pages/Doctors'));
 const WebsiteContact = lazy(() => import('./website/pages/Contact'));
 
@@ -143,6 +144,7 @@ const AppRoutes = () => {
         <Route index element={<Suspense fallback={<RouteSpinner />}><WebsiteHome /></Suspense>} />
         <Route path="about" element={<Suspense fallback={<RouteSpinner />}><WebsiteAbout /></Suspense>} />
         <Route path="services" element={<Suspense fallback={<RouteSpinner />}><WebsiteServices /></Suspense>} />
+        <Route path="services/:slug" element={<Suspense fallback={<RouteSpinner />}><WebsiteServiceDetail /></Suspense>} />
         <Route path="doctors" element={<Suspense fallback={<RouteSpinner />}><WebsiteDoctors /></Suspense>} />
         <Route path="contact" element={<Suspense fallback={<RouteSpinner />}><WebsiteContact /></Suspense>} />
       </Route>
