@@ -679,22 +679,22 @@ A complete list of provisioning requirements is provided in the Integration Hand
 
 ### 9.1 AMC Fee
 
-The AMC fee is **10% of the total project cost, billed monthly**, for the duration of the AMC period.
+The AMC fee is **22% of the total project cost per annum, billed half-yearly in advance**, for the duration of the AMC period.
 
 | Item | Amount (₹) |
 | --- | ---: |
 | Total project cost (sub-total, excl. GST) | 37,00,000 |
-| AMC rate (per month) | 10% of project cost |
-| **Monthly AMC fee (excl. GST)** | **3,70,000** |
-| Annual AMC obligation (12 months, excl. GST) | 44,40,000 |
+| AMC rate | 22% of project cost per annum |
+| **Annual AMC fee (excl. GST)** | **8,14,000** |
+| **Half-yearly AMC instalment (excl. GST)** | **4,07,000** |
 
-GST @ 18% is applicable on every monthly AMC invoice.
+GST @ 18% is applicable on every half-yearly AMC invoice.
 
 ### 9.2 AMC Period & Commencement
 
 - The AMC period commences immediately on completion of the 90-day post-go-live warranty period.
 - The default AMC term is **twelve (12) months**, automatically renewable at the same rate unless either party gives 60 days' written notice of non-renewal.
-- AMC invoices are issued monthly in advance, payable within 7 days.
+- AMC invoices are issued half-yearly in advance, payable within 7 days of invoice date.
 
 ### 9.3 AMC Scope — What IS Covered
 
