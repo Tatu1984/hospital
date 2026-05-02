@@ -8,8 +8,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Receipt, DollarSign, Printer, Trash2, AlertCircle, CheckCircle, Clock } from 'lucide-react';
+import { Receipt, DollarSign, Printer, Trash2, AlertCircle, CheckCircle, Clock, CreditCard } from 'lucide-react';
 import api from '../services/api';
+import { payInvoiceWithRazorpay } from '../services/razorpayCheckout';
 
 interface IPDAdmission {
   id: string;
@@ -974,9 +975,38 @@ export default function IPDBilling() {
               />
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="flex flex-col sm:flex-row gap-2">
             <Button variant="outline" onClick={() => setIsPaymentDialogOpen(false)} disabled={loading}>
               Cancel
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={loading || !billData?.invoiceId || (billData?.balance ?? 0) <= 0}
+              onClick={async () => {
+                if (!billData?.invoiceId) return;
+                setLoading(true);
+                try {
+                  const result = await payInvoiceWithRazorpay({
+                    invoiceId: billData.invoiceId,
+                    patientName: billData.patientName,
+                  });
+                  // Mirror the same UI updates the manual record-payment path does.
+                  setBillData((prev) => prev ? ({
+                    ...prev,
+                    paid: result.newPaid,
+                    balance: result.newBalance,
+                    status: result.newBalance <= 0 ? 'Paid' : 'Partial',
+                  }) : prev);
+                  setIsPaymentDialogOpen(false);
+                } catch (e: any) {
+                  alert(`Online payment did not complete: ${e?.message || 'unknown error'}`);
+                } finally {
+                  setLoading(false);
+                }
+              }}
+            >
+              <CreditCard className="h-4 w-4 mr-2" />
+              Pay online (Razorpay)
             </Button>
             <Button onClick={handleRecordPayment} disabled={loading || paymentFormData.amount <= 0}>
               {loading ? 'Recording...' : 'Record Payment'}

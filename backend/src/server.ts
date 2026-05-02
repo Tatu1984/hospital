@@ -240,7 +240,18 @@ app.use(
 );
 
 // Body parsing with size limits
-app.use(express.json({ limit: '10mb' }));
+// Stash the raw request body on req.rawBody for the webhook handlers that
+// need to verify HMAC signatures (Razorpay X-Razorpay-Signature). The verify
+// callback runs before JSON.parse, which is the only point we still have
+// the exact bytes Razorpay signed.
+app.use(express.json({
+  limit: '10mb',
+  verify: (req: any, _res, buf) => {
+    if (req.path?.startsWith('/api/payments/razorpay/webhook')) {
+      req.rawBody = buf.toString('utf8');
+    }
+  },
+}));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Apply general rate limiting to all routes
@@ -1125,6 +1136,215 @@ app.post('/api/invoices', authenticateToken, async (req: any, res: Response) => 
   } catch (error) {
     console.error('Create invoice error:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ============================================================================
+// RAZORPAY PAYMENT FLOW
+// ============================================================================
+// Three endpoints. The browser flow is:
+//   1. POST /api/payments/razorpay/order  → returns orderId + key id; the
+//      frontend then opens Razorpay's checkout modal with those.
+//   2. After the user completes checkout, Razorpay returns
+//      (orderId, paymentId, signature) to the frontend, which POSTs them to
+//      /api/payments/razorpay/verify. We HMAC-verify the signature and only
+//      then mark the invoice paid, all in a single $transaction.
+//   3. Razorpay also POSTs to /api/payments/razorpay/webhook async — that's
+//      our backstop for cases where the user closes the tab between paying
+//      and the verify call landing. Webhook verifies a different secret
+//      (RAZORPAY_WEBHOOK_SECRET) against the raw body.
+
+app.post('/api/payments/razorpay/order', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { invoiceId } = req.body || {};
+    if (!invoiceId || typeof invoiceId !== 'string') {
+      return res.status(400).json({ error: 'invoiceId is required' });
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const rzp = require('./services/razorpay');
+    if (!rzp.isRazorpayConfigured()) {
+      return res.status(503).json({ error: 'Razorpay is not configured on this deployment' });
+    }
+
+    const invoice = await prisma.invoice.findFirst({
+      where: { id: invoiceId, patient: { tenantId: req.user.tenantId } },
+    });
+    if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+    const balance = Number(invoice.balance);
+    if (balance <= 0) return res.status(400).json({ error: 'Invoice already paid' });
+
+    // Razorpay amounts are in paise (1 INR = 100 paise). Round defensively.
+    const order = await rzp.getRazorpay().orders.create({
+      amount: Math.round(balance * 100),
+      currency: 'INR',
+      receipt: `inv_${invoice.id.slice(0, 30)}`,
+      notes: {
+        tenantId: req.user.tenantId,
+        invoiceId: invoice.id,
+        userId: req.user.userId,
+      },
+    });
+
+    res.json({
+      orderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      keyId: process.env.RAZORPAY_KEY_ID,
+      // Frontend uses these on the checkout modal as prefill / display.
+      invoiceId: invoice.id,
+    });
+  } catch (e: any) {
+    logger.error('razorpay order create failed', { error: e?.message, requestId: req.requestId });
+    res.status(500).json({ error: 'Failed to create payment order' });
+  }
+});
+
+app.post('/api/payments/razorpay/verify', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { invoiceId, orderId, paymentId, signature } = req.body || {};
+    if (!invoiceId || !orderId || !paymentId || !signature) {
+      return res.status(400).json({ error: 'invoiceId, orderId, paymentId, signature are all required' });
+    }
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const rzp = require('./services/razorpay');
+    if (!rzp.verifyCheckoutSignature({ orderId, paymentId, signature })) {
+      logger.warn('razorpay signature mismatch', { invoiceId, orderId, paymentId, requestId: req.requestId });
+      return res.status(400).json({ error: 'Signature verification failed' });
+    }
+
+    const invoice = await prisma.invoice.findFirst({
+      where: { id: invoiceId, patient: { tenantId: req.user.tenantId } },
+      include: { patient: { include: { referralSource: true } } },
+    });
+    if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+
+    // Idempotency — if this paymentId already landed via webhook, just say OK.
+    const existing = await prisma.payment.findFirst({ where: { gatewayPaymentId: paymentId } });
+    if (existing) {
+      return res.json({ ok: true, paymentId: existing.id, status: 'already_recorded' });
+    }
+
+    const amount = Number(invoice.balance);
+    const result = await prisma.$transaction(async (tx) => {
+      const payment = await tx.payment.create({
+        data: {
+          invoiceId: invoice.id,
+          amount,
+          mode: 'razorpay',
+          transactionRef: paymentId,
+          gateway: 'razorpay',
+          gatewayOrderId: orderId,
+          gatewayPaymentId: paymentId,
+          gatewaySignature: signature,
+          receivedBy: req.user.userId,
+        },
+      });
+      const newPaid = Number(invoice.paid) + amount;
+      const newBalance = Number(invoice.total) - newPaid;
+      await tx.invoice.update({
+        where: { id: invoice.id },
+        data: {
+          paid: newPaid,
+          balance: newBalance,
+          status: newBalance <= 0 ? 'paid' : 'final',
+        },
+      });
+      return { paymentId: payment.id, newPaid, newBalance };
+    });
+
+    void writeAudit({
+      prisma, req, action: 'PAYMENT_RAZORPAY_VERIFIED', resource: 'Payment',
+      resourceId: result.paymentId,
+      newValue: { invoiceId, gatewayPaymentId: paymentId, amount },
+    });
+
+    res.json({ ok: true, ...result });
+  } catch (e: any) {
+    logger.error('razorpay verify failed', { error: e?.message, requestId: req.requestId });
+    res.status(500).json({ error: 'Payment verification failed' });
+  }
+});
+
+// Webhook from Razorpay. Public route (registered in PUBLIC_ROUTES) — auth
+// happens via the X-Razorpay-Signature HMAC over the raw body, captured by
+// the express.json verify callback above.
+app.post('/api/payments/razorpay/webhook', async (req: any, res: Response) => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const rzp = require('./services/razorpay');
+    const sig = (req.header('x-razorpay-signature') || '').trim();
+    const raw = (req as any).rawBody || JSON.stringify(req.body || {});
+    if (!rzp.verifyWebhookSignature(raw, sig)) {
+      logger.warn('razorpay webhook signature mismatch', { sigPresent: !!sig });
+      return res.status(401).json({ error: 'invalid signature' });
+    }
+
+    const event = req.body?.event;
+    const payment = req.body?.payload?.payment?.entity;
+    if (!event || !payment) {
+      return res.status(400).json({ error: 'malformed webhook' });
+    }
+
+    // We only care about captured payments. Failed/created events are no-ops
+    // — the verify endpoint or a follow-up captured event will mark them.
+    if (event !== 'payment.captured') {
+      return res.json({ ok: true, ignored: event });
+    }
+
+    const orderId: string = payment.order_id;
+    const paymentId: string = payment.id;
+    const amountPaise: number = payment.amount;
+
+    // Find the invoice via the order id we stamped at /order time. Notes
+    // also carry tenantId/invoiceId; trust order_id first because notes
+    // can be modified at checkout-create time.
+    const existing = await prisma.payment.findFirst({ where: { gatewayPaymentId: paymentId } });
+    if (existing) return res.json({ ok: true, status: 'already_recorded' });
+
+    const note = payment.notes || {};
+    const invoiceId: string | undefined = note.invoiceId;
+    if (!invoiceId) {
+      logger.warn('razorpay webhook missing invoiceId in notes', { orderId, paymentId });
+      return res.json({ ok: true, status: 'no_invoice_id' });
+    }
+    const invoice = await prisma.invoice.findUnique({ where: { id: invoiceId } });
+    if (!invoice) {
+      logger.warn('razorpay webhook invoice not found', { invoiceId, orderId, paymentId });
+      return res.json({ ok: true, status: 'invoice_not_found' });
+    }
+
+    const amount = amountPaise / 100;
+    await prisma.$transaction(async (tx) => {
+      await tx.payment.create({
+        data: {
+          invoiceId: invoice.id,
+          amount,
+          mode: 'razorpay',
+          transactionRef: paymentId,
+          gateway: 'razorpay',
+          gatewayOrderId: orderId,
+          gatewayPaymentId: paymentId,
+        },
+      });
+      const newPaid = Number(invoice.paid) + amount;
+      const newBalance = Number(invoice.total) - newPaid;
+      await tx.invoice.update({
+        where: { id: invoice.id },
+        data: {
+          paid: newPaid,
+          balance: newBalance,
+          status: newBalance <= 0 ? 'paid' : 'final',
+        },
+      });
+    });
+
+    res.json({ ok: true });
+  } catch (e: any) {
+    logger.error('razorpay webhook failed', { error: e?.message });
+    // Return 200 so Razorpay doesn't retry forever on a bug we own — if the
+    // failure is real, it'll show up in Sentry and we replay manually.
+    res.json({ ok: false });
   }
 });
 

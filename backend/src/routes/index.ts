@@ -90,6 +90,8 @@ export const PUBLIC_ROUTES: ReadonlySet<string> = new Set([
   // Vercel cron sends GET; we also accept POST for non-Vercel triggers.
   'GET /api/internal/audit-retention/run',
   'POST /api/internal/audit-retention/run',
+  // Razorpay webhook — auth via X-Razorpay-Signature HMAC over the raw body.
+  'POST /api/payments/razorpay/webhook',
 ]);
 
 // ============================================
@@ -101,6 +103,10 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
 
   // Latency snapshot (p50/p95/p99 per route, admin-only)
   'GET /api/metrics': ['system:manage'],
+
+  // Razorpay payment flow
+  'POST /api/payments/razorpay/order': ['billing:edit'],
+  'POST /api/payments/razorpay/verify': ['billing:edit'],
 
   // Current user
   'GET /api/auth/me': ['dashboard:view'],

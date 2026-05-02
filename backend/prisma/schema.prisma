@@ -345,11 +345,19 @@ model Payment {
   amount         Decimal  @db.Decimal(10, 2)
   mode           String
   transactionRef String?
+  // Razorpay (or other gateway) bookkeeping. Populated only for online
+  // payments — manual cash/card-at-counter rows leave these null.
+  gateway        String? // razorpay | stripe | null (manual)
+  gatewayOrderId String?
+  gatewayPaymentId String?
+  gatewaySignature String?
   paidAt         DateTime @default(now())
   receivedBy     String?
   createdAt      DateTime @default(now())
   invoice        Invoice  @relation(fields: [invoiceId], references: [id])
 
+  @@index([gatewayOrderId])
+  @@index([gatewayPaymentId])
   @@map("payments")
 }
 
