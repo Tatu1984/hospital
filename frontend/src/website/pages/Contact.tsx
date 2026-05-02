@@ -172,20 +172,6 @@ export default function Contact() {
         </div>
       </section>
 
-      {/* Map placeholder */}
-      <section className="pb-20">
-        <div className="mx-auto max-w-7xl px-6">
-          <BlurFade>
-            <div className="rounded-2xl overflow-hidden border border-slate-200 aspect-[16/7] bg-gradient-to-br from-slate-100 to-slate-50 grid place-items-center">
-              <div className="text-center px-6">
-                <MapPin className="h-10 w-10 text-slate-400 mx-auto" />
-                <div className="mt-2 font-medium text-slate-700">Embed your Google Maps iframe here</div>
-                <div className="text-sm text-slate-500 mt-1">12 Park Street, Kolkata 700016</div>
-              </div>
-            </div>
-          </BlurFade>
-        </div>
-      </section>
     </>
   );
 }
