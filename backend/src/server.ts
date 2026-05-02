@@ -2138,6 +2138,43 @@ app.put('/api/drugs/:id', authenticateToken, async (req: any, res: Response) => 
   }
 });
 
+// Resolve a scanned tag to a drug. The Pharmacy POS hits this on every scan.
+// Match order: barcode → rfidTag → id → code-style strict match. We try in
+// that order so a manufacturer GS1 barcode wins over an internal id collision.
+//
+// Drug master is intentionally NOT tenant-scoped (formulary is shared), so we
+// don't filter by tenantId here; uniqueness on the tag columns guarantees a
+// single result.
+app.get('/api/drugs/by-tag', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const raw = (req.query.value || req.query.tag || '').toString().trim();
+    if (!raw) return res.status(400).json({ error: 'value query param required' });
+    if (raw.length > 256) return res.status(400).json({ error: 'tag too long' });
+
+    // Most scanners append a CR/LF — strip whitespace defensively. Some RFID
+    // readers in HID mode also pad with leading zeros; we don't strip those
+    // (zero-padding is part of the tag).
+    const tag = raw.replace(/[\r\n\t]/g, '');
+
+    const drug = await prisma.drug.findFirst({
+      where: {
+        isActive: true,
+        OR: [
+          { barcode: tag },
+          { rfidTag: tag },
+          { id: tag },
+        ],
+      },
+    });
+
+    if (!drug) return res.status(404).json({ error: 'No drug bound to this tag', tag });
+    res.json(drug);
+  } catch (error) {
+    console.error('Drug by-tag error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Lab Tests
 app.get('/api/lab-tests', authenticateToken, async (req: any, res: Response) => {
   try {

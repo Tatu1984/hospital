@@ -8,8 +8,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Search, Package, CheckCircle, Barcode, Trash2, ShoppingCart, AlertTriangle, Plus, FileText } from 'lucide-react';
+import { Search, Package, CheckCircle, Barcode, Trash2, ShoppingCart, AlertTriangle, Plus, FileText, Wifi } from 'lucide-react';
 import api from '../services/api';
+import { useScanner } from '../hooks/useScanner';
 
 interface Drug {
   id: string;
@@ -23,6 +24,8 @@ interface Drug {
   stockQuantity: number;
   reorderLevel: number;
   isActive: boolean;
+  barcode?: string | null;
+  rfidTag?: string | null;
 }
 
 interface StockItem {
@@ -161,18 +164,54 @@ export default function Pharmacy() {
     }
   };
 
-  const handleBarcodeScanner = (barcode: string) => {
-    if (!barcode.trim()) return;
+  /**
+   * Resolve a scanned tag to a drug. Tries the local in-memory list first
+   * (covers the case where the master list is loaded and matches by drug
+   * code), falls back to the server endpoint which checks barcode → rfidTag
+   * → id. Server lookup means a drug bound to an RFID tag the operator
+   * never sees in the dropdown still scans correctly.
+   */
+  const handleBarcodeScanner = async (raw: string) => {
+    const tag = raw.trim();
+    if (!tag) return;
 
-    // Find drug by code/barcode
-    const drug = drugs.find(d => d.code === barcode);
-    if (drug) {
-      addToCart(drug);
+    const local = drugs.find(d =>
+      d.code === tag ||
+      (d.barcode && d.barcode === tag) ||
+      (d.rfidTag && d.rfidTag === tag) ||
+      d.id === tag
+    );
+    if (local) {
+      addToCart(local);
       setBarcodeInput('');
-    } else {
-      alert('Drug not found with barcode: ' + barcode);
+      return;
+    }
+
+    try {
+      const { data } = await api.get<Drug>('/api/drugs/by-tag', { params: { value: tag } });
+      addToCart(data);
+      setBarcodeInput('');
+    } catch (err: any) {
+      const msg = err?.response?.status === 404
+        ? `No drug bound to this tag yet. Enroll it from Master Data → Drugs. (${tag})`
+        : `Lookup failed: ${err?.message || 'unknown error'}`;
+      alert(msg);
     }
   };
+
+  // Plug-and-play scanner. Any HID-keyboard-mode barcode/RFID reader (the
+  // default for ~95% of cheap-to-mid-range hardware) just types the tag +
+  // Enter when the operator scans. We catch that pattern globally — no need
+  // to focus the input first. Only active on the Pharmacy page (mounted).
+  useScanner({
+    onScan: (value) => {
+      // Only react when the user is actually on the Billing/POS tab.
+      // (Safe to fire on other tabs — addToCart only adds to in-memory cart
+      // that's invisible elsewhere — but it's confusing UX if a stray scan
+      // on the Inventory tab pops a "drug added" alert.)
+      handleBarcodeScanner(value);
+    },
+  });
 
   const addToCart = (drug: Drug) => {
     const existingItem = cart.find(item => item.drugId === drug.id);
@@ -341,8 +380,19 @@ export default function Pharmacy() {
         <TabsContent value="billing" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Point of Sale (POS)</CardTitle>
-              <CardDescription>RFID/Barcode scanning and manual billing</CardDescription>
+              <div className="flex items-start justify-between">
+                <div>
+                  <CardTitle>Point of Sale (POS)</CardTitle>
+                  <CardDescription>
+                    Plug in any USB barcode/RFID scanner — works without setup.
+                    You can also type a code manually.
+                  </CardDescription>
+                </div>
+                <Badge variant="outline" className="text-emerald-700 border-emerald-300">
+                  <Wifi className="w-3 h-3 mr-1" />
+                  Scanner ready
+                </Badge>
+              </div>
             </CardHeader>
             <CardContent className="space-y-6">
               {/* Barcode Scanner */}

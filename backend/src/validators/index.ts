@@ -463,6 +463,11 @@ export const drugMasterSchema = z.object({
   ),
   batchNumber: z.string().max(50).optional().nullable(),
   expiryDate: optionalDateSchema,
+  // Plug-and-play scanner identifiers. Both nullable; uniqueness is enforced
+  // at the DB layer (partial unique index in 20260502030000_drug_scan_tags).
+  // Trim before persisting — scanners often append CR/LF/TAB.
+  barcode: z.string().trim().min(1).max(128).optional().nullable(),
+  rfidTag: z.string().trim().min(1).max(128).optional().nullable(),
 });
 
 // Ambulance validators

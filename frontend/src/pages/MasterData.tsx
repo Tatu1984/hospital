@@ -8,8 +8,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Edit, Trash2 } from 'lucide-react';
+import { Plus, Edit, Trash2, Barcode, Wifi } from 'lucide-react';
 import api from '../services/api';
+import { useScanner } from '../hooks/useScanner';
 
 interface MasterItem {
   id: string;
@@ -36,6 +37,22 @@ export default function MasterData() {
   useEffect(() => {
     fetchItems(activeTab);
   }, [activeTab]);
+
+  // When the drug form is open and the operator scans a tag, drop the value
+  // into whichever scanner-tagged field is focused (barcode or rfidTag). If
+  // neither is focused, default to barcode — matches the more-common case.
+  // Only listens while a drug dialog is open so a stray scan elsewhere
+  // doesn't fill the form unexpectedly.
+  const drugDialogOpen = (isAddDialogOpen || isEditDialogOpen) && activeTab === 'drugs';
+  useScanner({
+    enabled: drugDialogOpen,
+    onScan: (value) => {
+      const focused = document.activeElement as HTMLInputElement | null;
+      const target = focused?.dataset?.scanTarget;
+      const field = target === 'rfidTag' ? 'rfidTag' : 'barcode';
+      setFormData((prev: any) => ({ ...prev, [field]: value }));
+    },
+  });
 
   const fetchItems = async (type: string) => {
     try {
@@ -137,6 +154,43 @@ export default function MasterData() {
               <div className="space-y-2">
                 <Label>Reorder Level</Label>
                 <Input type="number" value={formData.reorderLevel || 0} onChange={(e) => setFormData({ ...formData, reorderLevel: parseInt(e.target.value) })} />
+              </div>
+            </div>
+            <div className="space-y-2 mt-2 pt-4 border-t">
+              <div className="flex items-center justify-between">
+                <Label className="font-medium">Scanner identifiers <span className="text-xs text-muted-foreground font-normal">(optional)</span></Label>
+                <span className="text-xs text-emerald-700 inline-flex items-center">
+                  <Wifi className="w-3 h-3 mr-1" />
+                  Click a field then scan — value fills automatically
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Barcode</Label>
+                  <div className="relative">
+                    <Barcode className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <Input
+                      data-scan-target="barcode"
+                      className="pl-10"
+                      placeholder="Scan or type"
+                      value={formData.barcode || ''}
+                      onChange={(e) => setFormData({ ...formData, barcode: e.target.value })}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">RFID tag</Label>
+                  <div className="relative">
+                    <Wifi className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <Input
+                      data-scan-target="rfidTag"
+                      className="pl-10"
+                      placeholder="Scan or type"
+                      value={formData.rfidTag || ''}
+                      onChange={(e) => setFormData({ ...formData, rfidTag: e.target.value })}
+                    />
+                  </div>
+                </div>
               </div>
             </div>
           </>

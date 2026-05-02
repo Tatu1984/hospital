@@ -213,6 +213,7 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   'GET /api/drugs': ['pharmacy:view'],
   'POST /api/drugs': ['pharmacy:manage'],
   'PUT /api/drugs/:id': ['pharmacy:manage'],
+  'GET /api/drugs/by-tag': ['pharmacy:view'],
   'GET /api/pharmacy/drugs': ['pharmacy:view'],
   'GET /api/pharmacy/stock': ['pharmacy:view'],
   'GET /api/pharmacy/pending-prescriptions': ['pharmacy:dispense'],

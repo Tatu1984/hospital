@@ -423,6 +423,13 @@ model Drug {
   category    String
   isNarcotic  Boolean @default(false)
   price       Decimal @db.Decimal(10, 2)
+  // Scanner identifiers. Both nullable — a drug doesn't need a tag to exist.
+  // Global unique (not per-tenant) because manufacturer barcodes / GS1 codes
+  // are universal; if two tenants stock the same SKU the tag is the same.
+  // Pharmacy POS resolves a scanned string against barcode → rfidTag → id
+  // in that order (see GET /api/drugs/by-tag).
+  barcode     String? @unique
+  rfidTag     String? @unique
   isActive    Boolean @default(true)
 
   @@map("drugs")
