@@ -106,7 +106,15 @@ export const writeRateLimiter = rateLimit({
   store: writeStore,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => ['GET', 'HEAD', 'OPTIONS'].includes(req.method),
+  skip: (req) => {
+    if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return true;
+    // Auth endpoints have their own dedicated limiter (authRateLimiter) with
+    // skipSuccessfulRequests, so a real login never counts. Letting the
+    // generic write limiter also fire on /api/auth/* double-counts every
+    // POST and locks legitimate users out after a few attempts.
+    if (req.path.startsWith('/api/auth/')) return true;
+    return false;
+  },
   keyGenerator: (req) =>
     `${ipKeyGenerator(req.ip || req.socket?.remoteAddress || '')}:${req.method}:${req.baseUrl || req.path}`,
   handler: (req, res) => {
