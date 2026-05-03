@@ -10,15 +10,33 @@
 --   3. fallback to the oldest tenant in `tenants` (single-tenant install)
 
 -- ---------------------------------------------------------------------------
--- 1. Add columns where the model had no tenantId at all.
+-- 1. Add the column where missing. The schema author assumed the second
+--    set (blood_*, employees*, inventory_items, stocks, purchase_orders)
+--    already had a nullable tenantId from earlier migrations, but the live
+--    DB never grew that column on those tables. IF NOT EXISTS keeps this
+--    safe to re-run on installs that *did* have the column.
 -- ---------------------------------------------------------------------------
-ALTER TABLE "icu_beds"           ADD COLUMN IF NOT EXISTS "tenantId" TEXT;
-ALTER TABLE "icu_vitals"         ADD COLUMN IF NOT EXISTS "tenantId" TEXT;
-ALTER TABLE "housekeeping_tasks" ADD COLUMN IF NOT EXISTS "tenantId" TEXT;
-ALTER TABLE "diet_orders"        ADD COLUMN IF NOT EXISTS "tenantId" TEXT;
-ALTER TABLE "ambulance_trips"    ADD COLUMN IF NOT EXISTS "tenantId" TEXT;
-ALTER TABLE "incidents"          ADD COLUMN IF NOT EXISTS "tenantId" TEXT;
-ALTER TABLE "feedbacks"          ADD COLUMN IF NOT EXISTS "tenantId" TEXT;
+ALTER TABLE "icu_beds"             ADD COLUMN IF NOT EXISTS "tenantId" TEXT;
+ALTER TABLE "icu_vitals"           ADD COLUMN IF NOT EXISTS "tenantId" TEXT;
+ALTER TABLE "housekeeping_tasks"   ADD COLUMN IF NOT EXISTS "tenantId" TEXT;
+ALTER TABLE "diet_orders"          ADD COLUMN IF NOT EXISTS "tenantId" TEXT;
+ALTER TABLE "ambulance_trips"      ADD COLUMN IF NOT EXISTS "tenantId" TEXT;
+ALTER TABLE "incidents"            ADD COLUMN IF NOT EXISTS "tenantId" TEXT;
+ALTER TABLE "feedbacks"            ADD COLUMN IF NOT EXISTS "tenantId" TEXT;
+
+ALTER TABLE "blood_donors"         ADD COLUMN IF NOT EXISTS "tenantId" TEXT;
+ALTER TABLE "blood_donations"      ADD COLUMN IF NOT EXISTS "tenantId" TEXT;
+ALTER TABLE "blood_inventory"      ADD COLUMN IF NOT EXISTS "tenantId" TEXT;
+ALTER TABLE "blood_requests"       ADD COLUMN IF NOT EXISTS "tenantId" TEXT;
+ALTER TABLE "blood_issuances"      ADD COLUMN IF NOT EXISTS "tenantId" TEXT;
+
+ALTER TABLE "employees"            ADD COLUMN IF NOT EXISTS "tenantId" TEXT;
+ALTER TABLE "employee_attendances" ADD COLUMN IF NOT EXISTS "tenantId" TEXT;
+ALTER TABLE "leave_requests"       ADD COLUMN IF NOT EXISTS "tenantId" TEXT;
+
+ALTER TABLE "inventory_items"      ADD COLUMN IF NOT EXISTS "tenantId" TEXT;
+ALTER TABLE "stocks"               ADD COLUMN IF NOT EXISTS "tenantId" TEXT;
+ALTER TABLE "purchase_orders"      ADD COLUMN IF NOT EXISTS "tenantId" TEXT;
 
 -- ---------------------------------------------------------------------------
 -- 2. Backfill via FK paths first, then default tenant for everything else.
