@@ -39,6 +39,7 @@ const ALREADY_APPLIED = [
 // Migrations recorded as failed in _prisma_migrations. Clear them.
 const ROLLED_BACK = [
   '20251231000000_add_prescription_pharmacy_integration',
+  '20260502000000_tenant_isolation_audit',
 ];
 
 function tryRun(args) {
