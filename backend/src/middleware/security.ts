@@ -134,11 +134,17 @@ export const writeRateLimiter = rateLimit({
 const authStore = buildSharedStore('auth');
 export const authRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // 5 attempts per window
+  // 20 *failed* attempts per IP per 15-min window. skipSuccessfulRequests
+  // means a real login never counts, so this cap only matters when someone
+  // is actually getting it wrong repeatedly (or being brute-forced).
+  // 20 is high enough to absorb a user fat-fingering their password a few
+  // times + the occasional bot probe, low enough that a serious brute-force
+  // attacker still hits the wall fast.
+  max: 20,
   store: authStore,
   message: {
-    error: 'Too many login attempts',
-    message: 'Please wait 15 minutes before trying again.',
+    error: 'Too many failed login attempts',
+    message: 'Please wait a few minutes before trying again.',
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -152,8 +158,8 @@ export const authRateLimiter = rateLimit({
       path: req.path,
     });
     res.status(429).json({
-      error: 'Too many login attempts',
-      message: 'Please wait 15 minutes before trying again.',
+      error: 'Too many failed login attempts',
+      message: 'Please wait a few minutes before trying again.',
     });
   },
   skipSuccessfulRequests: true,
