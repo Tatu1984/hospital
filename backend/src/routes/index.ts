@@ -222,6 +222,11 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   // grants it.
   'GET /api/mobile/v1/reports/me': ['dashboard:view'],
   'GET /api/mobile/v1/reports/:category/:id': ['dashboard:view'],
+  // Internal demo seed — admin-only. Permission gate is the role check
+  // inside the handler itself; entry here registers the route as
+  // permission-aware so the deny-by-default RBAC middleware doesn't
+  // refuse it.
+  'POST /api/internal/demo-seed': ['system:manage'],
   'GET /api/ot-rooms': ['ot:view'],
   'POST /api/ot-rooms': ['ot:create'],
   'GET /api/ot/rooms': ['ot:view'],

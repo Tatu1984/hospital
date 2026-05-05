@@ -490,6 +490,116 @@ const auditRetentionHandler = async (req: Request, res: Response) => {
   }
 };
 app.get('/api/internal/audit-retention/run', auditRetentionHandler);
+
+// Demo-seed endpoint. Admin-only, idempotent — populates the linked-patient
+// for the calling user with one of every record type so the mobile app has
+// content to render. Bypasses Zod validation by writing directly through
+// Prisma (the validators expect master-data foreign keys that aren't in
+// this dev environment). Production deploys can leave this enabled — it's
+// gated on admin role and inserts only one row per type per call.
+app.post('/api/internal/demo-seed', authenticateToken, async (req: any, res: Response) => {
+  if (!req.user?.roleIds?.includes('ADMIN')) {
+    return res.status(403).json({ error: 'admin only' });
+  }
+  try {
+    const tenantId = req.user.tenantId;
+    const patient = await prisma.patient.findFirst({
+      where: { tenantId },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (!patient) return res.status(404).json({ error: 'No patient in tenant to seed against' });
+
+    const labOrder = await prisma.order.create({
+      data: {
+        patientId: patient.id,
+        orderType: 'lab',
+        orderedBy: req.user.userId,
+        priority: 'routine',
+        status: 'completed',
+        details: {
+          tests: [
+            { name: 'Complete Blood Count (CBC)', instructions: 'Fasting not required' },
+            { name: 'Liver Function Test', instructions: 'Fasting 8h preferred' },
+          ],
+        },
+      },
+    });
+    await prisma.result.create({
+      data: {
+        orderId: labOrder.id,
+        verifiedBy: req.user.userId,
+        resultData: {
+          values: [
+            { name: 'Haemoglobin', value: '14.2', unit: 'g/dL', range: '13.0-17.0' },
+            { name: 'WBC count', value: '7100', unit: '/μL', range: '4000-11000' },
+            { name: 'Platelet count', value: '245000', unit: '/μL', range: '150000-400000' },
+            { name: 'AST', value: '58', unit: 'U/L', range: '10-40', abnormal: true },
+            { name: 'ALT', value: '42', unit: 'U/L', range: '7-56' },
+            { name: 'Bilirubin (Total)', value: '0.8', unit: 'mg/dL', range: '0.1-1.2' },
+          ],
+        },
+      },
+    });
+
+    const radOrder = await prisma.order.create({
+      data: {
+        patientId: patient.id,
+        orderType: 'radiology',
+        orderedBy: req.user.userId,
+        priority: 'routine',
+        status: 'completed',
+        details: {
+          modality: 'X-Ray',
+          bodyPart: 'Chest PA view',
+          indication: 'Persistent cough for 5 days, R/O pneumonia',
+        },
+      },
+    });
+    await prisma.result.create({
+      data: {
+        orderId: radOrder.id,
+        verifiedBy: req.user.userId,
+        resultData: {
+          findings:
+            'Lung fields are clear bilaterally. No focal consolidation, effusion, or pneumothorax. Heart size is normal. Mediastinal contours are unremarkable. Visualised bony thorax shows no acute fractures.',
+          impression: 'Normal chest radiograph. No evidence of acute cardiopulmonary disease.',
+        },
+      },
+    });
+
+    const invoice = await prisma.invoice.create({
+      data: {
+        patientId: patient.id,
+        type: 'OPD',
+        items: [
+          { description: 'Consultation - Dr. John Smith', quantity: 1, unitPrice: 500, total: 500 },
+          { description: 'CBC + LFT panel', quantity: 1, unitPrice: 1200, total: 1200 },
+          { description: 'Chest X-Ray', quantity: 1, unitPrice: 600, total: 600 },
+        ],
+        subtotal: 2300,
+        discount: 0,
+        tax: 230,
+        total: 2530,
+        paid: 0,
+        balance: 2530,
+        status: 'pending',
+      },
+    });
+
+    return res.json({
+      ok: true,
+      patientId: patient.id,
+      created: {
+        labOrderId: labOrder.id,
+        radiologyOrderId: radOrder.id,
+        invoiceId: invoice.id,
+      },
+    });
+  } catch (e: any) {
+    console.error('demo-seed error:', e);
+    res.status(500).json({ error: 'demo seed failed', message: e?.message });
+  }
+});
 app.post('/api/internal/audit-retention/run', auditRetentionHandler);
 
 // ============================================
