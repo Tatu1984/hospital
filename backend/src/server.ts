@@ -670,7 +670,12 @@ app.post('/api/internal/demo-seed', authenticateToken, async (req: any, res: Res
         console.warn('[demo-seed] prescription schema drift — skipping Rx; unknown required columns:', missing.map((c) => c.column_name));
       } else {
         const colList = includeCols.map((c) => `"${c.column_name}"`).join(', ');
-        const placeholders = includeCols.map((_, i) => `$${i + 1}`).join(', ');
+        // Postgres won't implicitly text → jsonb (error 42804). Emit an
+        // explicit ::jsonb cast on placeholders for any jsonb column.
+        const placeholders = includeCols.map((c, i) => {
+          const cast = c.data_type === 'jsonb' || c.data_type === 'json' ? '::jsonb' : '';
+          return `$${i + 1}${cast}`;
+        }).join(', ');
         const values = includeCols.map((c) => fillers[c.column_name]);
         await prisma.$executeRawUnsafe(`INSERT INTO "prescriptions" (${colList}) VALUES (${placeholders})`, ...values);
         prescriptionId = rxId;
