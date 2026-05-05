@@ -12,6 +12,10 @@ export interface AuthenticatedRequest extends Request {
     tenantId: string;
     branchId: string;
     roleIds: string[];
+    // Mobile-issued tokens carry these two extra fields. Desktop tokens
+    // don't, so they're optional and consumers should null-check.
+    patientId?: string | null;
+    plat?: 'mobile' | 'web';
   };
 }
 
@@ -22,6 +26,8 @@ interface TokenPayload {
   tenantId: string;
   branchId: string;
   roleIds: string[];
+  patientId?: string | null;
+  plat?: 'mobile' | 'web';
   iat: number;
   exp: number;
 }
@@ -59,6 +65,8 @@ export const authenticateToken = (
       tenantId: decoded.tenantId,
       branchId: decoded.branchId,
       roleIds: decoded.roleIds,
+      patientId: decoded.patientId ?? null,
+      plat: decoded.plat,
     };
 
     next();
@@ -193,6 +201,8 @@ export const optionalAuth = (
       tenantId: decoded.tenantId,
       branchId: decoded.branchId,
       roleIds: decoded.roleIds,
+      patientId: decoded.patientId ?? null,
+      plat: decoded.plat,
     };
   } catch {
     // Token invalid, but that's okay for optional auth
