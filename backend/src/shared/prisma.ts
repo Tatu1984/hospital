@@ -22,16 +22,31 @@ const base = new PrismaClient({
   log: process.env.PRISMA_LOG === 'true' ? ['query', 'warn', 'error'] : ['warn', 'error'],
 });
 
-// Encrypt on write, decrypt on read for Patient PHI fields. The query-level
-// extension intercepts Prisma's own argument shaping so nested writes (e.g.
-// `encounter.create({ data: { patient: { create: {...} } } })`) also get
-// the encrypt pass.
+// Encrypt on write, decrypt on read for Patient PHI fields. Both directions
+// are implemented via the query-level extension because (a) the result-
+// extension/compute path doesn't reliably override an existing column on
+// Prisma 5.7 — it adds a sibling computed field but the original ciphertext
+// column still serializes — and (b) doing both encrypt + decrypt in one
+// place keeps the read/write symmetry obvious.
+//
+// Trade-off: query.findMany etc receives the full raw rows (including
+// includes/selects) and we walk them post-hoc. For Patient (a hot read
+// path) this is one Map.iterator per row; cheap.
+
+function decryptResult(result: any): any {
+  if (result == null) return result;
+  if (Array.isArray(result)) return result.map(decryptPatientFields);
+  return decryptPatientFields(result);
+}
+
 const extended = base.$extends({
   query: {
     patient: {
+      // ---- writes: encrypt args.data before hitting Postgres ----
       async create({ args, query }) {
         if (args.data) args.data = encryptPatientFields(args.data as any);
-        return query(args);
+        const result = await query(args);
+        return decryptResult(result);
       },
       async createMany({ args, query }) {
         if (Array.isArray(args.data)) args.data = (args.data as any[]).map(encryptPatientFields);
@@ -40,7 +55,8 @@ const extended = base.$extends({
       },
       async update({ args, query }) {
         if (args.data) args.data = encryptPatientFields(args.data as any);
-        return query(args);
+        const result = await query(args);
+        return decryptResult(result);
       },
       async updateMany({ args, query }) {
         if (args.data) args.data = encryptPatientFields(args.data as any);
@@ -49,31 +65,24 @@ const extended = base.$extends({
       async upsert({ args, query }) {
         if (args.create) args.create = encryptPatientFields(args.create as any);
         if (args.update) args.update = encryptPatientFields(args.update as any);
-        return query(args);
+        const result = await query(args);
+        return decryptResult(result);
       },
-    },
-  },
-  result: {
-    patient: {
-      // Compute a transparent decryption layer for each PHI field. Prisma
-      // will pull the underlying ciphertext via `needs` and route the
-      // computed value through `compute` whenever a Patient row is read.
-      ...Object.fromEntries(
-        PATIENT_ENCRYPTED_FIELDS.map((field) => [
-          field,
-          {
-            needs: { [field]: true } as any,
-            compute(row: any) {
-              const v = row[field];
-              if (v == null) return null;
-              return decryptPatientFields({ [field]: v })[field];
-            },
-          },
-        ]),
-      ),
+      // ---- reads: post-process the result through decryptPatientFields ----
+      async findUnique({ args, query }) { return decryptResult(await query(args)); },
+      async findUniqueOrThrow({ args, query }) { return decryptResult(await query(args)); },
+      async findFirst({ args, query }) { return decryptResult(await query(args)); },
+      async findFirstOrThrow({ args, query }) { return decryptResult(await query(args)); },
+      async findMany({ args, query }) { return decryptResult(await query(args)); },
     },
   },
 });
+
+// Silence "unused import" warning — PATIENT_ENCRYPTED_FIELDS used to drive
+// the (now removed) result-extension; the helpers above own the field list
+// directly. Re-exporting keeps it discoverable for callers that want to
+// know which Patient fields are encrypted (e.g. the redaction logger).
+export { PATIENT_ENCRYPTED_FIELDS };
 
 // Type-cast back to PrismaClient so consumers' existing typings still work.
 // $extends returns a derived type with extra metadata; for pragmatic reasons
