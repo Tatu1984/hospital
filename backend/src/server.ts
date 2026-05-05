@@ -653,6 +653,10 @@ app.post('/api/internal/demo-seed', authenticateToken, async (req: any, res: Res
       const required = cols.filter((c) => c.is_nullable === 'NO' && c.column_default === null);
       const includeCols = required.filter((c) => fillers[c.column_name] !== undefined);
       const missing = required.filter((c) => fillers[c.column_name] === undefined);
+      // Stash for inclusion in the response so an operator can see which
+      // columns we couldn't fill without diving into Vercel logs.
+      (req as any).__rxSkipReason = missing.length ? missing.map((c) => c.column_name) : null;
+      (req as any).__rxAllCols = cols.map((c) => `${c.column_name}:${c.data_type}${c.is_nullable === 'NO' ? '!' : ''}${c.column_default ? '=def' : ''}`);
       if (missing.length) {
         // If a NOT NULL column we didn't anticipate exists, log + skip Rx
         // rather than crashing the whole demo-seed.
@@ -675,6 +679,12 @@ app.post('/api/internal/demo-seed', authenticateToken, async (req: any, res: Res
         invoiceId: invoice.id,
         prescriptionId,
       },
+      // Diagnostic — only present when something is off so the operator
+      // doesn't have to dig through Vercel logs to know why prescriptionId
+      // came back null.
+      rxDiagnostic: (req as any).__rxSkipReason
+        ? { missingRequiredColumns: (req as any).__rxSkipReason, allColumns: (req as any).__rxAllCols }
+        : undefined,
     });
   } catch (e: any) {
     console.error('demo-seed error:', e);
