@@ -16,6 +16,7 @@ export type NotificationType =
   | 'EMERGENCY_ALERT'
   | 'ADMISSION_NOTIFICATION'
   | 'SURGERY_SCHEDULED'
+  | 'SURGERY_STAGE_UPDATE'
   | 'BLOOD_REQUEST_URGENT';
 
 interface NotificationPayload {
@@ -347,6 +348,29 @@ Please report to OT Reception 2 hours before the scheduled time.
 Contact: {{contactNumber}}
 
 Best regards,
+{{hospitalName}}
+      `,
+    },
+  },
+  SURGERY_STAGE_UPDATE: {
+    sms: 'Update from {{hospitalName}}: {{patientName}} - {{stageLabel}}. Live status: {{trackingUrl}}',
+    email: {
+      subject: 'Surgery update - {{patientName}}',
+      body: `
+Dear {{recipientName}},
+
+This is an update on {{patientName}}'s surgery at {{hospitalName}}.
+
+Current status: {{stageLabel}}
+{{noteLine}}
+Updated at: {{timestamp}}
+
+You can follow live updates here:
+{{trackingUrl}}
+
+If you have any questions, please ask the OT coordinator at the desk.
+
+Regards,
 {{hospitalName}}
       `,
     },

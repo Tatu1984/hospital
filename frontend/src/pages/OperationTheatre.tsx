@@ -8,9 +8,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Clock, CheckCircle, AlertCircle, Calendar, FileText, Plus, Activity } from 'lucide-react';
+import { Clock, CheckCircle, AlertCircle, Calendar, FileText, Plus, Activity, Radio } from 'lucide-react';
 import api from '../services/api';
 import { useToast } from '../components/Toast';
+import OTLiveStatusDialog from '../components/OTLiveStatusDialog';
 
 interface Surgery {
   id: string;
@@ -30,6 +31,7 @@ interface Surgery {
   anesthesiaType: string;
   preOpChecklist: boolean;
   notes: string;
+  currentStage?: string | null;
 }
 
 interface OTRoom {
@@ -71,6 +73,7 @@ export default function OperationTheatre() {
   const [selectedSurgery, setSelectedSurgery] = useState<Surgery | null>(null);
   const [isScheduleDialogOpen, setIsScheduleDialogOpen] = useState(false);
   const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false);
+  const [liveStatusSurgery, setLiveStatusSurgery] = useState<Surgery | null>(null);
   const [loading, setLoading] = useState(false);
 
   const [surgeryFormData, setSurgeryFormData] = useState<SurgeryFormData>({
@@ -153,7 +156,8 @@ export default function OperationTheatre() {
         priority: s.priority,
         anesthesiaType: s.anesthesiaType,
         preOpChecklist: s.preOpChecklistComplete || false,
-        notes: s.notes || ''
+        notes: s.notes || '',
+        currentStage: s.currentStage || null,
       }));
       setSurgeries(transformedSurgeries);
     } catch (error) {
@@ -574,6 +578,9 @@ export default function OperationTheatre() {
                             <Button size="sm" onClick={() => handleStartSurgery(surgery.id)}>
                               Start
                             </Button>
+                            <Button size="sm" variant="outline" onClick={() => setLiveStatusSurgery(surgery)}>
+                              <Radio className="w-3 h-3 mr-1" /> Live
+                            </Button>
                             <Button size="sm" variant="outline" onClick={() => handleCancelSurgery(surgery.id)}>
                               Cancel
                             </Button>
@@ -619,9 +626,14 @@ export default function OperationTheatre() {
                         <TableCell>{surgery.scheduledTime}</TableCell>
                         <TableCell>{surgery.duration} min</TableCell>
                         <TableCell>
-                          <Button size="sm" onClick={() => handleCompleteSurgery(surgery.id)}>
-                            Complete Surgery
-                          </Button>
+                          <div className="flex gap-2">
+                            <Button size="sm" variant="outline" onClick={() => setLiveStatusSurgery(surgery)}>
+                              <Radio className="w-3 h-3 mr-1" /> Live status
+                            </Button>
+                            <Button size="sm" onClick={() => handleCompleteSurgery(surgery.id)}>
+                              Complete
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))
@@ -943,6 +955,20 @@ export default function OperationTheatre() {
           )}
         </DialogContent>
       </Dialog>
+
+      <OTLiveStatusDialog
+        surgeryId={liveStatusSurgery?.id ?? null}
+        surgeryLabel={liveStatusSurgery ? `${liveStatusSurgery.patientName} — ${liveStatusSurgery.procedureName}` : ''}
+        currentStage={liveStatusSurgery?.currentStage ?? null}
+        open={liveStatusSurgery !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setLiveStatusSurgery(null);
+            // Refresh so the row's stage badge picks up any changes made in the dialog.
+            fetchSurgeries();
+          }
+        }}
+      />
     </div>
   );
 }

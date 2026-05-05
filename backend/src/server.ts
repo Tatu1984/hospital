@@ -101,6 +101,11 @@ import { paginate } from './utils/tenantScope';
 // Audit log writer (persists to AuditLog table)
 import { writeAudit } from './utils/audit';
 
+// OT live-status feature
+import { notificationService } from './services/notification';
+import { SURGERY_STAGES, isValidStage, getStage, legacyStatusToStage } from './services/surgeryStages';
+import { randomBytes } from 'crypto';
+
 dotenv.config();
 
 // ============================================
@@ -3317,6 +3322,328 @@ app.post('/api/surgeries/:id/cancel', authenticateToken, async (req: any, res: R
     res.json({ message: 'Surgery cancelled', surgery });
   } catch (error) {
     console.error('Cancel surgery error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ===========================
+// OT LIVE-STATUS — stages + family contacts + public family tracker
+// ===========================
+//
+// Workflow:
+//   - OT staff POSTs a stage code via /api/surgeries/:id/stage. We append a
+//     stage event row, denormalise into surgeries.currentStage for fast list
+//     reads, and fan out an SMS (and optionally email/WhatsApp) to every
+//     SurgeryFamilyContact registered against that surgery.
+//   - Each family contact gets a single-use, unguessable `trackingToken` they
+//     can hand out to the patient's relatives. The /api/track/surgery/:token
+//     endpoint is unauthenticated but token-gated, and intentionally returns
+//     a sanitised view (no clinical detail, no other patients).
+
+// Public list of canonical stages so the FE stepper renders without hardcoding
+// the codes in two places. No auth — it's static metadata.
+app.get('/api/surgery-stages', (_req: Request, res: Response) => {
+  res.json(SURGERY_STAGES);
+});
+
+// Helper: build the public tracker URL families paste into a phone browser.
+// PUBLIC_TRACKER_URL falls back to PORTAL_URL or the request's origin so this
+// works in dev (localhost) and any prod domain without extra config.
+function buildTrackerUrl(req: Request, token: string): string {
+  const base =
+    process.env.PUBLIC_TRACKER_URL ||
+    process.env.PORTAL_URL ||
+    `${req.protocol}://${req.get('host')}`;
+  return `${base.replace(/\/+$/, '')}/track/${token}`;
+}
+
+// Append a new stage event + fan-out to family contacts. Idempotency: rapid
+// duplicate clicks of the same stage within 30s are coalesced (no event row,
+// no fan-out) so a flaky network double-tap doesn't spam the family.
+app.post('/api/surgeries/:id/stage', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    if (!(await ensureTenantOwnsSurgery(req, res, id))) return;
+
+    const { stage, note } = req.body || {};
+    if (!stage || typeof stage !== 'string' || !isValidStage(stage)) {
+      return res.status(400).json({ error: 'Invalid or missing stage code' });
+    }
+
+    const surgery = await prisma.surgery.findUnique({ where: { id } });
+    if (!surgery) return res.status(404).json({ error: 'Surgery not found' });
+
+    // Idempotency: if the most recent event for this surgery is the same stage
+    // and was recorded < 30s ago, treat as a no-op.
+    const last = await prisma.surgeryStageEvent.findFirst({
+      where: { surgeryId: id },
+      orderBy: { recordedAt: 'desc' },
+    });
+    if (last && last.stage === stage && Date.now() - last.recordedAt.getTime() < 30_000) {
+      return res.json({ ok: true, deduped: true, event: last });
+    }
+
+    const event = await prisma.$transaction(async (tx) => {
+      const created = await tx.surgeryStageEvent.create({
+        data: {
+          tenantId: req.user.tenantId,
+          surgeryId: id,
+          stage,
+          note: note || null,
+          recordedBy: req.user.userId,
+        },
+      });
+
+      // Denormalise current stage on the parent row for fast list queries.
+      // Also keep the legacy coarse `status` field roughly in sync so older
+      // screens that branch on it continue to do the right thing.
+      const legacyStatus =
+        stage === 'CANCELLED' ? 'cancelled'
+        : stage === 'SURGERY_COMPLETED' || stage === 'IN_RECOVERY'
+            || stage === 'SHIFTED_TO_WARD' || stage === 'SHIFTED_TO_ICU' ? 'completed'
+        : stage === 'SCHEDULED' ? 'scheduled'
+        : 'in_progress';
+
+      await tx.surgery.update({
+        where: { id },
+        data: {
+          currentStage: stage,
+          status: legacyStatus,
+          // Stamp actual times when we cross the natural boundaries.
+          ...(stage === 'SURGERY_STARTED' && !surgery.actualStartTime ? { actualStartTime: new Date() } : {}),
+          ...(stage === 'SURGERY_COMPLETED' && !surgery.actualEndTime ? { actualEndTime: new Date() } : {}),
+        },
+      });
+
+      return created;
+    });
+
+    // Fan-out to family contacts. Off the request's critical path: a slow
+    // SMS provider should never make /stage feel slow to the surgeon. We
+    // await all sends concurrently with a 5s ceiling so the response still
+    // returns quickly in practice; failures are logged, never thrown.
+    const contacts = await prisma.surgeryFamilyContact.findMany({
+      where: { surgeryId: id },
+    });
+
+    const stageMeta = getStage(stage)!;
+    const tenant = await prisma.tenant.findUnique({ where: { id: req.user.tenantId } });
+    const hospitalName = tenant?.name || 'Hospital';
+
+    const fanout = contacts.map(async (c) => {
+      const channels = (c.channels || 'sms').split(',').map((s) => s.trim()).filter(Boolean);
+      const trackingUrl = buildTrackerUrl(req, c.trackingToken);
+      try {
+        await notificationService.send({
+          type: 'SURGERY_STAGE_UPDATE',
+          recipientPhone: channels.includes('sms') ? c.phone : undefined,
+          recipientEmail: channels.includes('email') ? (c.email || undefined) : undefined,
+          message: `${hospitalName}: ${surgery.patientName} - ${stageMeta.familyLabel}. ${trackingUrl}`,
+          data: {
+            hospitalName,
+            patientName: surgery.patientName,
+            recipientName: c.name,
+            stageLabel: stageMeta.familyLabel,
+            noteLine: note ? `Note from staff: ${note}` : '',
+            timestamp: new Date().toLocaleString(),
+            trackingUrl,
+          },
+          priority: stage === 'CANCELLED' ? 'URGENT' : 'NORMAL',
+        });
+      } catch (err) {
+        logger.error('OT stage fan-out failed', { contactId: c.id, surgeryId: id, err });
+      }
+    });
+
+    // Best-effort wait — never block the OT UI for more than 5s.
+    await Promise.race([
+      Promise.allSettled(fanout),
+      new Promise((r) => setTimeout(r, 5000)),
+    ]);
+
+    await prisma.surgeryStageEvent.update({
+      where: { id: event.id },
+      data: { notifiedAt: new Date() },
+    });
+
+    res.json({ ok: true, event, notifiedFamilyCount: contacts.length });
+  } catch (error) {
+    console.error('Record surgery stage error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Full stage history for the staff-side timeline.
+app.get('/api/surgeries/:id/stages', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    if (!(await ensureTenantOwnsSurgery(req, res, id))) return;
+    const events = await prisma.surgeryStageEvent.findMany({
+      where: { surgeryId: id },
+      orderBy: { recordedAt: 'asc' },
+    });
+    res.json(events);
+  } catch (error) {
+    console.error('List surgery stages error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Register a family contact + auto-issue tracking token. Idempotent on (phone)
+// — re-POSTing the same phone returns the existing row's token instead of
+// creating duplicates (common when a coordinator hits "Add" twice).
+app.post('/api/surgeries/:id/family-contacts', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    if (!(await ensureTenantOwnsSurgery(req, res, id))) return;
+
+    const { name, relation, phone, whatsapp, email, channels } = req.body || {};
+    if (!name || !phone) {
+      return res.status(400).json({ error: 'name and phone are required' });
+    }
+    const ch = (channels && Array.isArray(channels) && channels.length ? channels : ['sms'])
+      .filter((c: string) => ['sms', 'whatsapp', 'email'].includes(c))
+      .join(',');
+
+    const existing = await prisma.surgeryFamilyContact.findFirst({
+      where: { surgeryId: id, phone },
+    });
+    if (existing) {
+      return res.json({ ...existing, deduped: true });
+    }
+
+    const trackingToken = randomBytes(18).toString('base64url');
+    const created = await prisma.surgeryFamilyContact.create({
+      data: {
+        tenantId: req.user.tenantId,
+        surgeryId: id,
+        name,
+        relation: relation || 'other',
+        phone,
+        whatsapp: whatsapp || null,
+        email: email || null,
+        trackingToken,
+        channels: ch,
+      },
+    });
+
+    // Send the family member their first message containing the tracking link
+    // so they can bookmark it; if no stages yet, we tell them surgery is
+    // scheduled.
+    const surgery = await prisma.surgery.findUnique({ where: { id } });
+    const tenant = await prisma.tenant.findUnique({ where: { id: req.user.tenantId } });
+    const stageCode = surgery?.currentStage || legacyStatusToStage(surgery?.status || 'scheduled');
+    const stageMeta = getStage(stageCode);
+    const trackingUrl = buildTrackerUrl(req, trackingToken);
+    notificationService.send({
+      type: 'SURGERY_STAGE_UPDATE',
+      recipientPhone: ch.includes('sms') ? phone : undefined,
+      recipientEmail: ch.includes('email') ? (email || undefined) : undefined,
+      message: `${tenant?.name || 'Hospital'}: ${surgery?.patientName} - ${stageMeta?.familyLabel || 'Surgery scheduled'}. ${trackingUrl}`,
+      data: {
+        hospitalName: tenant?.name || 'Hospital',
+        patientName: surgery?.patientName || '',
+        recipientName: name,
+        stageLabel: stageMeta?.familyLabel || 'Surgery scheduled',
+        noteLine: '',
+        timestamp: new Date().toLocaleString(),
+        trackingUrl,
+      },
+      priority: 'NORMAL',
+    }).catch((err) => logger.error('OT family welcome SMS failed', { err }));
+
+    res.status(201).json(created);
+  } catch (error) {
+    console.error('Add family contact error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/surgeries/:id/family-contacts', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    if (!(await ensureTenantOwnsSurgery(req, res, id))) return;
+    const contacts = await prisma.surgeryFamilyContact.findMany({
+      where: { surgeryId: id },
+      orderBy: { createdAt: 'asc' },
+    });
+    res.json(contacts);
+  } catch (error) {
+    console.error('List family contacts error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.delete('/api/surgeries/:surgeryId/family-contacts/:contactId', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { surgeryId, contactId } = req.params;
+    if (!(await ensureTenantOwnsSurgery(req, res, surgeryId))) return;
+    // Tenant-scope the delete: even if a contact id from another tenant leaked
+    // through, the AND clause means the deleteMany returns 0 rows.
+    const result = await prisma.surgeryFamilyContact.deleteMany({
+      where: { id: contactId, surgeryId, tenantId: req.user.tenantId },
+    });
+    if (result.count === 0) return res.status(404).json({ error: 'Not found' });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Delete family contact error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// PUBLIC family tracker — no auth, looks up surgery by token. Returns a
+// sanitised view (first name only, no MRN, no clinical detail) so a leaked
+// token reveals the absolute minimum.
+app.get('/api/track/surgery/:token', async (req: Request, res: Response) => {
+  try {
+    const { token } = req.params;
+    const contact = await prisma.surgeryFamilyContact.findUnique({
+      where: { trackingToken: token },
+    });
+    if (!contact) return res.status(404).json({ error: 'Invalid tracking link' });
+
+    const surgery = await prisma.surgery.findUnique({
+      where: { id: contact.surgeryId },
+      include: {
+        stageEvents: {
+          orderBy: { recordedAt: 'asc' },
+          select: { stage: true, recordedAt: true, note: true },
+        },
+      },
+    });
+    if (!surgery) return res.status(404).json({ error: 'Surgery not found' });
+
+    const tenant = await prisma.tenant.findUnique({ where: { id: contact.tenantId } });
+
+    // Patient first name only — surgeries can be cancelled, names can be
+    // medically sensitive. Family already knows who their patient is.
+    const firstName = (surgery.patientName || '').split(' ')[0] || 'patient';
+
+    const currentStageCode = surgery.currentStage || legacyStatusToStage(surgery.status);
+    const currentStage = getStage(currentStageCode);
+
+    res.json({
+      hospital: tenant?.name || 'Hospital',
+      patientFirstName: firstName,
+      procedureName: surgery.procedureName,
+      surgeonName: surgery.surgeonName,
+      scheduledDate: surgery.scheduledDate,
+      scheduledTime: surgery.scheduledTime,
+      currentStage: currentStageCode,
+      currentStageLabel: currentStage?.familyLabel || 'Surgery scheduled',
+      isComplete: !!currentStage?.terminal,
+      timeline: surgery.stageEvents.map((e) => ({
+        stage: e.stage,
+        label: getStage(e.stage)?.familyLabel || e.stage,
+        recordedAt: e.recordedAt,
+        note: e.note,
+      })),
+      // Stable list of all stages so the family-side UI can render an
+      // anticipatory progress bar.
+      allStages: SURGERY_STAGES.map((s) => ({ code: s.code, label: s.familyLabel })),
+    });
+  } catch (error) {
+    console.error('Public surgery tracker error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

@@ -80,6 +80,7 @@ export const PUBLIC_ROUTES: ReadonlySet<string> = new Set([
   'GET /api/ready',
   'GET /api/docs.json',
   'GET /api/docs',
+  'GET /api/surgery-stages',
   'POST /api/auth/login',
   'POST /api/auth/refresh',
   'POST /api/auth/logout',
@@ -93,6 +94,14 @@ export const PUBLIC_ROUTES: ReadonlySet<string> = new Set([
   // Razorpay webhook — auth via X-Razorpay-Signature HMAC over the raw body.
   'POST /api/payments/razorpay/webhook',
 ]);
+
+// Prefix-style public routes for endpoints that take a path parameter (e.g.
+// the family-facing OT tracker keyed by token). isPublicRoute checks these in
+// addition to the exact-match set above. Tokens are unguessable random
+// base64url so the path itself is the auth.
+export const PUBLIC_ROUTE_PREFIXES: ReadonlyArray<{ method: string; prefix: string }> = [
+  { method: 'GET', prefix: '/api/track/surgery/' },
+];
 
 // ============================================
 // ROUTE_PERMISSIONS — every authenticated route must appear here.
@@ -184,6 +193,11 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   'POST /api/surgeries/:id/start': ['surgery:start'],
   'POST /api/surgeries/:id/complete': ['surgery:complete'],
   'POST /api/surgeries/:id/cancel': ['surgery:cancel'],
+  'POST /api/surgeries/:id/stage': ['surgery:start'],
+  'GET /api/surgeries/:id/stages': ['surgery:view'],
+  'POST /api/surgeries/:id/family-contacts': ['surgery:schedule'],
+  'GET /api/surgeries/:id/family-contacts': ['surgery:view'],
+  'DELETE /api/surgeries/:surgeryId/family-contacts/:contactId': ['surgery:schedule'],
   'GET /api/ot-rooms': ['ot:view'],
   'POST /api/ot-rooms': ['ot:create'],
   'GET /api/ot/rooms': ['ot:view'],
@@ -474,7 +488,11 @@ export function getRoutePermissions(method: string, path: string): Permission[] 
 
 export function isPublicRoute(method: string, path: string): boolean {
   const normalized = path.replace(/\/+$/, '');
-  if (PUBLIC_ROUTES.has(`${method.toUpperCase()} ${normalized}`)) return true;
+  const m = method.toUpperCase();
+  if (PUBLIC_ROUTES.has(`${m} ${normalized}`)) return true;
+  for (const p of PUBLIC_ROUTE_PREFIXES) {
+    if (p.method === m && normalized.startsWith(p.prefix)) return true;
+  }
   return false;
 }
 

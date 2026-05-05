@@ -53,6 +53,7 @@ const AuditLog = lazy(() => import('./pages/AuditLog'));
 const AssetManagement = lazy(() => import('./pages/AssetManagement'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
+const SurgeryTracker = lazy(() => import('./pages/SurgeryTracker'));
 
 // Some smaller modules still live in AllModules.tsx — split that into one
 // async chunk. Each named import resolves once the chunk loads.
@@ -163,6 +164,16 @@ const AppRoutes = () => {
         element={
           <Suspense fallback={<RouteSpinner />}>
             <ResetPassword />
+          </Suspense>
+        }
+      />
+      {/* Public surgery tracker — opened by family members from the SMS link
+          they receive when registered as a contact. Token is the auth. */}
+      <Route
+        path="/track/:token"
+        element={
+          <Suspense fallback={<RouteSpinner />}>
+            <SurgeryTracker />
           </Suspense>
         }
       />

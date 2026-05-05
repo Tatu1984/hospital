@@ -340,21 +340,21 @@ model Invoice {
 }
 
 model Payment {
-  id             String   @id @default(uuid())
-  invoiceId      String
-  amount         Decimal  @db.Decimal(10, 2)
-  mode           String
-  transactionRef String?
+  id               String   @id @default(uuid())
+  invoiceId        String
+  amount           Decimal  @db.Decimal(10, 2)
+  mode             String
+  transactionRef   String?
   // Razorpay (or other gateway) bookkeeping. Populated only for online
   // payments — manual cash/card-at-counter rows leave these null.
-  gateway        String? // razorpay | stripe | null (manual)
-  gatewayOrderId String?
+  gateway          String? // razorpay | stripe | null (manual)
+  gatewayOrderId   String?
   gatewayPaymentId String?
   gatewaySignature String?
-  paidAt         DateTime @default(now())
-  receivedBy     String?
-  createdAt      DateTime @default(now())
-  invoice        Invoice  @relation(fields: [invoiceId], references: [id])
+  paidAt           DateTime @default(now())
+  receivedBy       String?
+  createdAt        DateTime @default(now())
+  invoice          Invoice  @relation(fields: [invoiceId], references: [id])
 
   @@index([gatewayOrderId])
   @@index([gatewayPaymentId])
@@ -1342,11 +1342,60 @@ model Surgery {
   complications     String?
   implants          Json?
   consumables       Json?
+  // Fine-grained intra-OT stage so OT staff can broadcast "anesthesia done",
+  // "surgery started", etc. to registered family contacts. Free-text, but the
+  // FE/BE share a known list of canonical values (see services/surgeryStages.ts).
+  currentStage      String?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
+  stageEvents    SurgeryStageEvent[]
+  familyContacts SurgeryFamilyContact[]
+
   @@index([tenantId])
   @@map("surgeries")
+}
+
+// Append-only log of every stage transition during a surgery. Drives both the
+// staff-side timeline and the family-facing live tracker page.
+model SurgeryStageEvent {
+  id         String    @id @default(uuid())
+  tenantId   String
+  surgeryId  String
+  stage      String // canonical stage code, e.g. "ANESTHESIA_DONE"
+  note       String?
+  recordedBy String // userId
+  recordedAt DateTime  @default(now())
+  notifiedAt DateTime?
+
+  surgery Surgery @relation(fields: [surgeryId], references: [id], onDelete: Cascade)
+
+  @@index([surgeryId, recordedAt])
+  @@index([tenantId])
+  @@map("surgery_stage_events")
+}
+
+// Family members opted in to receive live status updates for a specific
+// surgery. Each contact gets a unique (random, unguessable) trackingToken
+// that grants read-only access to /track/surgery/:token without a login.
+model SurgeryFamilyContact {
+  id            String   @id @default(uuid())
+  tenantId      String
+  surgeryId     String
+  name          String
+  relation      String // 'spouse' | 'parent' | 'child' | 'sibling' | 'other'
+  phone         String
+  whatsapp      String?
+  email         String?
+  trackingToken String   @unique
+  channels      String // CSV of 'sms','whatsapp','email'
+  createdAt     DateTime @default(now())
+
+  surgery Surgery @relation(fields: [surgeryId], references: [id], onDelete: Cascade)
+
+  @@index([surgeryId])
+  @@index([tenantId])
+  @@map("surgery_family_contacts")
 }
 
 model OTRoom {
