@@ -88,5 +88,12 @@ export const patientsAPI = {
 };
 
 export const appointmentsAPI = {
-  list: () => api.get('/api/appointments'),
+  listMine: () => api.get('/api/mobile/v1/appointments/me'),
+  doctors: () => api.get('/api/mobile/v1/appointments/doctors'),
+  slots: (doctorId: string, date: string) =>
+    api.get('/api/mobile/v1/appointments/slots', { params: { doctorId, date } }),
+  book: (data: { doctorId: string; appointmentDate: string; appointmentTime: string; type?: string; reason?: string }) =>
+    api.post('/api/mobile/v1/appointments', data),
+  cancel: (id: string, reason?: string) =>
+    api.post(`/api/mobile/v1/appointments/${id}/cancel`, { reason }),
 };

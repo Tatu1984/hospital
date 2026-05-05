@@ -208,6 +208,14 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   // added under modules/doctors/ + modules/appointments/ as they're built.
   'GET /api/mobile/v1/patients/me': ['patients:view'],
   'PATCH /api/mobile/v1/patients/me': ['patients:edit'],
+  // Mobile appointments — patient + doctor. Reuses the existing
+  // appointments:view/create permissions so seeded users keep working.
+  'GET /api/mobile/v1/appointments/me': ['appointments:view'],
+  'GET /api/mobile/v1/appointments/today': ['appointments:view'],
+  'GET /api/mobile/v1/appointments/doctors': ['appointments:view'],
+  'GET /api/mobile/v1/appointments/slots': ['appointments:view'],
+  'POST /api/mobile/v1/appointments': ['appointments:create'],
+  'POST /api/mobile/v1/appointments/:id/cancel': ['appointments:edit'],
   'GET /api/ot-rooms': ['ot:view'],
   'POST /api/ot-rooms': ['ot:create'],
   'GET /api/ot/rooms': ['ot:view'],
