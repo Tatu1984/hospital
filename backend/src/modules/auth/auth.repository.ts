@@ -1,9 +1,7 @@
 // Auth data-access. Reads/writes the existing User table so a single account
 // works on both web and mobile.
 
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { prisma } from '../../shared/prisma';
 
 export async function findUserByUsername(username: string) {
   return prisma.user.findFirst({

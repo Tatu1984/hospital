@@ -1,6 +1,4 @@
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { prisma } from '../../shared/prisma';
 
 export async function listForPatient(tenantId: string, patientId: string) {
   return prisma.appointment.findMany({

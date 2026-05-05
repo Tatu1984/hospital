@@ -2,7 +2,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from './shared/prisma';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import swaggerUi from 'swagger-ui-express';
@@ -159,7 +159,9 @@ if ((process.env.JWT_SECRET || '').length < 32) {
 }
 
 const app = express();
-const prisma = new PrismaClient();
+// `prisma` is the shared, $extends-wrapped singleton from src/shared/prisma.ts.
+// Imported at the top of this file. Centralisation lets the PHI encryption
+// layer wrap every Patient read/write without touching individual handlers.
 const PORT = process.env.PORT || 4000;
 
 // ============================================

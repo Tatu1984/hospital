@@ -3,10 +3,8 @@
 // context. If a function returns rows from a related table, it must scope
 // that table on tenantId too.
 
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../../shared/prisma';
 import { UpdateMyProfileInput } from './patient.model';
-
-const prisma = new PrismaClient();
 
 export async function findById(tenantId: string, patientId: string) {
   return prisma.patient.findFirst({

@@ -3,11 +3,9 @@
 // /api/auth/login in server.ts also imports from here — they need to use
 // the same lockout counter and the same blacklist table.
 
-import { PrismaClient } from '@prisma/client';
 import { createHash } from 'crypto';
 import jwt from 'jsonwebtoken';
-
-const prisma = new PrismaClient();
+import { prisma } from './prisma';
 
 // Tunables. Conservative defaults; can be overridden via env later if a
 // specific deployment needs different numbers.

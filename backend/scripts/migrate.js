@@ -59,3 +59,17 @@ for (const m of ROLLED_BACK) tryRun(`migrate resolve --rolled-back ${m}`);
 
 console.log('[migrate.js] Running migrate deploy…');
 execSync(`${PRISMA} migrate deploy`, { stdio: 'inherit' });
+
+// One-shot PHI backfill. Idempotent — re-running on already-encrypted
+// rows is a no-op (cheap select-and-skip). Runs after migrate deploy so
+// any new columns introduced by the migration are present before we read.
+console.log('[migrate.js] Running PHI backfill…');
+try {
+  execSync(`node ${path.join(__dirname, 'backfill-phi-encryption.js')}`, { stdio: 'inherit' });
+} catch (e) {
+  // Fail-soft: if backfill crashes (e.g. PHI_ENCRYPTION_KEY missing), the
+  // deploy still goes through — better to ship a working build with stale
+  // plaintext rows than to block production behind a script error. The
+  // logged stderr above tells the operator to retry.
+  console.error('[migrate.js] PHI backfill failed; continuing deploy.');
+}
