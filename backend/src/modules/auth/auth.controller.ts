@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import * as service from './auth.service';
-import { InvalidCredentialsError } from './auth.service';
+import { InvalidCredentialsError, AccountLockedError } from './auth.service';
 import { mobileLoginSchema, requestOtpSchema, verifyOtpSchema } from './auth.model';
 
 export async function loginWithPassword(req: Request, res: Response) {
@@ -12,6 +12,9 @@ export async function loginWithPassword(req: Request, res: Response) {
     const result = await service.loginWithPassword(parsed.data);
     res.json(result);
   } catch (err: any) {
+    if (err instanceof AccountLockedError) {
+      return res.status(423).json({ error: 'ACCOUNT_LOCKED', message: err.message, unlockAt: err.unlockAt });
+    }
     if (err instanceof InvalidCredentialsError) return res.status(401).json({ error: err.message });
     // eslint-disable-next-line no-console
     console.error('mobile login error:', err);

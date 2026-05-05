@@ -94,6 +94,11 @@ model User {
   biometricTemplate String?
   isActive          Boolean         @default(true)
   lastLoginAt       DateTime?
+  // Account-lockout state. Reset to (0, null) on a successful login.
+  // Bumped + lockedUntil set when bad-password attempts cross the threshold.
+  // See modules/auth/auth.service.ts and the legacy /api/auth/login.
+  failedLoginAttempts Int           @default(0)
+  lockedUntil       DateTime?
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
   admissions        Admission[]     @relation("AdmittingDoctor")
@@ -108,6 +113,25 @@ model User {
   tenant            Tenant          @relation(fields: [tenantId], references: [id])
 
   @@map("users")
+}
+
+// Refresh-token blacklist. Logout writes the SHA-256 hash of the refresh
+// token here; /auth/refresh checks before issuing a new access token.
+// Storing only the hash means a DB dump never reveals a usable token.
+//
+// expiresAt mirrors the JWT exp so a periodic cleanup job can delete rows
+// that would have expired anyway — table stays bounded.
+model TokenBlacklist {
+  id        String   @id @default(uuid())
+  tokenHash String   @unique
+  userId    String?
+  reason    String?  // 'logout' | 'admin_revoke' | 'rotation'
+  expiresAt DateTime
+  revokedAt DateTime @default(now())
+
+  @@index([expiresAt])
+  @@index([userId])
+  @@map("token_blacklist")
 }
 
 model Patient {

@@ -109,6 +109,18 @@ import { randomBytes } from 'crypto';
 // Mobile + layered-architecture API surface (see backend/src/modules/README.md)
 import mobileRouter from './modules';
 
+// Auth-security primitives — account lockout + refresh-token blacklist.
+// Shared between the desktop /api/auth/* path here and the mobile auth
+// service in modules/auth so both honour the same lockout state.
+import {
+  checkAccountLockout,
+  recordFailedLogin,
+  clearFailedLogins,
+  blacklistRefreshToken,
+  isRefreshTokenBlacklisted,
+  ACCOUNT_LOCKOUT_THRESHOLD,
+} from './shared/auth-security';
+
 dotenv.config();
 
 // ============================================
@@ -459,9 +471,17 @@ const auditRetentionHandler = async (req: Request, res: Response) => {
   }
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { runAuditRetention } = require('./jobs/auditRetention');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { cleanupBlacklist } = require('./shared/auth-security');
   try {
-    const result = await runAuditRetention(prisma);
-    res.json(result);
+    const [audit, blacklist] = await Promise.all([
+      runAuditRetention(prisma),
+      cleanupBlacklist().catch((e: any) => {
+        logger.error('blacklist cleanup failed', { error: e?.message });
+        return 0;
+      }),
+    ]);
+    res.json({ audit, blacklistRowsDeleted: blacklist });
   } catch (e: any) {
     logger.error('audit retention manual run failed', { error: e?.message });
     res.status(500).json({ error: 'retention sweep failed' });
@@ -556,15 +576,39 @@ app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (r
       });
     }
 
-    const validPassword = await bcrypt.compare(password, user.passwordHash);
-    if (!validPassword) {
-      auditLogger.securityEvent('LOGIN_FAILED', { username, reason: 'invalid_password', ip: req.ip });
-      void writeAudit({ prisma, req, userId: user.id, tenantId: user.tenantId, action: 'LOGIN_FAILED', resource: 'Authentication', resourceId: username });
-      return res.status(401).json({
-        error: 'INVALID_CREDENTIALS',
-        message: 'Invalid username or password',
+    // Per-account lockout. The IP rate limiter already throttles a single
+    // attacker from one IP, but a botnet rotating IPs trivially defeats
+    // that. The per-account counter (incremented below on bad password)
+    // gives us a hard ceiling per username.
+    const lockState = await checkAccountLockout(user.id);
+    if (lockState.locked) {
+      auditLogger.securityEvent('LOGIN_BLOCKED_LOCKED', { userId: user.id, username, unlockAt: lockState.unlockAt });
+      return res.status(423).json({
+        error: 'ACCOUNT_LOCKED',
+        message: `Account temporarily locked due to too many failed attempts. Try again at ${lockState.unlockAt?.toISOString()}.`,
       });
     }
+
+    const validPassword = await bcrypt.compare(password, user.passwordHash);
+    if (!validPassword) {
+      const failedCount = await recordFailedLogin(user.id);
+      auditLogger.securityEvent('LOGIN_FAILED', { username, reason: 'invalid_password', ip: req.ip, failedCount });
+      void writeAudit({ prisma, req, userId: user.id, tenantId: user.tenantId, action: 'LOGIN_FAILED', resource: 'Authentication', resourceId: username });
+      // Tell the user when they're getting close — once they hit the
+      // threshold the next attempt returns ACCOUNT_LOCKED above. Not
+      // leaking exact remaining attempts to keep brute-force harder.
+      const closeToLock = failedCount >= ACCOUNT_LOCKOUT_THRESHOLD - 2;
+      return res.status(401).json({
+        error: 'INVALID_CREDENTIALS',
+        message: closeToLock
+          ? 'Invalid username or password. Repeated failures will lock the account.'
+          : 'Invalid username or password',
+      });
+    }
+
+    // Successful login — reset the failed counter so a long-time user with
+    // accumulated stale failures doesn't trip the lock.
+    await clearFailedLogins(user.id);
 
     const accessTokenPayload = {
       userId: user.id,
@@ -584,11 +628,7 @@ app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (r
       { expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || '7d' } as jwt.SignOptions
     );
 
-    // Update last login
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { lastLoginAt: new Date() },
-    });
+    // lastLoginAt is already stamped inside clearFailedLogins above.
 
     auditLogger.securityEvent('LOGIN_SUCCESS', { userId: user.id, username, ip: req.ip });
     void writeAudit({ prisma, req, userId: user.id, tenantId: user.tenantId, action: 'LOGIN_SUCCESS', resource: 'Authentication', resourceId: user.id });
@@ -639,10 +679,19 @@ app.post('/api/auth/refresh', async (req: Request, res: Response) => {
     if (decoded.type !== 'refresh' || !decoded.userId) {
       return res.status(401).json({ error: 'INVALID_TOKEN' });
     }
+    // Reject blacklisted refresh tokens. /logout adds the user's current
+    // refresh token here so a stolen token from a logged-out session can't
+    // mint new accesses for the rest of the 7d window.
+    if (await isRefreshTokenBlacklisted(refreshToken)) {
+      auditLogger.securityEvent('REFRESH_TOKEN_REJECTED', { ip: req.ip, reason: 'blacklisted', userId: decoded.userId });
+      return res.status(401).json({ error: 'INVALID_TOKEN', message: 'Token has been revoked' });
+    }
     const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
     if (!user || !user.isActive) {
       return res.status(401).json({ error: 'INVALID_TOKEN' });
     }
+    // Rotate: blacklist the just-used refresh so it can't be replayed.
+    void blacklistRefreshToken(refreshToken, { userId: user.id, reason: 'rotation' });
     const newAccess = jwt.sign(
       {
         userId: user.id,
@@ -669,9 +718,24 @@ app.post('/api/auth/refresh', async (req: Request, res: Response) => {
   }
 });
 
-// Logout — clear the refresh cookie and log the audit event.
-app.post('/api/auth/logout', (req: Request, res: Response) => {
+// Logout — clear the refresh cookie, blacklist the refresh token, log
+// the audit event. Best-effort: a malformed or missing token is not an
+// error condition for logout; we always 204.
+app.post('/api/auth/logout', async (req: Request, res: Response) => {
+  const cookieToken = readCookie(req, REFRESH_COOKIE_NAME);
+  const bodyToken = (req.body && typeof req.body.refreshToken === 'string') ? req.body.refreshToken : undefined;
+  const refreshToken = cookieToken || bodyToken;
   clearRefreshCookie(res);
+  if (refreshToken) {
+    let userId: string | null = null;
+    try {
+      const decoded = jwt.decode(refreshToken) as { userId?: string } | null;
+      userId = decoded?.userId || null;
+    } catch {
+      /* ignore — still want to record the blacklist row */
+    }
+    await blacklistRefreshToken(refreshToken, { userId, reason: 'logout' }).catch(() => undefined);
+  }
   auditLogger.securityEvent('LOGOUT', { ip: req.ip });
   return res.status(204).end();
 });

@@ -8,9 +8,23 @@ import jwt from 'jsonwebtoken';
 import * as repo from './auth.repository';
 import { getUserPermissions } from '../../rbac';
 import { MobileLoginInput, MobileLoginResponse } from './auth.model';
+import {
+  checkAccountLockout,
+  recordFailedLogin,
+  clearFailedLogins,
+} from '../../shared/auth-security';
 
 export class InvalidCredentialsError extends Error {
   constructor() { super('Invalid username or password'); }
+}
+export class AccountLockedError extends Error {
+  unlockAt?: Date;
+  constructor(unlockAt?: Date) {
+    super(unlockAt
+      ? `Account temporarily locked. Try again at ${unlockAt.toISOString()}.`
+      : 'Account temporarily locked.');
+    this.unlockAt = unlockAt;
+  }
 }
 
 const DOCTOR_ROLE_IDS = new Set(['DOCTOR', 'CONSULTANT', 'SURGEON']);
@@ -19,8 +33,15 @@ export async function loginWithPassword(input: MobileLoginInput): Promise<Mobile
   const user = await repo.findUserByUsername(input.username);
   if (!user) throw new InvalidCredentialsError();
 
+  const lock = await checkAccountLockout(user.id);
+  if (lock.locked) throw new AccountLockedError(lock.unlockAt);
+
   const ok = await bcrypt.compare(input.password, user.passwordHash);
-  if (!ok) throw new InvalidCredentialsError();
+  if (!ok) {
+    await recordFailedLogin(user.id);
+    throw new InvalidCredentialsError();
+  }
+  await clearFailedLogins(user.id);
 
   // Resolve linked Patient row, if any. Doctors won't have one; patient-app
   // users will. Used by patient.controller.ts to decide which Patient to
@@ -49,7 +70,7 @@ export async function loginWithPassword(input: MobileLoginInput): Promise<Mobile
     { expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || '30d' } as jwt.SignOptions,
   );
 
-  await repo.updateLastLogin(user.id);
+  // lastLoginAt is already stamped inside clearFailedLogins above.
 
   const isDoctor = user.roleIds.some((r) => DOCTOR_ROLE_IDS.has(r));
   const isPatient = !!linkedPatient;

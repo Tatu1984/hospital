@@ -449,23 +449,87 @@ class SMSService {
     }
   }
 
+  // Twilio Programmable Messaging via the REST API (no SDK dependency —
+  // node 18+ has fetch). Requires TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN +
+  // TWILIO_FROM_NUMBER (E.164). Returns false on non-2xx so the caller can
+  // record a delivery failure in the audit log.
   private async sendViaTwilio(phone: string, message: string): Promise<boolean> {
-    // Twilio implementation placeholder
-    // In production, use: const twilio = require('twilio')(accountSid, authToken);
-    logger.info('SMS_TWILIO', { to: phone, messageLength: message.length });
-    return true;
+    const sid = process.env.TWILIO_ACCOUNT_SID || this.config.apiKey;
+    const token = process.env.TWILIO_AUTH_TOKEN || this.config.apiSecret;
+    const from = process.env.TWILIO_FROM_NUMBER;
+    if (!sid || !token || !from) {
+      logger.warn('Twilio SMS skipped — missing TWILIO_ACCOUNT_SID/AUTH_TOKEN/FROM_NUMBER');
+      return false;
+    }
+    const url = `https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`;
+    const body = new URLSearchParams({ To: phone, From: from, Body: message });
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${sid}:${token}`).toString('base64')}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: body.toString(),
+      });
+      if (!res.ok) {
+        const err = await res.text();
+        logger.error('Twilio SMS non-2xx', { status: res.status, err: err.slice(0, 300) });
+        return false;
+      }
+      return true;
+    } catch (e) {
+      logger.error('Twilio SMS network failure', { e });
+      return false;
+    }
   }
 
+  // MSG91 (DLT-registered Indian SMS gateway). Uses their flow API:
+  //   POST https://control.msg91.com/api/v5/flow/
+  // Requires MSG91_AUTHKEY + MSG91_FLOW_ID + (DLT-registered) sender id.
+  // Their API expects E.164-style phone numbers without the leading '+'.
   private async sendViaMsg91(phone: string, message: string): Promise<boolean> {
-    // MSG91 implementation placeholder
-    logger.info('SMS_MSG91', { to: phone, messageLength: message.length });
-    return true;
+    const authkey = process.env.MSG91_AUTHKEY || this.config.apiKey;
+    const flowId = process.env.MSG91_FLOW_ID;
+    if (!authkey || !flowId) {
+      logger.warn('MSG91 SMS skipped — missing MSG91_AUTHKEY / MSG91_FLOW_ID');
+      return false;
+    }
+    const cleaned = phone.replace(/^\+/, '').replace(/\D/g, '');
+    try {
+      const res = await fetch('https://control.msg91.com/api/v5/flow/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          authkey,
+        },
+        body: JSON.stringify({
+          flow_id: flowId,
+          sender: this.config.senderId,
+          recipients: [{ mobiles: cleaned, body: message }],
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.text();
+        logger.error('MSG91 SMS non-2xx', { status: res.status, err: err.slice(0, 300) });
+        return false;
+      }
+      return true;
+    } catch (e) {
+      logger.error('MSG91 SMS network failure', { e });
+      return false;
+    }
   }
 
+  // AWS SNS — requires the SDK. We don't ship it by default to keep the
+  // bundle size in check; if a deploy needs SNS, add @aws-sdk/client-sns
+  // to package.json and replace this stub. For now we log + return false.
   private async sendViaAWSSNS(phone: string, message: string): Promise<boolean> {
-    // AWS SNS implementation placeholder
-    logger.info('SMS_AWS_SNS', { to: phone, messageLength: message.length });
-    return true;
+    logger.warn('AWS SNS provider selected but @aws-sdk/client-sns is not installed', {
+      to: phone,
+      messageLength: message.length,
+    });
+    return false;
   }
 }
 
@@ -521,39 +585,80 @@ class EmailService {
     }
   }
 
+  // SMTP via raw nodemailer would need the dependency. Skipping for now —
+  // SendGrid below is the recommended path. Keeping the case branch so
+  // EMAIL_PROVIDER=smtp doesn't silently fall through to mock.
   private async sendViaSMTP(
     to: string,
     subject: string,
-    body: string,
-    attachments?: any[]
+    _body: string,
+    _attachments?: any[]
   ): Promise<boolean> {
-    // Nodemailer implementation placeholder
-    // In production, use nodemailer with transporter.sendMail()
-    logger.info('EMAIL_SMTP', { to, subject });
-    return true;
+    logger.warn('SMTP provider selected but nodemailer is not installed', { to, subject });
+    return false;
   }
 
+  // SendGrid via the v3 mail-send REST API (no SDK dependency). Requires
+  // SENDGRID_API_KEY. EMAIL_FROM is the verified sender. Body is sent as
+  // both text/plain and minimal text/html so it renders in any client.
   private async sendViaSendGrid(
     to: string,
     subject: string,
     body: string,
-    attachments?: any[]
+    _attachments?: any[]
   ): Promise<boolean> {
-    // SendGrid implementation placeholder
-    logger.info('EMAIL_SENDGRID', { to, subject });
-    return true;
+    const apiKey = this.config.apiKey || process.env.SENDGRID_API_KEY;
+    const from = this.config.from || process.env.EMAIL_FROM;
+    if (!apiKey || !from) {
+      logger.warn('SendGrid email skipped — missing SENDGRID_API_KEY / EMAIL_FROM');
+      return false;
+    }
+    try {
+      const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          personalizations: [{ to: [{ email: to }] }],
+          from: { email: from },
+          subject,
+          content: [
+            { type: 'text/plain', value: body },
+            { type: 'text/html', value: `<pre style="font-family:system-ui,sans-serif;white-space:pre-wrap;">${escapeHtml(body)}</pre>` },
+          ],
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.text();
+        logger.error('SendGrid email non-2xx', { status: res.status, err: err.slice(0, 300) });
+        return false;
+      }
+      return true;
+    } catch (e) {
+      logger.error('SendGrid email network failure', { e });
+      return false;
+    }
   }
 
+  // AWS SES — requires @aws-sdk/client-sesv2. Same pattern as SNS above.
   private async sendViaAWSSES(
     to: string,
     subject: string,
-    body: string,
-    attachments?: any[]
+    _body: string,
+    _attachments?: any[]
   ): Promise<boolean> {
-    // AWS SES implementation placeholder
-    logger.info('EMAIL_AWS_SES', { to, subject });
-    return true;
+    logger.warn('AWS SES provider selected but @aws-sdk/client-sesv2 is not installed', { to, subject });
+    return false;
   }
+}
+
+// Minimal HTML-entity escape for the SendGrid HTML alternative body. Not
+// security-critical (the user is the sender, not an attacker) but we'd
+// rather not break rendering on '<' in a doctor's name.
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 }
 
 // Main Notification Service
