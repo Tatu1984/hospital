@@ -86,6 +86,12 @@ export const PUBLIC_ROUTES: ReadonlySet<string> = new Set([
   'POST /api/auth/logout',
   'POST /api/auth/forgot-password',
   'POST /api/auth/reset-password',
+  // Mobile auth + health — public so unauth'd clients can get a token
+  // and so monitoring can probe the mobile namespace without credentials.
+  'POST /api/mobile/v1/auth/login',
+  'POST /api/mobile/v1/auth/request-otp',
+  'POST /api/mobile/v1/auth/verify-otp',
+  'GET /api/mobile/v1/health',
   // Internal cron entry. Bypasses RBAC because it auths via X-Cron-Secret
   // header (the handler verifies it). Never expose this through the UI.
   // Vercel cron sends GET; we also accept POST for non-Vercel triggers.
@@ -198,6 +204,10 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   'POST /api/surgeries/:id/family-contacts': ['surgery:schedule'],
   'GET /api/surgeries/:id/family-contacts': ['surgery:view'],
   'DELETE /api/surgeries/:surgeryId/family-contacts/:contactId': ['surgery:schedule'],
+  // Mobile namespace — patient self-service. Doctor-app endpoints will be
+  // added under modules/doctors/ + modules/appointments/ as they're built.
+  'GET /api/mobile/v1/patients/me': ['patients:view'],
+  'PATCH /api/mobile/v1/patients/me': ['patients:edit'],
   'GET /api/ot-rooms': ['ot:view'],
   'POST /api/ot-rooms': ['ot:create'],
   'GET /api/ot/rooms': ['ot:view'],

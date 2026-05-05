@@ -106,6 +106,9 @@ import { notificationService } from './services/notification';
 import { SURGERY_STAGES, isValidStage, getStage, legacyStatusToStage } from './services/surgeryStages';
 import { randomBytes } from 'crypto';
 
+// Mobile + layered-architecture API surface (see backend/src/modules/README.md)
+import mobileRouter from './modules';
+
 dotenv.config();
 
 // ============================================
@@ -331,6 +334,11 @@ const authenticateToken = (req: any, res: Response, next: any) => {
 app.get('/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+// Mobile + layered API. Lives under /api/mobile/v1/* so it shares all the
+// global middleware (CORS, rate limiters, request-id, security headers) and
+// stays cleanly separable from the desktop portal routes that follow below.
+app.use('/api/mobile/v1', mobileRouter);
 
 app.get('/api/health', async (req: Request, res: Response) => {
   const healthCheck = {

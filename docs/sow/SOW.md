@@ -74,14 +74,82 @@ The system is delivered as a containerised stack (Postgres + Express + React + R
 
 For a deep dive per module see [FEATURES.md](./FEATURES.md).
 
-### 3.2 Out of scope (this engagement)
+### 3.2 Native mobile apps (added 2026-05-05)
 
-- Native mobile apps (iOS/Android) — PWA only
+Two React Native applications, distributed via Apple App Store + Google Play, sharing the project's existing backend (`hospital-c3k5`) so there is one source of truth for patient data, auth, audit, RBAC and PHI compliance.
+
+**Patient app** — for outpatients and admitted-patient family members.
+- Onboarding (3-slide intro)
+- Login (username/password initially; phone-OTP added in phase 2)
+- Home dashboard — upcoming appointment, latest prescription, outstanding bill, active OT tracker if any
+- Book appointment (speciality → doctor → slot)
+- My appointments (upcoming + past, cancel/reschedule)
+- Prescriptions (list + detail, "Order from pharmacy" CTA)
+- Lab reports (list + PDF viewer, OS share)
+- Bills (outstanding + history, Razorpay checkout)
+- Family members (multi-profile switcher)
+- Surgery tracker (the OT live-status feature)
+- Profile + settings (logout, language, notifications)
+
+**Doctor app** — for consultants and admitted-patient round physicians.
+- Login (username/password + biometric unlock for repeat sessions)
+- Today's schedule (OPD list, IPD rounds, scheduled surgeries)
+- Patient detail (demographics, allergies, history, recent encounters)
+- Encounter / OPD notes (SOAP template; voice-to-text in phase 2)
+- Prescription writer (drug picker autocomplete from `/api/drugs`, Rx PDF)
+- Lab / radiology orders (one-tap from a panel)
+- IPD ward round (bed list → notes / orders)
+- Vitals / ICU read-only chart
+- OT stage updater (12-stage stepper for surgeons in-room)
+- Schedule management (block hours, unavailable)
+- Profile
+
+**Mobile-specific backend extensions** (added under `/api/mobile/v1/*`):
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/mobile/v1/auth/login` | Mobile login (username/password) |
+| `POST /api/mobile/v1/auth/request-otp` + `verify-otp` | Phase 2 — phone-only login |
+| `GET /api/mobile/v1/patients/me` | Mobile-friendly aggregated home payload |
+| `POST /api/mobile/v1/devices` | Register FCM/APNS token for push |
+| `POST /api/mobile/v1/notifications/push` | Server-to-device push (appt reminders, lab results, OT updates) |
+| `GET /api/mobile/v1/files/:id` | Pre-signed URL for PDFs (lab/Rx) — depends on S3 |
+
+The mobile-specific code follows a layered architecture under `backend/src/modules/<domain>/` (controller / service / repository / routes / model) and reuses the same Prisma client, auth middleware, RBAC, audit log writer, and rate limiters as the desktop portal.
+
+**Mobile tech stack:**
+- Expo SDK 52 (Managed) + Expo Router (file-based)
+- NativeWind v4 (Tailwind for React Native)
+- react-native-reusables (shadcn-style component library for RN)
+- Moti + react-native-reanimated (animations)
+- expo-secure-store (token storage), expo-local-authentication (biometric)
+- EAS Build for both stores from one config
+
+**Mobile-app deliverables:**
+- Source: `mobile/patient/` and `mobile/doctor/` in the same repo
+- Both apps published to TestFlight + Google Play Internal Testing
+- Push notifications via FCM (Android) + APNS (iOS)
+- Deep-link domain (e.g. `app.{client-domain}.com`) for SMS-link tracker
+- App Store / Play Store metadata + screenshots
+
+**Mobile-app timeline (from kickoff):**
+| Week | Milestone |
+|---|---|
+| 1 | Backend `modules/` skeleton, mobile auth, push wiring |
+| 2–3 | Patient app — 5 core screens (login, home, book, my-appointments, profile) |
+| 3–4 | Doctor app — 5 core screens (login, today, patient detail, Rx writer, OT stage updater) |
+| 5 | Patient app — remaining screens (Rx, lab, bills, family switcher, tracker) |
+| 6 | Doctor app — remaining screens (IPD round, vitals, schedule mgmt) |
+| 7 | EAS Build, store metadata, internal testing |
+| 8 | UAT + store review submission |
+
+### 3.3 Out of scope (this engagement)
+
 - Custom report builder (drag-drop) — phase 2
 - AI clinical decision support
 - Voice transcription / dictation
 - Wearable / IoT continuous-monitoring integration beyond ICU manual entry
-- Patient-facing portal (phase 2)
+- Phone-OTP login (phase 2 — depends on DLT-registered SMS sender)
 
 ---
 
@@ -103,6 +171,10 @@ For a deep dive per module see [FEATURES.md](./FEATURES.md).
 | 12 | Test suite (RBAC + validators) | `backend/src/__tests__/` | ✅ |
 | 13 | `.env.example` for backend | Repo root + backend | ✅ (post-fix) |
 | 14 | Operational runbook (startup, backup, secrets rotation) | `.md` | 🟡 |
+| 15 | Patient mobile app source (React Native, Expo) | `mobile/patient/` | 🟡 in progress |
+| 16 | Doctor mobile app source (React Native, Expo) | `mobile/doctor/` | 🟡 in progress |
+| 17 | Mobile-app screen designs (figma-ready stack: Expo + NativeWind + react-native-reusables) | UI specs | 🟡 in progress |
+| 18 | Both apps on TestFlight + Play Internal Testing | EAS submission | ⏸ pending Apple/Google accounts + branding |
 
 ---
 
