@@ -586,6 +586,52 @@ app.post('/api/internal/demo-seed', authenticateToken, async (req: any, res: Res
       },
     });
 
+    // Prescription chain: Encounter → OPDNote → Prescription. The first
+    // doctor user in the tenant authors the visit so the Rx has a real
+    // doctor link to display in the mobile detail view.
+    const doctor = await prisma.user.findFirst({
+      where: { tenantId, roleIds: { hasSome: ['DOCTOR', 'CONSULTANT', 'SURGEON'] } },
+      orderBy: { createdAt: 'asc' },
+    });
+    let prescriptionId: string | null = null;
+    if (doctor) {
+      const encounter = await prisma.encounter.create({
+        data: {
+          patientId: patient.id,
+          branchId: doctor.branchId,
+          type: 'opd',
+          doctorId: doctor.id,
+          chiefComplaint: 'Persistent dry cough for 5 days',
+          status: 'active',
+        },
+      });
+      const opdNote = await prisma.oPDNote.create({
+        data: {
+          encounterId: encounter.id,
+          patientId: patient.id,
+          doctorId: doctor.id,
+          chiefComplaint: 'Persistent dry cough, no fever',
+          history: 'Onset 5 days ago. No haemoptysis. Sleep undisturbed. No recent travel.',
+          vitals: { bp: '118/76', pulse: 78, temp: 37.0, spo2: 98, weight: 72 },
+          examination: 'Chest clear bilaterally. No crepitations. ENT unremarkable.',
+          assessment: 'Acute bronchitis, likely viral.',
+          plan: 'Symptomatic management. Cough syrup + analgesic. Review in 5 days if not improved.',
+        },
+      });
+      const rx = await prisma.prescription.create({
+        data: {
+          opdNoteId: opdNote.id,
+          doctorId: doctor.id,
+          drugs: [
+            { name: 'Dextromethorphan syrup', dose: '10 ml', frequency: 'TDS', days: 5, route: 'PO', instructions: 'After meals' },
+            { name: 'Paracetamol', dose: '500 mg', frequency: 'SOS', days: 5, route: 'PO', instructions: 'For fever or body ache' },
+            { name: 'Steam inhalation', dose: '—', frequency: 'BID', days: 5, route: 'Topical', instructions: '5-10 minutes per session' },
+          ],
+        },
+      });
+      prescriptionId = rx.id;
+    }
+
     return res.json({
       ok: true,
       patientId: patient.id,
@@ -593,6 +639,7 @@ app.post('/api/internal/demo-seed', authenticateToken, async (req: any, res: Res
         labOrderId: labOrder.id,
         radiologyOrderId: radOrder.id,
         invoiceId: invoice.id,
+        prescriptionId,
       },
     });
   } catch (e: any) {

@@ -90,6 +90,9 @@ export const scheduleAPI = {
 export const patientsAPI = {
   list: (params?: { search?: string; limit?: number }) => api.get('/api/patients', { params }),
   byId: (id: string) => api.get(`/api/patients/${id}`),
+  encounters: (patientId: string) =>
+    api.get('/api/encounters', { params: { patientId, limit: 20 } }),
+  admissions: (params?: { status?: string }) => api.get('/api/admissions', { params }),
 };
 
 export const drugsAPI = {
