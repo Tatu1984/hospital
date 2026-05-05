@@ -618,18 +618,21 @@ app.post('/api/internal/demo-seed', authenticateToken, async (req: any, res: Res
           plan: 'Symptomatic management. Cough syrup + analgesic. Review in 5 days if not improved.',
         },
       });
-      const rx = await prisma.prescription.create({
-        data: {
-          opdNoteId: opdNote.id,
-          doctorId: doctor.id,
-          drugs: [
-            { name: 'Dextromethorphan syrup', dose: '10 ml', frequency: 'TDS', days: 5, route: 'PO', instructions: 'After meals' },
-            { name: 'Paracetamol', dose: '500 mg', frequency: 'SOS', days: 5, route: 'PO', instructions: 'For fever or body ache' },
-            { name: 'Steam inhalation', dose: '—', frequency: 'BID', days: 5, route: 'Topical', instructions: '5-10 minutes per session' },
-          ],
-        },
-      });
-      prescriptionId = rx.id;
+      // Live `prescriptions` table has a NOT NULL patientId column that
+      // isn't reflected in the current Prisma schema (drift from an
+      // earlier schema iteration). Direct SQL bypasses the typed
+      // create() and supplies every column Postgres actually requires.
+      const rxId = require('crypto').randomUUID();
+      const drugs = [
+        { name: 'Dextromethorphan syrup', dose: '10 ml', frequency: 'TDS', days: 5, route: 'PO', instructions: 'After meals' },
+        { name: 'Paracetamol', dose: '500 mg', frequency: 'SOS', days: 5, route: 'PO', instructions: 'For fever or body ache' },
+        { name: 'Steam inhalation', dose: '—', frequency: 'BID', days: 5, route: 'Topical', instructions: '5-10 minutes per session' },
+      ];
+      await prisma.$executeRaw`
+        INSERT INTO "prescriptions" ("id", "opdNoteId", "doctorId", "drugs", "createdAt", "patientId")
+        VALUES (${rxId}, ${opdNote.id}, ${doctor.id}, ${JSON.stringify(drugs)}::jsonb, NOW(), ${patient.id})
+      `;
+      prescriptionId = rxId;
     }
 
     return res.json({
