@@ -637,6 +637,7 @@ app.post('/api/internal/demo-seed', authenticateToken, async (req: any, res: Res
       // Build a value bag covering every required column; let Postgres
       // defaults fill in the rest. Maps friendly fields onto whatever
       // names the live DB actually uses.
+      const now = new Date();
       const fillers: Record<string, any> = {
         id: rxId,
         opdNoteId: opdNote.id,
@@ -644,6 +645,12 @@ app.post('/api/internal/demo-seed', authenticateToken, async (req: any, res: Res
         drugs: JSON.stringify(drugs),
         patientId: patient.id,
         status: 'active',
+        // updatedAt is NOT NULL on the live table without a default
+        // (drift — the rest of the codebase uses Prisma's @updatedAt
+        // marker which auto-fills on update only). Set it explicitly
+        // so the INSERT lands.
+        updatedAt: now,
+        createdAt: now,
         // Best-guess defaults for any other NOT NULL columns the schema
         // forgot — we just need the row to land.
         encounterId: encounter.id,
