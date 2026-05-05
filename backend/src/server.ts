@@ -618,21 +618,52 @@ app.post('/api/internal/demo-seed', authenticateToken, async (req: any, res: Res
           plan: 'Symptomatic management. Cough syrup + analgesic. Review in 5 days if not improved.',
         },
       });
-      // Live `prescriptions` table has a NOT NULL patientId column that
-      // isn't reflected in the current Prisma schema (drift from an
-      // earlier schema iteration). Direct SQL bypasses the typed
-      // create() and supplies every column Postgres actually requires.
+      // Live `prescriptions` table has more NOT NULL columns than the
+      // Prisma schema reflects (drift from an earlier iteration of the
+      // schema; no migration ever dropped them). Discover the actual
+      // NOT NULL columns at runtime and write a permissive INSERT that
+      // covers them with sensible values.
       const rxId = require('crypto').randomUUID();
       const drugs = [
         { name: 'Dextromethorphan syrup', dose: '10 ml', frequency: 'TDS', days: 5, route: 'PO', instructions: 'After meals' },
         { name: 'Paracetamol', dose: '500 mg', frequency: 'SOS', days: 5, route: 'PO', instructions: 'For fever or body ache' },
         { name: 'Steam inhalation', dose: '—', frequency: 'BID', days: 5, route: 'Topical', instructions: '5-10 minutes per session' },
       ];
-      await prisma.$executeRaw`
-        INSERT INTO "prescriptions" ("id", "opdNoteId", "doctorId", "drugs", "createdAt", "patientId")
-        VALUES (${rxId}, ${opdNote.id}, ${doctor.id}, ${JSON.stringify(drugs)}::jsonb, NOW(), ${patient.id})
+      const cols = await prisma.$queryRaw<Array<{ column_name: string; data_type: string; is_nullable: string; column_default: string | null }>>`
+        SELECT column_name, data_type, is_nullable, column_default
+        FROM information_schema.columns
+        WHERE table_name = 'prescriptions'
       `;
-      prescriptionId = rxId;
+      // Build a value bag covering every required column; let Postgres
+      // defaults fill in the rest. Maps friendly fields onto whatever
+      // names the live DB actually uses.
+      const fillers: Record<string, any> = {
+        id: rxId,
+        opdNoteId: opdNote.id,
+        doctorId: doctor.id,
+        drugs: JSON.stringify(drugs),
+        patientId: patient.id,
+        status: 'active',
+        // Best-guess defaults for any other NOT NULL columns the schema
+        // forgot — we just need the row to land.
+        encounterId: encounter.id,
+        notes: '',
+        instructions: '',
+      };
+      const required = cols.filter((c) => c.is_nullable === 'NO' && c.column_default === null);
+      const includeCols = required.filter((c) => fillers[c.column_name] !== undefined);
+      const missing = required.filter((c) => fillers[c.column_name] === undefined);
+      if (missing.length) {
+        // If a NOT NULL column we didn't anticipate exists, log + skip Rx
+        // rather than crashing the whole demo-seed.
+        console.warn('[demo-seed] prescription schema drift — skipping Rx; unknown required columns:', missing.map((c) => c.column_name));
+      } else {
+        const colList = includeCols.map((c) => `"${c.column_name}"`).join(', ');
+        const placeholders = includeCols.map((_, i) => `$${i + 1}`).join(', ');
+        const values = includeCols.map((c) => fillers[c.column_name]);
+        await prisma.$executeRawUnsafe(`INSERT INTO "prescriptions" (${colList}) VALUES (${placeholders})`, ...values);
+        prescriptionId = rxId;
+      }
     }
 
     return res.json({
