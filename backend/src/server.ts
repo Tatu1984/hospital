@@ -3879,9 +3879,16 @@ app.get('/api/hr/employees', authenticateToken, async (req: any, res: Response) 
     });
 
     res.json(employees);
-  } catch (error) {
-    console.error('Get employees error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+  } catch (error: any) {
+    // Enriched error log so a 500 reveals which Prisma constraint blew up.
+    // Generic 'Internal server error' was hiding the real cause for weeks.
+    console.error('Get employees error:', {
+      code: error?.code,
+      message: error?.message,
+      meta: error?.meta,
+      stack: error?.stack?.split('\n').slice(0, 3),
+    });
+    res.status(500).json({ error: 'Internal server error', code: error?.code });
   }
 });
 
@@ -4116,9 +4123,14 @@ app.get('/api/inventory/items', authenticateToken, async (req: any, res: Respons
     } else {
       res.json(itemsWithStock);
     }
-  } catch (error) {
-    console.error('Get inventory items error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+  } catch (error: any) {
+    console.error('Get inventory items error:', {
+      code: error?.code,
+      message: error?.message,
+      meta: error?.meta,
+      stack: error?.stack?.split('\n').slice(0, 3),
+    });
+    res.status(500).json({ error: 'Internal server error', code: error?.code });
   }
 });
 

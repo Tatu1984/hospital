@@ -107,15 +107,6 @@ const Login = () => {
               </Link>
             </div>
           </form>
-
-          <div className="mt-6 p-4 bg-slate-50 rounded-lg border border-slate-200">
-            <p className="text-xs text-slate-600 font-medium mb-2">Demo Credentials:</p>
-            <div className="space-y-1 text-xs text-slate-600">
-              <p><span className="font-semibold">Admin:</span> admin / password123</p>
-              <p><span className="font-semibold">Doctor:</span> doctor1 / password123</p>
-              <p><span className="font-semibold">Nurse:</span> nurse1 / password123</p>
-            </div>
-          </div>
         </CardContent>
       </Card>
     </div>

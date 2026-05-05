@@ -1,6 +1,6 @@
 // This file exports all remaining modules using the template pattern
 import ModuleTemplate from './ModuleTemplate';
-import { HeartPulse, Settings, ShieldCheck, Syringe, UserCog, Package, ClipboardList, Calculator, FileText, CreditCard, Video, Wind, Wrench, PersonStanding, Cross, Fingerprint, ImageIcon, Monitor, Wallet, Microscope, UserPlus, Receipt } from 'lucide-react';
+import { HeartPulse, Settings, ShieldCheck, Syringe, UserCog, Package, ClipboardList, Calculator, FileText, CreditCard, Video, Wind, Wrench, PersonStanding, Cross, Fingerprint, ImageIcon, Monitor, Wallet, Microscope, UserPlus } from 'lucide-react';
 
 export function HealthCheckup() {
   return (
@@ -172,10 +172,8 @@ export function DoctorRegistration() {
   );
 }
 
-export function InpatientBilling() {
-  return (
-    <div className="bg-white min-h-full">
-      <ModuleTemplate title="Inpatient Billing" description="IPD billing and discharge financial management" icon={Receipt} stats={[{ label: 'Active IPD Bills', value: 45 }, { label: 'Discharged Today', value: 8 }, { label: 'Revenue', value: '$45,600' }, { label: 'Pending', value: '$12,300' }]} features={['Room and bed charges', 'Package billing', 'Nursing charges', 'Consumables billing', 'Procedure charges', 'Advance and deposits', 'Insurance claims', 'Discharge summary with billing']} />
-    </div>
-  );
-}
+// Inpatient Billing has a real implementation at pages/IPDBilling.tsx — the
+// dashboard tile points at /inpatient-billing while the sidebar uses
+// /ipd-billing, so re-export the real component here so both routes land on
+// the same working page instead of the static stub that used to live below.
+export { default as InpatientBilling } from './IPDBilling';
