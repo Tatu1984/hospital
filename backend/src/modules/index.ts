@@ -7,12 +7,14 @@ import { Router } from 'express';
 import authRoutes from './auth/auth.routes';
 import patientsRoutes from './patients/patient.routes';
 import appointmentsRoutes from './appointments/appointment.routes';
+import reportsRoutes from './reports/report.routes';
 
 const router = Router();
 
 router.use('/auth', authRoutes);
 router.use('/patients', patientsRoutes);
 router.use('/appointments', appointmentsRoutes);
+router.use('/reports', reportsRoutes);
 
 // Health probe for the mobile namespace specifically — useful for canary
 // alerts that want to distinguish the mobile API from the desktop API.

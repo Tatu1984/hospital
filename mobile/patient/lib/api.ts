@@ -97,3 +97,9 @@ export const appointmentsAPI = {
   cancel: (id: string, reason?: string) =>
     api.post(`/api/mobile/v1/appointments/${id}/cancel`, { reason }),
 };
+
+export const reportsAPI = {
+  listMine: () => api.get('/api/mobile/v1/reports/me'),
+  detail: (category: string, id: string) =>
+    api.get(`/api/mobile/v1/reports/${category}/${id}`),
+};

@@ -216,6 +216,12 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   'GET /api/mobile/v1/appointments/slots': ['appointments:view'],
   'POST /api/mobile/v1/appointments': ['appointments:create'],
   'POST /api/mobile/v1/appointments/:id/cancel': ['appointments:edit'],
+  // Mobile reports — patient-facing health records (lab, radiology,
+  // prescription, invoice). Reuses dashboard:view since this is a
+  // self-view of one's own records and the seeded patient role already
+  // grants it.
+  'GET /api/mobile/v1/reports/me': ['dashboard:view'],
+  'GET /api/mobile/v1/reports/:category/:id': ['dashboard:view'],
   'GET /api/ot-rooms': ['ot:view'],
   'POST /api/ot-rooms': ['ot:create'],
   'GET /api/ot/rooms': ['ot:view'],

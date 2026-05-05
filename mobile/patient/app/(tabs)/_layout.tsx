@@ -22,7 +22,7 @@ export default function TabsLayout() {
       />
       <Tabs.Screen
         name="prescriptions"
-        options={{ title: 'Rx', tabBarIcon: ({ color }) => <FileText color={color} size={22} /> }}
+        options={{ title: 'Records', tabBarIcon: ({ color }) => <FileText color={color} size={22} /> }}
       />
       <Tabs.Screen
         name="bills"

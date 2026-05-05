@@ -33,6 +33,7 @@ export default function RootLayout() {
         <Stack.Screen name="login" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="book" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="report/[category]/[id]" options={{ presentation: 'card' }} />
       </Stack>
     </GestureHandlerRootView>
   );

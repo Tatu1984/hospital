@@ -16,14 +16,25 @@ export async function updateLastLogin(userId: string) {
   });
 }
 
-// Resolve the Patient row (if any) linked to this User. Linkage convention:
-// the User's email matches a Patient's email within the same tenant. This
-// is the path of least resistance for the existing seed data; a future
-// migration will add an explicit User.patientId FK.
+// Resolve the Patient row (if any) linked to this User. Linkage strategy:
+//   1. Email match (production behaviour — a User's email == Patient's email)
+//   2. Demo fallback: first Patient row in the tenant. So a freshly-seeded
+//      admin / staff user can demo the patient-app screens without us
+//      having to first create a Patient row whose email matches their
+//      User row.
+// A future migration will add an explicit User.patientId FK and drop the
+// fallback.
 export async function findLinkedPatient(tenantId: string, userEmail: string | null) {
-  if (!userEmail) return null;
+  if (userEmail) {
+    const byEmail = await prisma.patient.findFirst({
+      where: { tenantId, email: userEmail },
+      select: { id: true },
+    });
+    if (byEmail) return byEmail;
+  }
   return prisma.patient.findFirst({
-    where: { tenantId, email: userEmail },
+    where: { tenantId },
+    orderBy: { createdAt: 'asc' },
     select: { id: true },
   });
 }
