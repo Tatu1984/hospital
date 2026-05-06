@@ -84,7 +84,11 @@ const SystemControl: React.FC = () => {
   const [isEditingUser, setIsEditingUser] = useState(false);
   const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState('');
-  const [userFormData, setUserFormData] = useState<Partial<User>>({});
+  // userFormData was the legacy (cramped) modal's state. UserFormModal
+  // now owns the form internally; we just drive it with userId. Kept the
+  // (unused) setter to preserve the existing call sites until the next
+  // refactor. The empty patch is a no-op.
+  const setUserFormData = (_v: any) => undefined;
   const [passwordData, setPasswordData] = useState({ newPassword: '', confirmPassword: '' });
 
   // System Settings State
@@ -267,33 +271,10 @@ const SystemControl: React.FC = () => {
   }, []);
 
   // User Management Handlers
-  const handleAddUser = async () => {
-    try {
-      await api.post('/api/users', { ...userFormData, status: 'active' });
-      await fetchUsers();
-      setIsUserDialogOpen(false);
-      setUserFormData({});
-      alert('User added successfully!');
-    } catch (error) {
-      console.error('Error adding user:', error);
-      alert('Failed to add user');
-    }
-  };
-
-  const handleEditUser = async () => {
-    try {
-      await api.put(`/api/users/${selectedUserId}`, userFormData);
-      await fetchUsers();
-      setIsUserDialogOpen(false);
-      setIsEditingUser(false);
-      setUserFormData({});
-      alert('User updated successfully!');
-    } catch (error) {
-      console.error('Error updating user:', error);
-      alert('Failed to update user');
-    }
-  };
-
+  // handleAddUser / handleEditUser were superseded by the comprehensive
+  // <UserFormModal /> which manages its own submit logic. Kept the
+  // delete + password reset helpers below since the user table still
+  // calls them inline.
   const handleDeleteUser = async (id: string) => {
     if (!confirm('Are you sure you want to delete this user?')) return;
 
