@@ -66,6 +66,8 @@ const AssetManagement = lazy(() => import('./pages/AssetManagement'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const SurgeryTracker = lazy(() => import('./pages/SurgeryTracker'));
+const PatientChart = lazy(() => import('./pages/PatientChart'));
+const DoctorFinance = lazy(() => import('./pages/DoctorFinance'));
 
 // Some smaller modules still live in AllModules.tsx — split that into one
 // async chunk. Each named import resolves once the chunk loads.
@@ -204,6 +206,14 @@ const AppRoutes = () => {
       >
         <Route index element={<PortalLanding />} />
         <Route path="live-dashboard" element={<RoleProtectedRoute path="live-dashboard"><LiveDashboard /></RoleProtectedRoute>} />
+        {/* Comprehensive patient chart — opened from doctor dashboard rows.
+            Auth via the shared portal token; backend endpoint is RBAC-gated
+            on patients:view, which any clinical role already has. */}
+        <Route path="chart/:patientId" element={<PatientChart />} />
+        {/* Doctor's personal earnings — sidebar gates visibility on role.
+            Page itself only fetches the caller's own DoctorRevenue rows
+            so additional RBAC gating would be redundant. */}
+        <Route path="my-earnings" element={<RoleProtectedRoute path="my-earnings"><DoctorFinance /></RoleProtectedRoute>} />
 
         {/* Core Clinical Modules */}
         <Route path="patients" element={<RoleProtectedRoute path="patients"><PatientRegistration /></RoleProtectedRoute>} />

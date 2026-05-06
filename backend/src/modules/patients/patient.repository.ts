@@ -93,3 +93,99 @@ export async function findActiveSurgeryTrackerTokens(tenantId: string, patientPh
   });
   return contacts.map((c) => c.trackingToken);
 }
+
+// Comprehensive patient chart for the doctor's portal — every clinical
+// record we have on file in one round-trip. Each block is a separate
+// query (no nested includes) so a heavy patient with hundreds of orders
+// still returns within a Vercel lambda time budget.
+export async function chartFor(tenantId: string, patientId: string) {
+  const patient = await prisma.patient.findFirst({
+    where: { id: patientId, tenantId },
+  });
+  if (!patient) return null;
+
+  const [admissions, encounters, orders, prescriptionsRaw, invoices, surgeries] = await Promise.all([
+    prisma.admission.findMany({
+      where: { patientId, patient: { tenantId } },
+      orderBy: { admissionDate: 'desc' },
+      include: {
+        bed: { select: { bedNumber: true, wardId: true } },
+        admittingDoctor: { select: { id: true, name: true } },
+      },
+      take: 30,
+    }),
+    prisma.encounter.findMany({
+      where: { patientId },
+      orderBy: { visitDate: 'desc' },
+      include: {
+        doctor: { select: { id: true, name: true } },
+        opdNotes: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: { id: true, vitals: true, examination: true, assessment: true, plan: true, createdAt: true },
+        },
+      },
+      take: 50,
+    }),
+    prisma.order.findMany({
+      where: { patientId },
+      orderBy: { orderedAt: 'desc' },
+      include: { results: { orderBy: { resultedAt: 'desc' } } },
+      take: 100,
+    }),
+    // Prescriptions are read via raw SQL because of the schema drift on
+    // the prescriptions table (live DB has its own patientId column the
+    // Prisma model doesn't expose). Same workaround as reports module.
+    prisma.$queryRaw<Array<{ id: string; doctorId: string; drugs: any; createdAt: Date }>>`
+      SELECT id, "doctorId", drugs, "createdAt"
+      FROM "prescriptions"
+      WHERE "patientId" = ${patientId}
+      ORDER BY "createdAt" DESC
+      LIMIT 50
+    `,
+    prisma.invoice.findMany({
+      where: { patientId },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    }),
+    prisma.surgery.findMany({
+      where: { tenantId, patientId },
+      orderBy: { scheduledDate: 'desc' },
+      take: 30,
+    }),
+  ]);
+
+  // Resolve doctor names for prescriptions in one shot.
+  const rxDoctorIds = Array.from(new Set(prescriptionsRaw.map((r) => r.doctorId).filter(Boolean)));
+  const rxDoctors = rxDoctorIds.length
+    ? await prisma.user.findMany({
+        where: { id: { in: rxDoctorIds } },
+        select: { id: true, name: true },
+      })
+    : [];
+  const rxDoctorName: Record<string, string> = Object.fromEntries(rxDoctors.map((d) => [d.id, d.name]));
+
+  // Resolve ward names for admissions that have a bed.
+  const wardIds = Array.from(new Set(
+    admissions.map((a) => (a as any).bed?.wardId).filter(Boolean),
+  ));
+  const wards = wardIds.length
+    ? await prisma.ward.findMany({
+        where: { id: { in: wardIds as string[] } },
+        select: { id: true, name: true },
+      })
+    : [];
+  const wardName: Record<string, string> = Object.fromEntries(wards.map((w) => [w.id, w.name]));
+
+  return {
+    patient,
+    admissions,
+    encounters,
+    orders,
+    prescriptionsRaw,
+    rxDoctorName,
+    invoices,
+    surgeries,
+    wardName,
+  };
+}

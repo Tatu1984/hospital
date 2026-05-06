@@ -54,3 +54,21 @@ export async function updateMyProfile(req: AuthedReq, res: Response) {
     res.status(500).json({ error: 'Internal server error' });
   }
 }
+
+// Doctor-side comprehensive chart. The patient id comes from the URL —
+// any user with the patients:view permission can fetch (RBAC is enforced
+// upstream by the routes/index.ts entry).
+export async function getChart(req: AuthedReq, res: Response) {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { patientId } = req.params;
+    if (!patientId) return res.status(400).json({ error: 'patientId is required' });
+    const dto = await service.getChart(tenantId, patientId);
+    res.json(dto);
+  } catch (err: any) {
+    if (err instanceof PatientNotFoundError) return res.status(404).json({ error: err.message });
+    // eslint-disable-next-line no-console
+    console.error('getChart error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
