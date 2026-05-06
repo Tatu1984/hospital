@@ -117,10 +117,12 @@ const SystemControl: React.FC = () => {
     senderId: '',
   });
 
-  // Audit Logs State
+  // Audit Logs State.
+  // Module is 'all' as a sentinel so the Radix Select gets a non-empty
+  // controlled value; we translate 'all' → no filter when calling the API.
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [auditFilters, setAuditFilters] = useState({
-    module: '',
+    module: 'all',
     userId: '',
     dateFrom: '',
     dateTo: '',
@@ -170,7 +172,14 @@ const SystemControl: React.FC = () => {
   // Fetch Audit Logs
   const fetchAuditLogs = async () => {
     try {
-      const response = await api.get('/api/audit-logs', { params: auditFilters });
+      // Strip empty / sentinel filters so we don't send `module=all` to the
+      // backend (which would 404 the lookup); only forward real filters.
+      const params: Record<string, string> = {};
+      if (auditFilters.module && auditFilters.module !== 'all') params.module = auditFilters.module;
+      if (auditFilters.userId) params.userId = auditFilters.userId;
+      if (auditFilters.dateFrom) params.dateFrom = auditFilters.dateFrom;
+      if (auditFilters.dateTo) params.dateTo = auditFilters.dateTo;
+      const response = await api.get('/api/audit-logs', { params });
       setAuditLogs(response.data);
     } catch (error) {
       console.error('Error fetching audit logs:', error);
@@ -769,7 +778,10 @@ const SystemControl: React.FC = () => {
                       <SelectValue placeholder="All modules" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">All modules</SelectItem>
+                      {/* Radix Select rejects empty-string values, so the
+                          "All modules" option uses the 'all' sentinel and
+                          fetchAuditLogs translates it back to no-filter. */}
+                      <SelectItem value="all">All modules</SelectItem>
                       <SelectItem value="Authentication">Authentication</SelectItem>
                       <SelectItem value="OPD">OPD</SelectItem>
                       <SelectItem value="IPD">IPD</SelectItem>
@@ -819,20 +831,28 @@ const SystemControl: React.FC = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {auditLogs.map((log) => (
-                    <TableRow key={log.id}>
-                      <TableCell>
-                        {new Date(log.timestamp).toLocaleString()}
+                  {auditLogs.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center py-8 text-sm text-slate-500">
+                        No audit log entries match the current filters.
                       </TableCell>
-                      <TableCell>{log.userName}</TableCell>
-                      <TableCell>
-                        <Badge variant="outline">{log.module}</Badge>
-                      </TableCell>
-                      <TableCell>{log.action}</TableCell>
-                      <TableCell>{log.details}</TableCell>
-                      <TableCell className="font-mono text-sm">{log.ipAddress}</TableCell>
                     </TableRow>
-                  ))}
+                  ) : (
+                    auditLogs.map((log) => (
+                      <TableRow key={log.id}>
+                        <TableCell>
+                          {new Date(log.timestamp).toLocaleString()}
+                        </TableCell>
+                        <TableCell>{log.userName}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{log.module}</Badge>
+                        </TableCell>
+                        <TableCell>{log.action}</TableCell>
+                        <TableCell>{log.details}</TableCell>
+                        <TableCell className="font-mono text-sm">{log.ipAddress}</TableCell>
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
               </Table>
             </CardContent>
