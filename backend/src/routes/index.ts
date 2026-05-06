@@ -255,6 +255,14 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   'POST /api/lab-results': ['lab_results:create'],
   'GET /api/lab-tests': ['master_data:view'],
   'POST /api/lab-tests': ['master_data:edit'],
+  'GET /api/lab-tests/:id': ['master_data:view'],
+  'PUT /api/lab-tests/:id': ['master_data:edit'],
+  // Per-parameter configuration. Reuses master_data:edit since a clinic
+  // operator with master-data permission already manages the test catalog.
+  'GET /api/lab-tests/:id/parameters': ['master_data:view'],
+  'POST /api/lab-tests/:id/parameters': ['master_data:edit'],
+  'PUT /api/lab-test-parameters/:id': ['master_data:edit'],
+  'DELETE /api/lab-test-parameters/:id': ['master_data:edit'],
 
   // Radiology
   'GET /api/radiology-orders': ['radiology_orders:view'],

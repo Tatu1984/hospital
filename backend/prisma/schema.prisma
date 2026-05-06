@@ -82,44 +82,44 @@ model Department {
 }
 
 model User {
-  id                String          @id @default(uuid())
-  tenantId          String
-  branchId          String
-  username          String          @unique
-  email             String          @unique
-  passwordHash      String
-  name              String
-  roleIds           String[]
-  departmentIds     String[]
-  biometricTemplate String?
-  isActive          Boolean         @default(true)
-  lastLoginAt       DateTime?
+  id                  String          @id @default(uuid())
+  tenantId            String
+  branchId            String
+  username            String          @unique
+  email               String          @unique
+  passwordHash        String
+  name                String
+  roleIds             String[]
+  departmentIds       String[]
+  biometricTemplate   String?
+  isActive            Boolean         @default(true)
+  lastLoginAt         DateTime?
   // Account-lockout state. Reset to (0, null) on a successful login.
   // Bumped + lockedUntil set when bad-password attempts cross the threshold.
   // See modules/auth/auth.service.ts and the legacy /api/auth/login.
-  failedLoginAttempts Int           @default(0)
-  lockedUntil       DateTime?
+  failedLoginAttempts Int             @default(0)
+  lockedUntil         DateTime?
   // Top-level identity columns we frequently filter on; kept first-class
   // so admin search can hit indexes if we add them later.
-  phone             String?
-  bloodGroup        String?
+  phone               String?
+  bloodGroup          String?
   // Catch-all for the rest of the user-management form: address, emergency
   // contact, KYC documents, education, licenses, banking details,
   // qualifications, specialization, registration #, joining date, etc.
   // JSON keeps the schema stable while the admin form evolves.
-  profile           Json?
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
-  admissions        Admission[]     @relation("AdmittingDoctor")
-  attendanceLogs    AttendanceLog[]
-  performedAuditLog AuditLog[]      @relation("PerformedBy")
-  createdAuditLogs  AuditLog[]      @relation("CreatedBy")
-  appointments      Appointment[]   @relation("DoctorAppointments")
-  encounters        Encounter[]
-  opdNotes          OPDNote[]
-  prescriptions     Prescription[]
-  branch            Branch          @relation(fields: [branchId], references: [id])
-  tenant            Tenant          @relation(fields: [tenantId], references: [id])
+  profile             Json?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  admissions          Admission[]     @relation("AdmittingDoctor")
+  attendanceLogs      AttendanceLog[]
+  performedAuditLog   AuditLog[]      @relation("PerformedBy")
+  createdAuditLogs    AuditLog[]      @relation("CreatedBy")
+  appointments        Appointment[]   @relation("DoctorAppointments")
+  encounters          Encounter[]
+  opdNotes            OPDNote[]
+  prescriptions       Prescription[]
+  branch              Branch          @relation(fields: [branchId], references: [id])
+  tenant              Tenant          @relation(fields: [tenantId], references: [id])
 
   @@map("users")
 }
@@ -134,7 +134,7 @@ model TokenBlacklist {
   id        String   @id @default(uuid())
   tokenHash String   @unique
   userId    String?
-  reason    String?  // 'logout' | 'admin_revoke' | 'rotation'
+  reason    String? // 'logout' | 'admin_revoke' | 'rotation'
   expiresAt DateTime
   revokedAt DateTime @default(now())
 
@@ -469,17 +469,60 @@ model Drug {
 }
 
 model LabTestMaster {
-  id          String  @id @default(uuid())
+  id          String             @id @default(uuid())
   name        String
-  code        String  @unique
+  code        String             @unique
   category    String
-  price       Decimal @db.Decimal(10, 2)
+  price       Decimal            @db.Decimal(10, 2)
   tat         Int
+  // Legacy single-value reference fields. Kept for back-compat with
+  // simple tests that have a single parameter (e.g. "Random blood
+  // sugar"). New panels (CBC, LFT, etc.) populate the parameters
+  // relation below instead.
   unit        String?
   normalRange String?
-  isActive    Boolean @default(true)
+  // Specimen/methodology metadata used on the printed report header.
+  sampleType  String?
+  methodology String?
+  isActive    Boolean            @default(true)
+  parameters  LabTestParameter[]
 
   @@map("lab_test_master")
+}
+
+// One reportable parameter on a lab test. A simple test (e.g. "Random
+// blood sugar") has one row here; a panel (e.g. "CBC") has many — one
+// per measured analyte. Reference ranges live on the parameter so the
+// printed report can flag out-of-range values automatically.
+model LabTestParameter {
+  id              String        @id @default(uuid())
+  testId          String
+  name            String // e.g. "Hemoglobin"
+  code            String? // optional short code, e.g. "HGB"
+  unit            String? // e.g. "g/dL"
+  // 'numeric'      → free-form decimal value, ranges apply
+  // 'text'         → free-form text (e.g. "Pus cells: occasional")
+  // 'qualitative'  → choose from `choices` (Positive/Negative/etc.)
+  resultType      String        @default("numeric")
+  refLow          Decimal?      @db.Decimal(14, 4)
+  refHigh         Decimal?      @db.Decimal(14, 4)
+  criticalLow     Decimal?      @db.Decimal(14, 4)
+  criticalHigh    Decimal?      @db.Decimal(14, 4)
+  decimals        Int           @default(2)
+  // For qualitative tests — the allowed answers in display order.
+  choices         Json?
+  // For sex / age stratified ranges. Shape:
+  //   [{ sex: 'M'|'F'|'any', minAgeYears, maxAgeYears, low, high }]
+  // If empty, the simple refLow/refHigh above apply to everyone.
+  ageGenderRanges Json?
+  displayOrder    Int           @default(0)
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  test            LabTestMaster @relation(fields: [testId], references: [id], onDelete: Cascade)
+
+  @@index([testId])
+  @@map("lab_test_parameters")
 }
 
 model RadiologyTestMaster {

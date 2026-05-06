@@ -2529,6 +2529,127 @@ app.post('/api/lab-tests', authenticateToken, async (req: any, res: Response) =>
   }
 });
 
+// Single lab test with its configured parameters. Used by the Lab
+// Configuration screen so the operator can edit one test + its full
+// parameter list in a single dialog.
+app.get('/api/lab-tests/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const test = await prisma.labTestMaster.findUnique({
+      where: { id: req.params.id },
+      include: {
+        parameters: { orderBy: [{ displayOrder: 'asc' }, { name: 'asc' }] },
+      },
+    });
+    if (!test) return res.status(404).json({ error: 'Lab test not found' });
+    res.json(test);
+  } catch (error) {
+    console.error('Get lab test error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/lab-tests/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    // Whitelist editable master fields — body could contain the parameters
+    // array if the client sent the full record back; we ignore it here and
+    // require parameter edits to use the per-parameter endpoints below.
+    const { name, code, category, price, tat, unit, normalRange, sampleType, methodology, isActive } = req.body;
+    const updated = await prisma.labTestMaster.update({
+      where: { id: req.params.id },
+      data: { name, code, category, price, tat, unit, normalRange, sampleType, methodology, isActive },
+    });
+    res.json(updated);
+  } catch (error: any) {
+    if (error.code === 'P2025') return res.status(404).json({ error: 'Lab test not found' });
+    console.error('Update lab test error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// =====================================================================
+// Lab test parameter configuration. A panel test (CBC, LFT, etc.) has
+// many measured parameters, each with its own unit + reference range.
+// A simple test may have one or zero (ranges live on the master row).
+// =====================================================================
+
+// Helper — coerces request body into Prisma-shaped parameter data. Decimal
+// fields are nullable; an empty string from a form input collapses to null
+// rather than being sent through as NaN.
+function paramFromBody(body: any) {
+  const num = (v: any) =>
+    v === '' || v === null || v === undefined ? null : Number(v);
+  return {
+    name: String(body.name || '').trim(),
+    code: body.code ? String(body.code).trim() : null,
+    unit: body.unit ? String(body.unit).trim() : null,
+    resultType: body.resultType || 'numeric',
+    refLow: num(body.refLow),
+    refHigh: num(body.refHigh),
+    criticalLow: num(body.criticalLow),
+    criticalHigh: num(body.criticalHigh),
+    decimals: body.decimals !== undefined ? Number(body.decimals) : 2,
+    choices: body.choices ?? null,
+    ageGenderRanges: body.ageGenderRanges ?? null,
+    displayOrder: body.displayOrder !== undefined ? Number(body.displayOrder) : 0,
+    isActive: body.isActive !== false,
+  };
+}
+
+app.get('/api/lab-tests/:id/parameters', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const params = await prisma.labTestParameter.findMany({
+      where: { testId: req.params.id },
+      orderBy: [{ displayOrder: 'asc' }, { name: 'asc' }],
+    });
+    res.json(params);
+  } catch (error) {
+    console.error('Get lab parameters error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/lab-tests/:id/parameters', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const data = paramFromBody(req.body);
+    if (!data.name) return res.status(400).json({ error: 'Parameter name is required' });
+    const created = await prisma.labTestParameter.create({
+      data: { ...data, testId: req.params.id },
+    });
+    res.status(201).json(created);
+  } catch (error: any) {
+    if (error.code === 'P2003') return res.status(404).json({ error: 'Lab test not found' });
+    console.error('Create lab parameter error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/lab-test-parameters/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const data = paramFromBody(req.body);
+    if (!data.name) return res.status(400).json({ error: 'Parameter name is required' });
+    const updated = await prisma.labTestParameter.update({
+      where: { id: req.params.id },
+      data,
+    });
+    res.json(updated);
+  } catch (error: any) {
+    if (error.code === 'P2025') return res.status(404).json({ error: 'Parameter not found' });
+    console.error('Update lab parameter error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.delete('/api/lab-test-parameters/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    await prisma.labTestParameter.delete({ where: { id: req.params.id } });
+    res.status(204).end();
+  } catch (error: any) {
+    if (error.code === 'P2025') return res.status(404).json({ error: 'Parameter not found' });
+    console.error('Delete lab parameter error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Radiology Tests
 app.get('/api/radiology-tests', authenticateToken, async (req: any, res: Response) => {
   try {
