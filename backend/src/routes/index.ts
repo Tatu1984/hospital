@@ -139,6 +139,11 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   'PUT /api/users/:id': ['users:manage'],
   'DELETE /api/users/:id': ['users:manage'],
   'POST /api/users/:id/reset-password': ['users:manage'],
+  // Self-service change password — any authenticated user can change
+  // their own password. Permission key is intentionally permissive
+  // ('dashboard:view') because the user's *own* password is not
+  // privileged data they don't already have.
+  'POST /api/auth/change-password': ['dashboard:view'],
   'GET /api/doctors': ['patients:view'],
   'GET /api/referral-doctors': ['commissions:view'],
   'GET /api/audit-logs': ['system:manage'],

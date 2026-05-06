@@ -1032,6 +1032,48 @@ app.post('/api/auth/reset-password', async (req: Request, res: Response) => {
   }
 });
 
+// Self-service change-password — authenticated user changes their own
+// password by proving knowledge of the current one. Different from
+// /api/auth/reset-password (which uses a forgot-password email token)
+// and from /api/users/:id/reset-password (admin-initiated).
+app.post('/api/auth/change-password', authenticateToken, async (req: any, res: Response) => {
+  const { currentPassword, newPassword } = req.body || {};
+  if (!currentPassword || typeof currentPassword !== 'string') {
+    return res.status(400).json({ error: 'currentPassword is required' });
+  }
+  if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 8) {
+    return res.status(400).json({ error: 'newPassword must be at least 8 characters' });
+  }
+  if (currentPassword === newPassword) {
+    return res.status(400).json({ error: 'New password must be different from current password' });
+  }
+  try {
+    const user = await prisma.user.findFirst({
+      where: { id: req.user.userId, tenantId: req.user.tenantId, isActive: true },
+    });
+    if (!user) return res.status(401).json({ error: 'Session invalid' });
+
+    const ok = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!ok) {
+      auditLogger.securityEvent('PASSWORD_CHANGE_BAD_CURRENT', { userId: user.id, ip: req.ip });
+      return res.status(401).json({ error: 'Current password is incorrect' });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
+    auditLogger.securityEvent('PASSWORD_CHANGED', { userId: user.id, ip: req.ip });
+    void writeAudit({
+      prisma, req,
+      userId: user.id, tenantId: user.tenantId,
+      action: 'PASSWORD_CHANGED', resource: 'Authentication', resourceId: user.id,
+    });
+    return res.status(204).end();
+  } catch (error) {
+    console.error('change-password error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Lightweight "who am I" endpoint — frontend uses this on hydrate to verify
 // the token is still valid and pull fresh permissions, instead of calling
 // /api/dashboard/stats (heavy, leaks unrelated info).

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { View, Text, ScrollView, ActivityIndicator, RefreshControl, TouchableOpacity, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
 import { MotiView } from 'moti';
 import { Calendar, Pill, Receipt, Radio, ChevronRight } from 'lucide-react-native';
 import { patientsAPI } from '@/lib/api';
@@ -77,6 +78,7 @@ export default function HomeScreen() {
           />
         )}
 
+        {/* Tap → Appointments tab if one exists, else Book screen. */}
         <DashboardCard
           delay={100}
           icon={<Calendar color="white" size={20} />}
@@ -84,24 +86,26 @@ export default function HomeScreen() {
           subtitle={data?.upcomingAppointment
             ? `${data.upcomingAppointment.doctorName} • ${new Date(data.upcomingAppointment.appointmentDate).toLocaleDateString()} ${data.upcomingAppointment.appointmentTime}`
             : 'Tap to book one'}
-          onPress={() => undefined}
+          onPress={() => router.push(data?.upcomingAppointment ? '/(tabs)/appointments' : '/book')}
         />
 
+        {/* Tap → Records tab (where prescriptions are listed). */}
         <DashboardCard
           delay={150}
           icon={<Pill color="white" size={20} />}
           title="Latest prescription"
           subtitle={data?.latestPrescriptionId ? 'Tap to view' : 'No prescriptions yet'}
-          onPress={() => undefined}
+          onPress={() => router.push('/(tabs)/prescriptions')}
           disabled={!data?.latestPrescriptionId}
         />
 
+        {/* Tap → Bills tab. Disabled when nothing's outstanding. */}
         <DashboardCard
           delay={200}
           icon={<Receipt color="white" size={20} />}
           title={data && data.outstandingBillCount > 0 ? `Outstanding bills (${data.outstandingBillCount})` : 'No outstanding bills'}
           subtitle={data && data.outstandingBillTotal > 0 ? `₹${data.outstandingBillTotal.toLocaleString()}` : 'You\'re all caught up'}
-          onPress={() => undefined}
+          onPress={() => router.push('/(tabs)/bills')}
           disabled={!data || data.outstandingBillCount === 0}
         />
       </ScrollView>

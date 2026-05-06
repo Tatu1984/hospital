@@ -106,6 +106,19 @@ export const drugsAPI = {
   search: (q: string) => api.get('/api/drugs', { params: { search: q, limit: 25 } }),
 };
 
+export const doctorAPI = {
+  myDashboard: () => api.get('/api/mobile/v1/doctors/me/dashboard'),
+  myFinance: () => api.get('/api/mobile/v1/doctors/me/finance'),
+};
+
+// Patient chart — comprehensive view used by the doctor app's patient
+// detail screen. One backend call returns demographics + admissions +
+// encounters + orders/results + prescriptions + surgeries + invoices.
+export const chartAPI = {
+  forPatient: (patientId: string) =>
+    api.get(`/api/mobile/v1/patients/${patientId}/chart`),
+};
+
 export const otAPI = {
   postStage: (surgeryId: string, stage: string, note?: string) =>
     api.post(`/api/surgeries/${surgeryId}/stage`, { stage, note }),
