@@ -95,6 +95,13 @@ export const patientsAPI = {
   admissions: (params?: { status?: string }) => api.get('/api/admissions', { params }),
 };
 
+export const ordersAPI = {
+  byPatient: (patientId: string) =>
+    api.get(`/api/mobile/v1/orders/by-patient/${patientId}`),
+  submitResult: (orderId: string, resultData: any, isCritical = false) =>
+    api.post(`/api/mobile/v1/orders/${orderId}/result`, { resultData, isCritical }),
+};
+
 export const drugsAPI = {
   search: (q: string) => api.get('/api/drugs', { params: { search: q, limit: 25 } }),
 };

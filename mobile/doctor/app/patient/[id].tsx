@@ -4,10 +4,11 @@
 import { useEffect, useState } from 'react';
 import { View, Text, ScrollView, ActivityIndicator, TouchableOpacity, Linking, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useLocalSearchParams, router } from 'expo-router';
+import { useLocalSearchParams, router, useFocusEffect } from 'expo-router';
+import { useCallback } from 'react';
 import { MotiView } from 'moti';
-import { ChevronLeft, Phone, Mail, Cake, Droplet, AlertTriangle, MapPin, ClipboardList, Stethoscope } from 'lucide-react-native';
-import { patientsAPI } from '@/lib/api';
+import { ChevronLeft, Phone, Mail, Cake, Droplet, AlertTriangle, MapPin, ClipboardList, Stethoscope, FlaskConical, Scan, ChevronRight, CheckCircle2 } from 'lucide-react-native';
+import { patientsAPI, ordersAPI } from '@/lib/api';
 
 interface PatientDetail {
   id: string;
@@ -32,24 +33,46 @@ interface EncounterRow {
   status: string;
 }
 
+interface OrderRow {
+  id: string;
+  orderType: 'lab' | 'radiology' | string;
+  status: string;
+  priority: string;
+  orderedAt: string;
+  details: any;
+  hasResult: boolean;
+}
+
 export default function PatientDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [patient, setPatient] = useState<PatientDetail | null>(null);
   const [encounters, setEncounters] = useState<EncounterRow[]>([]);
+  const [orders, setOrders] = useState<OrderRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(() => {
+    if (!id) return;
+    Promise.allSettled([patientsAPI.byId(id), patientsAPI.encounters(id), ordersAPI.byPatient(id)])
+      .then(([p, e, o]) => {
+        if (p.status === 'fulfilled') setPatient(p.value.data);
+        else setError('Could not load patient.');
+        if (e.status === 'fulfilled') setEncounters(e.value.data || []);
+        if (o.status === 'fulfilled') setOrders(o.value.data || []);
+      })
+      .finally(() => setLoading(false));
+  }, [id]);
 
   useEffect(() => {
     if (!id) return;
     setLoading(true);
-    Promise.allSettled([patientsAPI.byId(id), patientsAPI.encounters(id)])
-      .then(([p, e]) => {
-        if (p.status === 'fulfilled') setPatient(p.value.data);
-        else setError('Could not load patient.');
-        if (e.status === 'fulfilled') setEncounters(e.value.data || []);
-      })
-      .finally(() => setLoading(false));
-  }, [id]);
+    reload();
+  }, [id, reload]);
+
+  // Refresh orders/encounters whenever this screen regains focus — covers
+  // the "doctor entered a result, came back" round-trip without a manual
+  // pull-to-refresh.
+  useFocusEffect(useCallback(() => { reload(); }, [reload]));
 
   function callPhone(num: string) {
     const url = `tel:${num.replace(/[^\d+]/g, '')}`;
@@ -160,6 +183,56 @@ export default function PatientDetailScreen() {
             <Text className="text-xs uppercase tracking-wide font-semibold text-slate-500 mb-1">Emergency contact</Text>
             <Text className="text-sm text-slate-700">{patient.emergencyContact}</Text>
           </View>
+        )}
+
+        {/* Pending orders — surfaced before the visit history because this
+            is the doctor's primary action surface from the chart view. */}
+        {orders.length > 0 && (
+          <>
+            <Text className="text-xs uppercase tracking-wide font-semibold text-slate-500 mt-6 mb-2">
+              Orders ({orders.filter((o) => !o.hasResult).length} pending)
+            </Text>
+            {orders.map((o, idx) => {
+              const isLab = o.orderType === 'lab';
+              const Icon = isLab ? FlaskConical : Scan;
+              const tint = isLab ? 'bg-blue-500' : 'bg-purple-500';
+              const tests = (o.details?.tests || []) as Array<{ name?: string }>;
+              const title = isLab
+                ? (tests[0]?.name
+                    ? (tests.length > 1 ? `${tests[0].name} +${tests.length - 1} more` : tests[0].name)
+                    : 'Lab order')
+                : `${o.details?.modality || 'Imaging'} ${o.details?.bodyPart || ''}`.trim();
+              return (
+                <MotiView key={o.id} from={{ opacity: 0, translateY: 4 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 200, delay: idx * 25 }}>
+                  <TouchableOpacity
+                    onPress={() => router.push({ pathname: '/order/[id]', params: { id: o.id } })}
+                    className="bg-white rounded-xl p-4 mb-2 flex-row items-center"
+                    style={{ shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 6, elevation: 1 }}
+                  >
+                    <View className={`w-10 h-10 rounded-xl items-center justify-center ${tint}`}>
+                      <Icon color="white" size={18} />
+                    </View>
+                    <View className="flex-1 ml-3">
+                      <Text className="font-medium text-slate-900" numberOfLines={1}>{title}</Text>
+                      <View className="flex-row items-center mt-0.5">
+                        <Text className="text-xs text-slate-500">{new Date(o.orderedAt).toLocaleDateString()}</Text>
+                        <Text className="text-xs text-slate-400 ml-2">• {o.priority}</Text>
+                        {o.hasResult ? (
+                          <View className="flex-row items-center ml-2">
+                            <CheckCircle2 color="#10b981" size={11} />
+                            <Text className="text-xs text-emerald-600 ml-0.5">Resulted</Text>
+                          </View>
+                        ) : (
+                          <Text className="text-xs text-amber-600 ml-2 font-medium">Pending</Text>
+                        )}
+                      </View>
+                    </View>
+                    <ChevronRight color="#cbd5e1" size={18} />
+                  </TouchableOpacity>
+                </MotiView>
+              );
+            })}
+          </>
         )}
 
         {/* Recent encounters */}

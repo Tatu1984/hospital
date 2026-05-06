@@ -222,6 +222,13 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   // grants it.
   'GET /api/mobile/v1/reports/me': ['dashboard:view'],
   'GET /api/mobile/v1/reports/:category/:id': ['dashboard:view'],
+  // Mobile orders — doctor-side endpoints for listing pending orders
+  // per patient and recording results. Reuses the existing lab:* /
+  // radiology:* permissions which are granted to DOCTOR / CONSULTANT /
+  // SURGEON roles in the seed.
+  'GET /api/mobile/v1/orders/by-patient/:patientId': ['lab:view'],
+  'GET /api/mobile/v1/orders/:id': ['lab:view'],
+  'POST /api/mobile/v1/orders/:id/result': ['lab:create'],
   // Internal demo seed — admin-only. Permission gate is the role check
   // inside the handler itself; entry here registers the route as
   // permission-aware so the deny-by-default RBAC middleware doesn't
