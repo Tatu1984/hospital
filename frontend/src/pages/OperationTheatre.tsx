@@ -12,6 +12,7 @@ import { Clock, CheckCircle, AlertCircle, Calendar, FileText, Plus, Activity, Ra
 import api from '../services/api';
 import { useToast } from '../components/Toast';
 import OTLiveStatusDialog from '../components/OTLiveStatusDialog';
+import { DoctorLabel } from '../components/DoctorLabel';
 
 interface Surgery {
   id: string;
@@ -21,6 +22,7 @@ interface Surgery {
   age: number;
   gender: string;
   procedureName: string;
+  surgeonId: string | null;
   surgeonName: string;
   otRoom: string;
   scheduledDate: string;
@@ -147,7 +149,8 @@ export default function OperationTheatre() {
         age: s.patient?.age || 0,
         gender: s.patient?.gender || 'Unknown',
         procedureName: s.procedureName,
-        surgeonName: s.surgeon?.name || 'Dr. ' + (s.surgeonId?.substring(0, 8) || 'Unknown'),
+        surgeonId: s.surgeonId || s.surgeon?.id || null,
+        surgeonName: s.surgeon?.name || s.surgeonName || 'Unassigned',
         otRoom: s.otRoom?.roomNumber || 'TBD',
         scheduledDate: s.scheduledDate ? new Date(s.scheduledDate).toLocaleDateString() : 'TBD',
         scheduledTime: s.scheduledTime || 'TBD',
@@ -508,7 +511,7 @@ export default function OperationTheatre() {
                           </div>
                         </TableCell>
                         <TableCell>{surgery.procedureName}</TableCell>
-                        <TableCell>{surgery.surgeonName}</TableCell>
+                        <TableCell><DoctorLabel doctorId={surgery.surgeonId} fallbackName={surgery.surgeonName} mode="stacked" /></TableCell>
                         <TableCell>{surgery.otRoom}</TableCell>
                         <TableCell>{getPriorityBadge(surgery.priority)}</TableCell>
                         <TableCell>{getStatusBadge(surgery.status)}</TableCell>
@@ -564,7 +567,7 @@ export default function OperationTheatre() {
                         <TableCell>{surgery.scheduledTime}</TableCell>
                         <TableCell>{surgery.patientName}</TableCell>
                         <TableCell>{surgery.procedureName}</TableCell>
-                        <TableCell>{surgery.surgeonName}</TableCell>
+                        <TableCell><DoctorLabel doctorId={surgery.surgeonId} fallbackName={surgery.surgeonName} mode="stacked" /></TableCell>
                         <TableCell>{getPriorityBadge(surgery.priority)}</TableCell>
                         <TableCell>
                           {surgery.preOpChecklist ? (
@@ -622,7 +625,7 @@ export default function OperationTheatre() {
                           <div className="text-xs text-slate-500">{surgery.patientMRN}</div>
                         </TableCell>
                         <TableCell>{surgery.procedureName}</TableCell>
-                        <TableCell>{surgery.surgeonName}</TableCell>
+                        <TableCell><DoctorLabel doctorId={surgery.surgeonId} fallbackName={surgery.surgeonName} mode="stacked" /></TableCell>
                         <TableCell>{surgery.scheduledTime}</TableCell>
                         <TableCell>{surgery.duration} min</TableCell>
                         <TableCell>
@@ -667,7 +670,7 @@ export default function OperationTheatre() {
                         <TableCell>{surgery.scheduledDate}</TableCell>
                         <TableCell>{surgery.patientName}</TableCell>
                         <TableCell>{surgery.procedureName}</TableCell>
-                        <TableCell>{surgery.surgeonName}</TableCell>
+                        <TableCell><DoctorLabel doctorId={surgery.surgeonId} fallbackName={surgery.surgeonName} mode="stacked" /></TableCell>
                         <TableCell>{getStatusBadge(surgery.status)}</TableCell>
                         <TableCell>
                           <Button size="sm" variant="outline" onClick={() => openDetailsDialog(surgery)}>

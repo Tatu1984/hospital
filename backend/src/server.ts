@@ -1193,30 +1193,23 @@ app.get('/api/patients/:id', authenticateToken, requirePermission('patients:view
   }
 });
 
-// Users/Doctors routes
+// Users/Doctors routes — this is the FIRST GET /api/users handler in this
+// file and Express resolves first-match-wins, so the comprehensive admin
+// payload (with profile/phone/bloodGroup) goes through here. The second
+// /api/users handler further down is the legacy variant kept around for
+// older callers that send {fullName, role}; it now no-ops since this one
+// shadows it.
 app.get('/api/users', authenticateToken, requirePermission('users:view'), async (req: any, res: Response) => {
   try {
     const { role } = req.query;
-    const where: any = { tenantId: req.user.tenantId, isActive: true };
-
-    if (role) {
-      where.roleIds = { has: role };
-    }
+    const where: any = { tenantId: req.user.tenantId };
+    if (role) where.roleIds = { has: role };
 
     const users = await prisma.user.findMany({
       where,
-      select: {
-        id: true,
-        name: true,
-        username: true,
-        email: true,
-        roleIds: true,
-        departmentIds: true,
-      },
       orderBy: { name: 'asc' },
     });
-
-    res.json(users);
+    res.json(users.map(userToDTO));
   } catch (error) {
     logger.error('Get users error:', error);
     res.status(500).json({
@@ -1226,25 +1219,62 @@ app.get('/api/users', authenticateToken, requirePermission('users:view'), async 
   }
 });
 
+// Doctors directory — used everywhere a doctor name is shown alongside
+// their qualifications and department. Resolves departmentIds → names in
+// a single follow-up query so the client doesn't need to fetch master
+// data separately.
+const DOCTOR_DIRECTORY_ROLES = ['DOCTOR', 'CONSULTANT', 'SURGEON', 'doctor'];
 app.get('/api/doctors', authenticateToken, async (req: any, res: Response) => {
-  // No specific permission required - doctors list is commonly needed
   try {
     const doctors = await prisma.user.findMany({
       where: {
         tenantId: req.user.tenantId,
         isActive: true,
-        roleIds: { has: 'doctor' },
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        departmentIds: true,
+        roleIds: { hasSome: DOCTOR_DIRECTORY_ROLES },
       },
       orderBy: { name: 'asc' },
     });
 
-    res.json(doctors);
+    const allDeptIds = Array.from(new Set(doctors.flatMap((d) => d.departmentIds || [])));
+    const depts = allDeptIds.length
+      ? await prisma.department.findMany({
+          where: { id: { in: allDeptIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const deptName: Record<string, string> = Object.fromEntries(depts.map((d) => [d.id, d.name]));
+
+    res.json(doctors.map((d) => {
+      const profile = (d.profile as any) || {};
+      const doctorProfile = profile.doctor || {};
+      const departmentList = (d.departmentIds || []).map((id) => deptName[id]).filter(Boolean);
+      return {
+        id: d.id,
+        name: d.name,
+        email: d.email,
+        phone: d.phone || profile.phone || null,
+        roleIds: d.roleIds,
+        departmentIds: d.departmentIds,
+        // Display-ready strings the UI can render directly:
+        qualifications: doctorProfile.qualifications || null,
+        specialization: doctorProfile.specialization || null,
+        registrationNumber: doctorProfile.registrationNumber || null,
+        experienceYears: doctorProfile.experienceYears || null,
+        signatureUrl: doctorProfile.signatureUrl || null,
+        departments: departmentList,
+        // Convenience: a doctor's "title line" rendered identically across
+        // every screen in the portal + mobile apps. Falls back gracefully
+        // when qualifications or department aren't filled in yet.
+        displayName: [
+          d.name,
+          doctorProfile.qualifications && `(${doctorProfile.qualifications})`,
+        ].filter(Boolean).join(' '),
+        displaySubtitle: [
+          doctorProfile.specialization,
+          departmentList.length ? departmentList.join(', ') : null,
+        ].filter(Boolean).join(' • ') || null,
+      };
+    }));
   } catch (error) {
     logger.error('Get doctors error:', error);
     res.status(500).json({

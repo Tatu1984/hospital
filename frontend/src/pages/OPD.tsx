@@ -11,6 +11,7 @@ import { Stethoscope, RefreshCw } from 'lucide-react';
 import api from '../services/api';
 import { useToast } from '../components/Toast';
 import { toArray } from '../utils/list';
+import { DoctorLabel } from '../components/DoctorLabel';
 
 interface OpdAppointment {
   id: string;
@@ -107,6 +108,7 @@ export default function OPD() {
   const encounters = filtered.map((a, i) => ({
     id: a.id,
     patientName: a.patient?.name || '—',
+    doctorId: a.doctor?.id || a.doctorId || null,
     doctorName: a.doctor?.name || 'Unassigned',
     chiefComplaint: a.reason || '—',
     status: a.status,
@@ -262,7 +264,9 @@ export default function OPD() {
                 <TableRow key={encounter.id}>
                   <TableCell className="font-medium">{encounter.tokenNumber}</TableCell>
                   <TableCell>{encounter.patientName}</TableCell>
-                  <TableCell>{encounter.doctorName}</TableCell>
+                  <TableCell>
+                    <DoctorLabel doctorId={encounter.doctorId} fallbackName={encounter.doctorName} mode="stacked" />
+                  </TableCell>
                   <TableCell>{encounter.chiefComplaint}</TableCell>
                   <TableCell>
                     <Badge className={`${statusBadgeColor(encounter.status)} border-0`}>
