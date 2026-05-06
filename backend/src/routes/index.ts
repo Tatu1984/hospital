@@ -230,6 +230,10 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   'GET /api/mobile/v1/orders/by-patient/:patientId': ['lab:view'],
   'GET /api/mobile/v1/orders/:id': ['lab:view'],
   'POST /api/mobile/v1/orders/:id/result': ['lab:create'],
+  // Doctor self-service dashboard. Reuses dashboard:view since this is a
+  // doctor reading their own roster — every seeded role with view access
+  // already has dashboard:view.
+  'GET /api/mobile/v1/doctors/me/dashboard': ['dashboard:view'],
   // Internal demo seed — admin-only. Permission gate is the role check
   // inside the handler itself; entry here registers the route as
   // permission-aware so the deny-by-default RBAC middleware doesn't

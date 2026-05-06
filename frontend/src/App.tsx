@@ -5,7 +5,19 @@ import { ToastProvider } from './components/Toast';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import Login from './pages/Login';
 import NewDashboard from './pages/NewDashboard';
+import DoctorDashboard from './pages/DoctorDashboard';
 import MainLayout from './components/MainLayout';
+
+// Roles that get the doctor-specific landing dashboard (chart-style: IPD
+// patients grouped by ward + OPD lineup) instead of the generic 34-tile
+// dashboard. Anyone else falls back to NewDashboard.
+const DOCTOR_ROLE_IDS = new Set(['DOCTOR', 'CONSULTANT', 'SURGEON']);
+
+function PortalLanding() {
+  const { user } = useAuth();
+  const isDoctor = (user?.roleIds || []).some((r: string) => DOCTOR_ROLE_IDS.has(r));
+  return isDoctor ? <DoctorDashboard /> : <NewDashboard />;
+}
 
 // Public marketing website. Lazy-loaded so the portal bundle doesn't pay
 // for it. Mounted at /website/* — the operator can add a Vercel rewrite
@@ -190,7 +202,7 @@ const AppRoutes = () => {
           </ProtectedRoute>
         }
       >
-        <Route index element={<NewDashboard />} />
+        <Route index element={<PortalLanding />} />
         <Route path="live-dashboard" element={<RoleProtectedRoute path="live-dashboard"><LiveDashboard /></RoleProtectedRoute>} />
 
         {/* Core Clinical Modules */}
