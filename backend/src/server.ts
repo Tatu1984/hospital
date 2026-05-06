@@ -6179,110 +6179,160 @@ app.delete('/api/master/:type/:id', authenticateToken, async (req: any, res: Res
 // ===========================
 
 // Get all users
+// Role-display map shared by every user-facing handler below.
+const ROLE_DISPLAY_NAMES: Record<string, string> = {
+  ADMIN: 'Admin',
+  DOCTOR: 'Doctor',
+  NURSE: 'Nurse',
+  FRONT_OFFICE: 'Receptionist',
+  PHARMACIST: 'Pharmacist',
+  LAB_TECH: 'Lab Technician',
+  BILLING: 'Accountant',
+  RADIOLOGY_TECH: 'Radiology Tech',
+  IPD_STAFF: 'IPD Staff',
+  OT_STAFF: 'OT Staff',
+  ICU: 'ICU Staff',
+  EMERGENCY: 'Emergency Staff',
+  CONSULTANT: 'Consultant',
+  SURGEON: 'Surgeon',
+};
+
+function userToDTO(u: any) {
+  return {
+    id: u.id,
+    username: u.username,
+    fullName: u.name,
+    name: u.name,
+    email: u.email,
+    phone: u.phone || (u.profile?.phone ?? ''),
+    bloodGroup: u.bloodGroup || null,
+    roleIds: u.roleIds,
+    role: ROLE_DISPLAY_NAMES[u.roleIds[0]] || u.roleIds[0] || 'User',
+    departmentIds: u.departmentIds,
+    branchId: u.branchId,
+    profile: u.profile || null,
+    status: u.isActive ? 'active' : 'inactive',
+    lastLogin: u.lastLoginAt?.toISOString() || null,
+    createdAt: u.createdAt.toISOString(),
+    updatedAt: u.updatedAt?.toISOString() || null,
+  };
+}
+
 app.get('/api/users', authenticateToken, async (req: any, res: Response) => {
   try {
     const users = await prisma.user.findMany({
       where: { tenantId: req.user.tenantId },
       orderBy: { name: 'asc' },
     });
-
-    // Map roleId to display name
-    const roleDisplayNames: Record<string, string> = {
-      'ADMIN': 'Admin',
-      'DOCTOR': 'Doctor',
-      'NURSE': 'Nurse',
-      'FRONT_OFFICE': 'Receptionist',
-      'PHARMACIST': 'Pharmacist',
-      'LAB_TECH': 'Lab Technician',
-      'BILLING': 'Accountant',
-      'RADIOLOGY_TECH': 'Radiology Tech',
-      'IPD_STAFF': 'IPD Staff',
-      'OT_STAFF': 'OT Staff',
-      'ICU': 'ICU Staff',
-      'EMERGENCY': 'Emergency Staff',
-    };
-
-    res.json(users.map(u => ({
-      id: u.id,
-      username: u.username,
-      fullName: u.name,
-      email: u.email,
-      phone: '',
-      role: roleDisplayNames[u.roleIds[0]] || u.roleIds[0] || 'User',
-      status: u.isActive ? 'active' : 'inactive',
-      lastLogin: u.lastLoginAt?.toISOString(),
-      createdAt: u.createdAt.toISOString(),
-    })));
+    res.json(users.map(userToDTO));
   } catch (error) {
     console.error('Get users error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Create user
+// Single-user fetch — used by the admin "Edit user" modal so we can
+// pre-populate every section of the comprehensive form.
+app.get('/api/users/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const u = await prisma.user.findFirst({
+      where: { id: req.params.id, tenantId: req.user.tenantId },
+    });
+    if (!u) return res.status(404).json({ error: 'User not found' });
+    res.json(userToDTO(u));
+  } catch (error) {
+    console.error('Get user error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Create user. Accepts the comprehensive form payload — anything not
+// modelled as a column lands inside `profile` (JSON). Both shapes are
+// supported on input: { fullName, role } legacy + { name, roleIds }.
 app.post('/api/users', authenticateToken, async (req: any, res: Response) => {
   try {
-    const { username, fullName, email, phone, role, password } = req.body;
-    if (!password || typeof password !== 'string' || password.length < 12) {
-      return res.status(400).json({ error: 'password is required and must be at least 12 characters' });
+    const body = req.body || {};
+    const username = body.username;
+    const email = body.email;
+    const name = body.fullName || body.name;
+    const password = body.password;
+    const roleIds: string[] = Array.isArray(body.roleIds) ? body.roleIds : (body.role ? [body.role] : []);
+    const departmentIds: string[] = Array.isArray(body.departmentIds) ? body.departmentIds : [];
+
+    if (!username || !email || !name) {
+      return res.status(400).json({ error: 'username, email, and name are required' });
     }
+    if (!roleIds.length) {
+      return res.status(400).json({ error: 'at least one role is required' });
+    }
+    if (!password || typeof password !== 'string' || password.length < 8) {
+      return res.status(400).json({ error: 'password is required and must be at least 8 characters' });
+    }
+
     const bcrypt = await import('bcryptjs');
     const passwordHash = await bcrypt.hash(password, 10);
 
     const user = await prisma.user.create({
       data: {
         username,
-        name: fullName,
+        name,
         email,
         passwordHash,
         tenantId: req.user.tenantId,
-        branchId: req.user.branchId,
-        roleIds: [role],
+        branchId: body.branchId || req.user.branchId,
+        roleIds,
+        departmentIds,
+        phone: body.phone || null,
+        bloodGroup: body.bloodGroup || null,
+        profile: body.profile || null,
         isActive: true,
       },
     });
 
-    res.status(201).json({
-      id: user.id,
-      username: user.username,
-      fullName: user.name,
-      email: user.email,
-      role: user.roleIds[0],
-      status: 'active',
-    });
-  } catch (error) {
+    res.status(201).json(userToDTO(user));
+  } catch (error: any) {
     console.error('Create user error:', error);
+    if (error?.code === 'P2002') {
+      return res.status(409).json({ error: 'username or email already exists' });
+    }
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Update user
+// Update user — partial; anything not in body is left untouched.
 app.put('/api/users/:id', authenticateToken, async (req: any, res: Response) => {
   try {
     const { id } = req.params;
-    const { username, fullName, email, role, status } = req.body;
+    const body = req.body || {};
+    const data: any = {};
+    if (body.username !== undefined) data.username = body.username;
+    if (body.email !== undefined) data.email = body.email;
+    if (body.fullName !== undefined) data.name = body.fullName;
+    if (body.name !== undefined) data.name = body.name;
+    if (Array.isArray(body.roleIds)) data.roleIds = body.roleIds;
+    else if (body.role) data.roleIds = [body.role];
+    if (Array.isArray(body.departmentIds)) data.departmentIds = body.departmentIds;
+    if (body.branchId !== undefined) data.branchId = body.branchId;
+    if (body.phone !== undefined) data.phone = body.phone;
+    if (body.bloodGroup !== undefined) data.bloodGroup = body.bloodGroup;
+    if (body.profile !== undefined) data.profile = body.profile;
+    if (body.status !== undefined) data.isActive = body.status === 'active';
+    if (body.isActive !== undefined) data.isActive = !!body.isActive;
 
-    const user = await prisma.user.update({
-      where: { id },
-      data: {
-        username,
-        name: fullName,
-        email,
-        roleIds: role ? [role] : undefined,
-        isActive: status === 'active',
-      },
+    // Tenant-scope the update so a cross-tenant id can't be patched.
+    const existing = await prisma.user.findFirst({
+      where: { id, tenantId: req.user.tenantId },
+      select: { id: true },
     });
+    if (!existing) return res.status(404).json({ error: 'User not found' });
 
-    res.json({
-      id: user.id,
-      username: user.username,
-      fullName: user.name,
-      email: user.email,
-      role: user.roleIds[0],
-      status: user.isActive ? 'active' : 'inactive',
-    });
-  } catch (error) {
+    const user = await prisma.user.update({ where: { id }, data });
+    res.json(userToDTO(user));
+  } catch (error: any) {
     console.error('Update user error:', error);
+    if (error?.code === 'P2002') {
+      return res.status(409).json({ error: 'username or email already exists' });
+    }
     res.status(500).json({ error: 'Internal server error' });
   }
 });

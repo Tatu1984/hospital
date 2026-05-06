@@ -134,6 +134,7 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
 
   // Users / Doctors / Settings
   'GET /api/users': ['users:view'],
+  'GET /api/users/:id': ['users:view'],
   'POST /api/users': ['users:manage'],
   'PUT /api/users/:id': ['users:manage'],
   'DELETE /api/users/:id': ['users:manage'],

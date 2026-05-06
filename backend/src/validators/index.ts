@@ -566,6 +566,39 @@ export const referralSourceSchema = z.object({
   isActive: z.boolean().default(true),
 });
 
+// Comprehensive user-profile sub-schemas. Stored under User.profile (JSON).
+//
+// We accept any structure for kycDocuments / education / licenses / banking
+// (z.any() with optional()) so the admin form can iterate without backend
+// migrations every time a field is added. The shape currently driving the
+// admin UI:
+//
+//   address:           { line1, line2, city, state, country, pincode }
+//   emergencyContact:  { name, relation, phone }
+//   kycDocuments:      [{ type, number, expiry, fileUrl }]
+//   education:         [{ degree, institution, year, registrationNumber }]
+//   licenses:          [{ type, number, issuingAuthority, issueDate, expiry }]
+//   banking:           { accountName, accountNumber, ifsc, bankName, branchName, panNumber }
+//   doctor:            { qualifications, specialization, registrationNumber, experienceYears, signature }
+//   joiningDate:       ISO date
+//   designation:       free-text title
+//   gender, dob:       optional demographics
+//
+const userProfileSchema = z.object({
+  address: z.any().optional(),
+  emergencyContact: z.any().optional(),
+  kycDocuments: z.any().optional(),
+  education: z.any().optional(),
+  licenses: z.any().optional(),
+  banking: z.any().optional(),
+  doctor: z.any().optional(),
+  joiningDate: z.string().optional().nullable(),
+  designation: z.string().max(200).optional().nullable(),
+  gender: z.enum(['MALE', 'FEMALE', 'OTHER']).optional().nullable(),
+  dob: z.string().optional().nullable(),
+  // Allow forward-compat keys we haven't standardised yet.
+}).passthrough();
+
 // User management validators
 export const createUserSchema = z.object({
   username: z.string().min(3).max(50).regex(/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers, and underscores'),
@@ -578,6 +611,12 @@ export const createUserSchema = z.object({
   roleIds: z.array(z.string()).min(1),
   departmentIds: z.array(z.string()).optional(),
   branchId: idSchema,
+  // First-class identity columns surfaced for searchability + simple
+  // filtering. All optional for back-compat.
+  phone: z.string().max(20).optional().nullable(),
+  bloodGroup: z.string().max(10).optional().nullable(),
+  // Bag for the rest of the admin form's fields.
+  profile: userProfileSchema.optional().nullable(),
 });
 
 export const updateUserSchema = z.object({
@@ -586,6 +625,9 @@ export const updateUserSchema = z.object({
   roleIds: z.array(z.string()).min(1).optional(),
   departmentIds: z.array(z.string()).optional(),
   isActive: z.boolean().optional(),
+  phone: z.string().max(20).optional().nullable(),
+  bloodGroup: z.string().max(10).optional().nullable(),
+  profile: userProfileSchema.optional().nullable(),
 });
 
 // Accounting validators

@@ -99,6 +99,15 @@ model User {
   // See modules/auth/auth.service.ts and the legacy /api/auth/login.
   failedLoginAttempts Int           @default(0)
   lockedUntil       DateTime?
+  // Top-level identity columns we frequently filter on; kept first-class
+  // so admin search can hit indexes if we add them later.
+  phone             String?
+  bloodGroup        String?
+  // Catch-all for the rest of the user-management form: address, emergency
+  // contact, KYC documents, education, licenses, banking details,
+  // qualifications, specialization, registration #, joining date, etc.
+  // JSON keeps the schema stable while the admin form evolves.
+  profile           Json?
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
   admissions        Admission[]     @relation("AdmittingDoctor")

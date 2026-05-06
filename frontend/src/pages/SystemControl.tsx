@@ -31,6 +31,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Settings, Users, FileText, Activity, Plus, Edit, Trash2, Key, Building2, Mail, Phone } from 'lucide-react';
 import api from '../services/api';
+import UserFormModal from '../components/UserFormModal';
 
 interface User {
   id: string;
@@ -917,101 +918,14 @@ const SystemControl: React.FC = () => {
         </TabsContent>
       </Tabs>
 
-      {/* User Dialog */}
-      <Dialog open={isUserDialogOpen} onOpenChange={setIsUserDialogOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{isEditingUser ? 'Edit User' : 'Add New User'}</DialogTitle>
-            <DialogDescription>
-              {isEditingUser
-                ? 'Update user details and permissions'
-                : 'Create a new system user'}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Username *</Label>
-              <Input
-                value={userFormData.username || ''}
-                onChange={(e) =>
-                  setUserFormData({ ...userFormData, username: e.target.value })
-                }
-                placeholder="Enter username"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Full Name *</Label>
-              <Input
-                value={userFormData.fullName || ''}
-                onChange={(e) =>
-                  setUserFormData({ ...userFormData, fullName: e.target.value })
-                }
-                placeholder="Enter full name"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Email *</Label>
-              <Input
-                type="email"
-                value={userFormData.email || ''}
-                onChange={(e) =>
-                  setUserFormData({ ...userFormData, email: e.target.value })
-                }
-                placeholder="Enter email"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Phone *</Label>
-              <Input
-                value={userFormData.phone || ''}
-                onChange={(e) =>
-                  setUserFormData({ ...userFormData, phone: e.target.value })
-                }
-                placeholder="Enter phone number"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Role *</Label>
-              <Select
-                value={userFormData.role}
-                onValueChange={(value: any) =>
-                  setUserFormData({ ...userFormData, role: value })
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select role" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Admin">Admin</SelectItem>
-                  <SelectItem value="Doctor">Doctor</SelectItem>
-                  <SelectItem value="Nurse">Nurse</SelectItem>
-                  <SelectItem value="Receptionist">Receptionist</SelectItem>
-                  <SelectItem value="Pharmacist">Pharmacist</SelectItem>
-                  <SelectItem value="Lab Technician">Lab Technician</SelectItem>
-                  <SelectItem value="Accountant">Accountant</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            {!isEditingUser && (
-              <div className="space-y-2">
-                <Label>Password *</Label>
-                <Input
-                  type="password"
-                  placeholder="Enter password"
-                />
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsUserDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={isEditingUser ? handleEditUser : handleAddUser}>
-              {isEditingUser ? 'Update User' : 'Add User'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Comprehensive User Add/Edit modal — sectioned form with Identity,
+          Personal, KYC, Education + Licenses, Doctor (conditional), Banking. */}
+      <UserFormModal
+        open={isUserDialogOpen}
+        onOpenChange={setIsUserDialogOpen}
+        userId={isEditingUser ? selectedUserId : null}
+        onSaved={() => { void fetchUsers(); }}
+      />
 
       {/* Password Reset Dialog */}
       <Dialog open={isPasswordDialogOpen} onOpenChange={setIsPasswordDialogOpen}>
