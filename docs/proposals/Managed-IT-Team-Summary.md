@@ -4,7 +4,7 @@ subtitle: "Companion document to the Managed IT Services Proposal"
 client: "Busitema Referral Hospital"
 prepared_by: "[Your Company Name]"
 date: "May 2026"
-version: "1.1"
+version: "1.2"
 ---
 
 # Managed IT Services — Team Summary & KRAs
@@ -13,7 +13,7 @@ version: "1.1"
 
 **Client:** Busitema Referral Hospital (150 employees)
 **Engagement:** Standard Managed IT Tier — full IT outsourcing
-**Updated:** Dedicated DevOps engineer added (previously 30% shared, now 100% allocated)
+**Updated in v1.2:** All previously-shared resources are now **dedicated full-time** to this engagement. The team is now 10 fully dedicated FTEs with no shared allocations. Cost and SLA targets have been updated accordingly.
 
 ---
 
@@ -21,72 +21,64 @@ version: "1.1"
 
 Under the Managed IT Services Agreement, **[Your Company Name]** assumes single-vendor accountability for the hospital's complete IT estate — endpoints, network, servers, cloud applications, identity management, security, and helpdesk. The hospital deals with one team and one invoice instead of coordinating across multiple specialty vendors.
 
-The engagement is delivered by an **11-person team** (5 dedicated, 6 shared) totalling approximately **7.3 effective full-time equivalents (FTE)** allocated to the hospital. The team blends an onsite presence for clinical-area white-glove support with remote specialists for L2/L3 escalations, security operations, and engineering leadership.
+The engagement is delivered by a **10-person dedicated team** — every member works exclusively for Busitema Referral Hospital, eliminating any context-switching across multiple clients. The team blends an onsite presence for clinical-area white-glove support with dedicated remote specialists for L2/L3 escalations, security operations, application support, account governance, and engineering leadership.
 
 **Headline numbers:**
 
 | | |
 |---|---|
-| Total bodies on this account | 11 people |
-| Effective FTE allocated | 7.3 |
-| Allocated salary cost (loaded CTC) /month | ₹6,18,000 |
+| Total bodies on this account | **10 people** |
+| Effective FTE allocated | **10.0 FTE (all dedicated)** |
+| Allocated salary cost (loaded CTC) /month | ₹11,95,000 |
 | Tools, operations, compliance /month | ₹1,49,000 |
-| Direct cost /month | ₹7,67,000 |
-| Margin (≈ 42%) | ₹3,23,000 |
-| **Managed services fee /month (excl. GST)** | **₹10,90,000** |
-| **Managed services fee /month (incl. 18% GST)** | **₹12,86,200** |
+| Direct cost /month | ₹13,44,000 |
+| Margin (≈ 42%) | ₹5,66,000 |
+| **Managed services fee /month (excl. GST)** | **₹19,10,000** |
+| **Managed services fee /month (incl. 18% GST)** | **₹22,53,800** |
 | Pass-through (M365, Entra, EDR, internet) — at vendor cost | ~₹4,01,000 |
-| **Total monthly run-rate** | **~₹16,87,000** |
-| **Annual contract value (estimated)** | **~₹2.02 crore** |
+| **Total monthly run-rate** | **~₹26,55,000** |
+| **Annual contract value (estimated)** | **~₹3.18 crore** |
 
-> The DevOps engineer being upgraded from shared (0.3 FTE) to dedicated (1.0 FTE) increases the managed-services fee by approximately ₹1.15 lakh per month — fully transparent in the cost build-up below.
+> Moving from a 5-dedicated-plus-5-shared model (v1.1) to a fully dedicated 10-person team (v1.2) increases the managed-services fee by approximately ₹8.20 lakh per month. The trade-off in favour of the client: every team member's full attention, faster SLAs, no cross-client priority conflicts, deeper hospital-specific knowledge, and consistent faces for end-users.
 
 ---
 
-## 2. Team list
+## 2. Team list — all dedicated
 
-### 2.1 Dedicated team (100% allocated to this engagement)
+Every person below is **100% allocated** to Busitema Referral Hospital. None of these resources work for any other client.
 
-These 5 people work exclusively for Busitema Referral Hospital. Four are physically onsite during operating hours; the DevOps engineer works remotely with periodic onsite presence for major changes and DR drills.
+| # | Designation | Headcount | In-hand /mo (₹) | Loaded CTC /mo (₹) | Onsite / Remote |
+|---|-------------|-----------|-----------------|---------------------|------------------|
+| 1 | IT Site Manager / SPOC | 1 | 1,00,000 | 1,40,000 | Onsite, Mon–Sat |
+| 2 | L1 Helpdesk Engineer — Shift A (9 AM – 3 PM) | 1 | 32,000 | 46,000 | Onsite |
+| 3 | L1 Helpdesk Engineer — Shift B (3 PM – 9 PM) | 1 | 32,000 | 46,000 | Onsite |
+| 4 | L1 Helpdesk Engineer — Rotation / Backup | 1 | 32,000 | 46,000 | Onsite (rotation, weekends, leave-cover) |
+| 5 | Cloud / DevOps Engineer | 1 | 85,000 | 1,17,000 | Remote + onsite for major changes/DR |
+| 6 | Network & Systems Engineer (L2) | 1 | 95,000 | 1,30,000 | Hybrid (onsite for changes, remote ops) |
+| 7 | HospitalPro Application Support Engineer | 1 | 1,00,000 | 1,40,000 | Remote |
+| 8 | Security Analyst | 1 | 1,00,000 | 1,40,000 | Remote (SOC) |
+| 9 | Account Manager / Service Delivery | 1 | 1,00,000 | 1,40,000 | Remote with monthly onsite QBRs |
+| 10 | Engineering Lead (L3/L4 escalation) | 1 | 1,10,000 | 1,50,000 | Remote with onsite for major incidents |
+| | **Total — dedicated** | **10 people** | | **₹11,95,000** | |
 
-| # | Designation | Headcount | In-hand /mo (₹) | Loaded CTC /mo (₹) | Allocated /mo (₹) | Onsite / Remote |
-|---|-------------|-----------|-----------------|---------------------|-------------------|------------------|
-| 1 | IT Site Manager / SPOC | 1 | 1,00,000 | 1,40,000 | 1,40,000 | Onsite, Mon–Sat |
-| 2 | L1 Helpdesk Engineer — Shift A (9 AM – 3 PM) | 1 | 32,000 | 46,000 | 46,000 | Onsite |
-| 3 | L1 Helpdesk Engineer — Shift B (3 PM – 9 PM) | 1 | 32,000 | 46,000 | 46,000 | Onsite |
-| 4 | L1 Helpdesk Engineer — Rotation/Backup (50% on this account) | 1 | 32,000 | 46,000 | 23,000 | Onsite, rotation |
-| 5 | **Cloud / DevOps Engineer (newly dedicated)** | 1 | 85,000 | 1,17,000 | 1,17,000 | Remote + onsite for major changes |
-| | **Subtotal — dedicated** | **5 people** | | | **₹3,72,000** | |
-
-### 2.2 Shared team (allocated by FTE percentage)
-
-These 6 people are shared across multiple clients. Allocated cost = fully-loaded CTC × allocation %.
-
-| # | Designation | Headcount | Loaded CTC /mo (₹) | Allocation % | Allocated /mo (₹) |
-|---|-------------|-----------|---------------------|--------------|-------------------|
-| 6 | Network & Systems Engineer (L2) | 1 | 1,30,000 | 70% | 91,000 |
-| 7 | HospitalPro Application Support Engineer | 1 | 1,40,000 | 50% | 70,000 |
-| 8 | Security Analyst (24×7 SOC) | 1 | 1,40,000 | 30% | 42,000 |
-| 9 | Account Manager / Service Delivery | 1 | 1,40,000 | 20% | 28,000 |
-| 10 | Engineering Lead (L3/L4 escalation) | 1 | 1,50,000 | 10% | 15,000 |
-| | **Subtotal — shared** | **6 people** (cumulative ~1.8 FTE) | | | **₹2,46,000** |
-
-### 2.3 Headcount totals
+### 2.1 Headcount totals
 
 | | |
 |---|---|
-| Unique bodies on this account | **11 people** |
-| Effective FTE | **~7.3** |
-| Total allocated salary /month | **₹6,18,000** |
+| Total dedicated bodies on this account | **10 people** |
+| Effective FTE | **10.0** |
+| Total loaded salary cost /month | **₹11,95,000** |
 
-### 2.4 Coverage windows
+### 2.2 Coverage windows
 
-| Time window | Onsite L1 | Remote L2/L3 | Site Manager | DevOps |
-|-------------|-----------|--------------|--------------|--------|
-| Mon–Sat 9 AM – 9 PM | ✅ 2 in shifts | ✅ Available | ✅ Mon–Sat 9–6 | ✅ Available |
-| Mon–Sat 9 PM – 9 AM | On-call, 1-hr ETA | ✅ 24×7 SOC | On-call escalation | On-call |
-| Sunday | On-call, 1-hr ETA | ✅ Available | On-call escalation | On-call |
-| Public holidays | On-call, 1-hr ETA | ✅ Available | On-call escalation | On-call |
+Because every role is dedicated, the hospital gets significantly broader coverage than a shared model. The full team is reachable during business hours; on-call rotations cover nights and weekends.
+
+| Time window | Onsite L1 | DevOps + Network | App Support + Security | Site Manager | Engineering Lead |
+|-------------|-----------|-------------------|------------------------|--------------|------------------|
+| Mon–Sat 9 AM – 9 PM | ✅ 2 in shifts + 1 rotation | ✅ Available | ✅ Available | ✅ Mon–Sat 9–6 | ✅ Available |
+| Mon–Sat 9 PM – 9 AM | On-call, 1-hour onsite ETA | On-call | On-call | On-call escalation | On-call |
+| Sunday | On-call, 1-hour onsite ETA | On-call | On-call | On-call escalation | On-call |
+| Public holidays | On-call, 1-hour onsite ETA | On-call | On-call | On-call escalation | On-call |
 
 ---
 
@@ -107,7 +99,7 @@ KRAs are measurable outcomes used to evaluate each role's performance. They feed
 | Vendor escalations closed within agreed timeline | ≥ 90% within target | Vendor ticket log |
 | Hospital leadership CSAT score | ≥ 4.2 / 5 quarterly | Survey |
 
-### 3.2 L1 Helpdesk Engineer (× 2.5 FTE)
+### 3.2 L1 Helpdesk Engineer (× 3 dedicated)
 
 | KRA | Target | Measurement |
 |-----|--------|-------------|
@@ -120,7 +112,7 @@ KRAs are measurable outcomes used to evaluate each role's performance. They feed
 | Ticket logging discipline (every interaction logged) | 100% | Audit sample |
 | Patch compliance on supported endpoints | ≥ 95% within patch cycle | RMM reports |
 
-### 3.3 Cloud / DevOps Engineer (dedicated)
+### 3.3 Cloud / DevOps Engineer
 
 | KRA | Target | Measurement |
 |-----|--------|-------------|
@@ -161,7 +153,7 @@ KRAs are measurable outcomes used to evaluate each role's performance. They feed
 | Code review of all production fixes | 100% peer-reviewed | Git audit |
 | Test coverage on changed code | ≥ 80% | CI report |
 
-### 3.6 Security Analyst (SOC)
+### 3.6 Security Analyst
 
 | KRA | Target | Measurement |
 |-----|--------|-------------|
@@ -178,7 +170,7 @@ KRAs are measurable outcomes used to evaluate each role's performance. They feed
 
 | KRA | Target | Measurement |
 |-----|--------|-------------|
-| Client CSAT (overall service relationship) | ≥ 4.0 / 5 quarterly | Survey |
+| Client CSAT (overall service relationship) | ≥ 4.2 / 5 quarterly | Survey |
 | Quarterly Business Reviews (QBRs) delivered | 4 per year, on schedule | Calendar |
 | QBR action items closed | ≥ 90% by next QBR | Action tracker |
 | Invoices issued accurately | 100%, no disputes raised | Finance reconciliation |
@@ -196,43 +188,55 @@ KRAs are measurable outcomes used to evaluate each role's performance. They feed
 | Annual IT strategy and roadmap quality | Signed off at QBR | QBR minutes |
 | Mentoring sessions with team | 1 per quarter per role | Training log |
 | Recurring incident root-cause analysis | RCA within 5 business days for every P1/P2 | Postmortem repo |
-| Cross-client knowledge sharing | 1 published learning / quarter | Internal wiki |
+| Cross-team knowledge sharing | 1 published learning / quarter | Internal wiki |
 | Team retention | ≥ 90% annual retention on this account | HR report |
 
 ---
 
 ## 4. Cost build-up
 
+All resources are dedicated and 100% allocated. Costs are linear (no FTE fractions).
+
 | Component | Monthly (₹) |
 |-----------|-------------|
-| **Dedicated team (5 people, 100% allocated)** | |
+| **Dedicated team (10 people, 100% allocated)** | |
 | IT Site Manager | 1,40,000 |
-| L1 Helpdesk × 2.5 FTE (avg) | 1,15,000 |
-| Cloud / DevOps Engineer (dedicated) | 1,17,000 |
-| Subtotal — dedicated | **3,72,000** |
-| **Shared team (6 people, allocated)** | |
-| Network & Systems Engineer (0.7 FTE) | 91,000 |
-| HMIS Application Support (0.5 FTE) | 70,000 |
-| Security Analyst (0.3 FTE) | 42,000 |
-| Account Manager (0.2 FTE) | 28,000 |
-| Engineering Lead (0.1 FTE) | 15,000 |
-| Subtotal — shared | **2,46,000** |
-| **Total allocated salary cost** | **6,18,000** |
+| L1 Helpdesk × 3 dedicated | 1,38,000 |
+| Cloud / DevOps Engineer | 1,17,000 |
+| Network & Systems Engineer (L2) | 1,30,000 |
+| HospitalPro Application Support | 1,40,000 |
+| Security Analyst | 1,40,000 |
+| Account Manager | 1,40,000 |
+| Engineering Lead | 1,50,000 |
+| **Total allocated salary cost** | **11,95,000** |
 | Tools (ITSM, RMM, SIEM, backup, monitoring, CMDB) | 97,000 |
 | Onsite ops (transport, mobile data, equipment, badges) | 22,000 |
 | Annual pentest + compliance audit (amortised) | 30,000 |
-| **Direct cost** | **7,67,000** |
-| Margin (≈ 42%) | 3,23,000 |
-| **Managed services fee — monthly (excl. GST)** | **₹10,90,000** |
-| GST @ 18% | ₹1,96,200 |
-| **Managed services fee — monthly (incl. GST)** | **₹12,86,200** |
+| **Direct cost** | **13,44,000** |
+| Margin (≈ 42%) | 5,66,000 |
+| **Managed services fee — monthly (excl. GST)** | **₹19,10,000** |
+| GST @ 18% | ₹3,43,800 |
+| **Managed services fee — monthly (incl. GST)** | **₹22,53,800** |
 | Pass-through (M365, Entra, EDR, internet) — at vendor cost | ~₹4,01,000 |
-| **Estimated total monthly run-rate** | **~₹16,87,000** |
-| **Estimated annual contract value (ACV)** | **~₹2,02,44,000** |
+| **Estimated total monthly run-rate** | **~₹26,55,000** |
+| **Estimated annual contract value (ACV)** | **~₹3,18,60,000** |
 
 ---
 
-## 5. Sign-off
+## 5. What this dedicated-team model gives the hospital
+
+Compared to the previous shared-resource model (v1.1), the all-dedicated structure delivers:
+
+- **Faster SLAs.** Engineering Lead, Security Analyst, and Application Support are no longer waiting in another client's queue. P1 events get immediate full-team attention.
+- **Hospital-specific expertise.** Every team member becomes deeply familiar with the hospital's HMIS workflows, network topology, biometric devices, and clinical-shift patterns.
+- **Consistency for end-users.** Doctors and nurses see the same engineers every day, reducing repeat explanation cycles.
+- **No priority conflicts.** During a critical clinical incident, no team member is being pulled by another client's outage.
+- **Stronger attrition resilience.** A team of 10 dedicated engineers can absorb leave, illness, and resignations more gracefully than a thin allocation across many shared resources.
+- **Cleaner audit trail.** Every action is attributable to a single client's team — important for NABH and DPDP compliance reviews.
+
+---
+
+## 6. Sign-off
 
 | For Busitema Referral Hospital | For [Your Company Name] |
 |-------------------------------|-------------------------|
@@ -243,4 +247,4 @@ KRAs are measurable outcomes used to evaluate each role's performance. They feed
 
 ---
 
-*This document is a companion to the full Managed IT Services Proposal. Refer to that document for scope, SLA matrix, contract terms, transition roadmap, RACI matrix, and pass-through invoicing format.*
+*This document is a companion to the full Managed IT Services Proposal. Refer to that document for scope, SLA matrix, contract terms, transition roadmap, RACI matrix, and pass-through invoicing format. Pricing in this v1.2 supersedes the v1.1 figures in the parent proposal — the hospital should be quoted ₹19.10 lakh / month managed-services fee under the all-dedicated model.*
