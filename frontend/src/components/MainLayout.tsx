@@ -40,14 +40,21 @@ import {
   ClipboardList,
   Utensils,
   Wrench,
-  Star
+  Star,
+  Wallet,
 } from 'lucide-react';
+
+// Roles for which the "My Earnings" finance entry shows in the sidebar.
+// Same set the doctor dashboard uses (App.tsx) — keep them in sync.
+const DOCTOR_ROLE_IDS = new Set(['DOCTOR', 'CONSULTANT', 'SURGEON']);
 
 const MainLayout = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const { user, logout, hasAccess } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+
+  const isDoctor = (user?.roleIds || []).some((r: string) => DOCTOR_ROLE_IDS.has(r));
 
   const menuGroups = [
     {
@@ -88,6 +95,9 @@ const MainLayout = () => {
     {
       title: 'Finance',
       items: [
+        // Doctor-only — their daily/weekly/monthly payout (done vs left)
+        // plus historical payouts. Other roles never see this entry.
+        ...(isDoctor ? [{ path: '/my-earnings', icon: Wallet, label: 'My Earnings' }] : []),
         { path: '/billing', icon: Receipt, label: 'Billing' },
         { path: '/ipd-billing', icon: Receipt, label: 'IPD Billing' },
         { path: '/tpa', icon: ShieldCheck, label: 'TPA/Insurance' },

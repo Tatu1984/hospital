@@ -14,3 +14,14 @@ export async function getMyDashboard(req: AuthedReq, res: Response) {
     res.status(500).json({ error: 'Internal server error' });
   }
 }
+
+export async function getMyFinance(req: AuthedReq, res: Response) {
+  try {
+    const dto = await service.getMyFinance(req.user!.userId, req.user!.tenantId);
+    res.json(dto);
+  } catch (err: any) {
+    if (err instanceof NotADoctorError) return res.status(403).json({ error: err.message });
+    console.error('doctor finance error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
