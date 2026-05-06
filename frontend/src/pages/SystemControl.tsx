@@ -29,7 +29,8 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { Settings, Users, FileText, Activity, Plus, Edit, Trash2, Key, Building2, Mail, Phone } from 'lucide-react';
+import { Settings, Users, FileText, Activity, Plus, Edit, Trash2, Key, Building2, Mail, Phone, TestTube } from 'lucide-react';
+import LabConfiguration from './LabConfiguration';
 import api from '../services/api';
 import UserFormModal from '../components/UserFormModal';
 
@@ -417,7 +418,7 @@ const SystemControl: React.FC = () => {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="users">
             <Users className="mr-2 h-4 w-4" />
             User Management
@@ -425,6 +426,10 @@ const SystemControl: React.FC = () => {
           <TabsTrigger value="settings">
             <Settings className="mr-2 h-4 w-4" />
             System Settings
+          </TabsTrigger>
+          <TabsTrigger value="lab-config">
+            <TestTube className="mr-2 h-4 w-4" />
+            Lab Configuration
           </TabsTrigger>
           <TabsTrigger value="audit">
             <Activity className="mr-2 h-4 w-4" />
@@ -734,6 +739,13 @@ const SystemControl: React.FC = () => {
               </Button>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* Lab Configuration Tab — master-data screen for lab test catalog
+            and the reportable parameters within each panel. Component is
+            shared with the (now removed) Laboratory page tab. */}
+        <TabsContent value="lab-config" className="space-y-4">
+          <LabConfiguration />
         </TabsContent>
 
         {/* Audit Logs Tab */}

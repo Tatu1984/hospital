@@ -8,10 +8,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, TestTube, Barcode, CheckCircle, FileText, Settings2 } from 'lucide-react';
+import { Plus, TestTube, Barcode, CheckCircle, FileText } from 'lucide-react';
 import api from '../services/api';
 import { generateLabReportPDF } from '../utils/pdfGenerator';
-import LabConfiguration from './LabConfiguration';
 
 interface LabOrder {
   id: string;
@@ -397,9 +396,6 @@ export default function Laboratory() {
               <TabsTrigger value="pending">Pending Collection</TabsTrigger>
               <TabsTrigger value="inprocess">In Process</TabsTrigger>
               <TabsTrigger value="completed">Completed</TabsTrigger>
-              <TabsTrigger value="config" className="gap-1">
-                <Settings2 className="w-3.5 h-3.5" /> Configuration
-              </TabsTrigger>
             </TabsList>
             <TabsContent value="all" className="space-y-4">
               <Table>
@@ -630,9 +626,6 @@ export default function Laboratory() {
                   ))}
                 </TableBody>
               </Table>
-            </TabsContent>
-            <TabsContent value="config">
-              <LabConfiguration />
             </TabsContent>
           </Tabs>
         </CardContent>

@@ -53,6 +53,20 @@ interface LabTest {
   parameters?: LabParameter[];
 }
 
+// One stratified reference range. Sex 'any' applies to both; age limits
+// are inclusive years. A "Child" rule is just an entry with maxAgeYears
+// set (sex usually 'any'). An "Adult Male" rule has minAgeYears 18 and
+// sex 'M'. The simple refLow/refHigh on the parameter act as the default
+// when no rule matches the patient.
+interface AgeGenderRange {
+  sex: 'M' | 'F' | 'any';
+  minAgeYears: number | null;
+  maxAgeYears: number | null;
+  low: number | null;
+  high: number | null;
+  label?: string;   // optional display name e.g. "Newborn", "Adolescent"
+}
+
 interface LabParameter {
   id: string;
   testId: string;
@@ -66,6 +80,7 @@ interface LabParameter {
   criticalHigh: number | string | null;
   decimals: number;
   choices: string[] | null;
+  ageGenderRanges: AgeGenderRange[] | null;
   displayOrder: number;
   isActive: boolean;
 }
@@ -81,6 +96,7 @@ const EMPTY_PARAM: Omit<LabParameter, 'id' | 'testId'> = {
   criticalHigh: null,
   decimals: 2,
   choices: null,
+  ageGenderRanges: null,
   displayOrder: 0,
   isActive: true,
 };
@@ -375,6 +391,11 @@ export default function LabConfiguration() {
                           {p.refLow !== null || p.refHigh !== null
                             ? `${p.refLow ?? '−∞'} – ${p.refHigh ?? '+∞'}`
                             : '—'}
+                          {p.ageGenderRanges && p.ageGenderRanges.length > 0 && (
+                            <Badge variant="secondary" className="ml-2 text-[10px]">
+                              +{p.ageGenderRanges.length} stratified
+                            </Badge>
+                          )}
                         </TableCell>
                         <TableCell>
                           {p.criticalLow !== null || p.criticalHigh !== null
@@ -511,6 +532,156 @@ export default function LabConfiguration() {
                     })}
                     placeholder="Positive, Negative, Indeterminate"
                   />
+                </div>
+              )}
+
+              {/* Sex / age stratified ranges. Each row overrides the
+                  default refLow/refHigh above for patients matching its
+                  sex + age window. The "Quick add" buttons drop in
+                  common presets (Child / Adult Male / Adult Female). */}
+              {paramDraft.resultType === 'numeric' && (
+                <div className="col-span-2 border rounded-md p-3 bg-slate-50/50">
+                  <div className="flex items-center justify-between mb-2">
+                    <div>
+                      <Label className="text-sm font-semibold">Stratified ranges by sex / age</Label>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Optional. Default reference range above is used when none of these rules match.
+                      </p>
+                    </div>
+                    <div className="flex gap-1">
+                      <Button type="button" size="sm" variant="outline"
+                        onClick={() => setParamDraft({
+                          ...paramDraft,
+                          ageGenderRanges: [
+                            ...(paramDraft.ageGenderRanges || []),
+                            { sex: 'any', minAgeYears: 0, maxAgeYears: 12, low: null, high: null, label: 'Child' },
+                          ],
+                        })}
+                      >+ Child</Button>
+                      <Button type="button" size="sm" variant="outline"
+                        onClick={() => setParamDraft({
+                          ...paramDraft,
+                          ageGenderRanges: [
+                            ...(paramDraft.ageGenderRanges || []),
+                            { sex: 'M', minAgeYears: 18, maxAgeYears: null, low: null, high: null, label: 'Adult Male' },
+                          ],
+                        })}
+                      >+ Adult Male</Button>
+                      <Button type="button" size="sm" variant="outline"
+                        onClick={() => setParamDraft({
+                          ...paramDraft,
+                          ageGenderRanges: [
+                            ...(paramDraft.ageGenderRanges || []),
+                            { sex: 'F', minAgeYears: 18, maxAgeYears: null, low: null, high: null, label: 'Adult Female' },
+                          ],
+                        })}
+                      >+ Adult Female</Button>
+                      <Button type="button" size="sm" variant="outline"
+                        onClick={() => setParamDraft({
+                          ...paramDraft,
+                          ageGenderRanges: [
+                            ...(paramDraft.ageGenderRanges || []),
+                            { sex: 'any', minAgeYears: null, maxAgeYears: null, low: null, high: null },
+                          ],
+                        })}
+                      ><Plus className="w-3 h-3" /> Custom</Button>
+                    </div>
+                  </div>
+
+                  {(paramDraft.ageGenderRanges || []).length === 0 ? (
+                    <p className="text-xs text-slate-400 italic py-2">
+                      No stratified rules. Click a "Quick add" button above to start.
+                    </p>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="text-xs">Label</TableHead>
+                          <TableHead className="text-xs">Sex</TableHead>
+                          <TableHead className="text-xs">Min age</TableHead>
+                          <TableHead className="text-xs">Max age</TableHead>
+                          <TableHead className="text-xs">Low</TableHead>
+                          <TableHead className="text-xs">High</TableHead>
+                          <TableHead className="text-xs w-10"></TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {(paramDraft.ageGenderRanges || []).map((rng, i) => {
+                          const update = (patch: Partial<AgeGenderRange>) => {
+                            const next = [...(paramDraft.ageGenderRanges || [])];
+                            next[i] = { ...rng, ...patch };
+                            setParamDraft({ ...paramDraft, ageGenderRanges: next });
+                          };
+                          return (
+                            <TableRow key={i}>
+                              <TableCell>
+                                <Input
+                                  className="h-8 text-xs"
+                                  value={rng.label || ''}
+                                  onChange={(e) => update({ label: e.target.value })}
+                                  placeholder="e.g. Newborn"
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Select value={rng.sex} onValueChange={(v) => update({ sex: v as any })}>
+                                  <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="any">Any</SelectItem>
+                                    <SelectItem value="M">Male</SelectItem>
+                                    <SelectItem value="F">Female</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </TableCell>
+                              <TableCell>
+                                <Input
+                                  type="number" step="any" className="h-8 text-xs"
+                                  value={rng.minAgeYears ?? ''}
+                                  onChange={(e) => update({ minAgeYears: e.target.value === '' ? null : Number(e.target.value) })}
+                                  placeholder="—"
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Input
+                                  type="number" step="any" className="h-8 text-xs"
+                                  value={rng.maxAgeYears ?? ''}
+                                  onChange={(e) => update({ maxAgeYears: e.target.value === '' ? null : Number(e.target.value) })}
+                                  placeholder="—"
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Input
+                                  type="number" step="any" className="h-8 text-xs"
+                                  value={rng.low ?? ''}
+                                  onChange={(e) => update({ low: e.target.value === '' ? null : Number(e.target.value) })}
+                                  placeholder="—"
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Input
+                                  type="number" step="any" className="h-8 text-xs"
+                                  value={rng.high ?? ''}
+                                  onChange={(e) => update({ high: e.target.value === '' ? null : Number(e.target.value) })}
+                                  placeholder="—"
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Button
+                                  type="button" size="sm" variant="ghost"
+                                  className="h-7 w-7 p-0 text-red-600"
+                                  onClick={() => {
+                                    const next = (paramDraft.ageGenderRanges || []).filter((_, j) => j !== i);
+                                    setParamDraft({ ...paramDraft, ageGenderRanges: next.length ? next : null });
+                                  }}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  )}
                 </div>
               )}
             </div>
