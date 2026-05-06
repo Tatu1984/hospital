@@ -104,7 +104,10 @@ export default function DoctorDashboard() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [active, setActive] = useState<ActiveView>('ipd');
+  // No card selected on landing — the section below stays empty until the
+  // doctor clicks one. Keeps the dashboard visually quiet and avoids the
+  // "why is IPD always highlighted" question on first load.
+  const [active, setActive] = useState<ActiveView | null>(null);
   const navigate = useNavigate();
 
   async function load() {
