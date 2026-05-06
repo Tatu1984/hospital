@@ -11,7 +11,12 @@ export const optionalDateSchema = dateSchema.optional().nullable();
 
 export const paginationSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(100).default(50),
+  // Cap raised from 100 → 500. Several frontend pages (Inpatient,
+  // OperationTheatre) request all patients in a single round-trip via
+  // limit=500 to populate select dropdowns; the previous 100 cap caused
+  // those pages to crash with VALIDATION_ERROR. 500 is still bounded
+  // enough to prevent abuse but covers every realistic seeded tenant.
+  limit: z.coerce.number().int().min(1).max(500).default(50),
   sortBy: z.string().optional(),
   sortOrder: z.enum(['asc', 'desc']).default('desc'),
 });
