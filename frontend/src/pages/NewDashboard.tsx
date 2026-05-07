@@ -1,5 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useAuth } from '../contexts/AuthContext';
+import { Lock } from 'lucide-react';
 import {
   Calendar,
   Users,
@@ -313,6 +315,13 @@ const modules = [
 
 export default function NewDashboard() {
   const navigate = useNavigate();
+  const { hasAccess } = useAuth();
+
+  // Build the visible list once. Tiles the user can't reach are still
+  // shown but visually muted + disabled (lock icon overlay) so they
+  // know the module exists but their role doesn't grant access — which
+  // is more useful than silently hiding modules they could request.
+  const tiles = modules.map((m) => ({ ...m, allowed: hasAccess(m.path.replace(/^\//, '')) }));
 
   return (
     <div className="p-6 bg-white min-h-full">
@@ -322,16 +331,36 @@ export default function NewDashboard() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-        {modules.map((module) => {
+        {tiles.map((module) => {
           const Icon = module.icon;
+          // Module paths are stored without the /app prefix so they
+          // double as RBAC keys for hasAccess(). The authenticated
+          // portal is mounted at /app/*, so prefix at navigation time
+          // — without this the route doesn't match and the user lands
+          // on a blank page.
+          const onClick = module.allowed
+            ? () => navigate(`/app${module.path}`)
+            : undefined;
           return (
             <Card
               key={module.id}
-              className="cursor-pointer hover:shadow-2xl transition-all duration-300 transform hover:-translate-y-1 border-2 border-slate-200 hover:border-blue-400 bg-white overflow-hidden group"
-              onClick={() => navigate(module.path)}
+              className={`relative overflow-hidden group border-2 transition-all duration-300 ${
+                module.allowed
+                  ? 'cursor-pointer hover:shadow-2xl transform hover:-translate-y-1 border-slate-200 hover:border-blue-400 bg-white'
+                  : 'cursor-not-allowed opacity-50 border-slate-200 bg-slate-50'
+              }`}
+              onClick={onClick}
+              title={module.allowed ? undefined : 'Your role does not have access to this module'}
             >
+              {!module.allowed && (
+                <div className="absolute top-3 right-3 bg-slate-200 rounded-full p-1.5 z-10">
+                  <Lock className="w-3 h-3 text-slate-600" />
+                </div>
+              )}
               <CardHeader className="pb-4">
-                <div className={`w-16 h-16 bg-gradient-to-br ${module.color} rounded-xl flex items-center justify-center mb-4 shadow-lg group-hover:scale-110 transition-transform duration-300`}>
+                <div className={`w-16 h-16 bg-gradient-to-br ${module.color} rounded-xl flex items-center justify-center mb-4 shadow-lg ${
+                  module.allowed ? 'group-hover:scale-110 transition-transform duration-300' : 'grayscale'
+                }`}>
                   <Icon className="w-8 h-8 text-white" />
                 </div>
                 <CardTitle className="text-lg text-slate-900">{module.title}</CardTitle>
