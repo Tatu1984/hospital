@@ -365,10 +365,15 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   'POST /api/hr/leaves': ['leaves:create'],
   'POST /api/hr/leaves/:id/approve': ['leaves:approve'],
   'POST /api/hr/leaves/:id/reject': ['leaves:approve'],
+  // Per-employee leave balance (entitled / used / available, by year).
+  // Read with leaves:view; admin upserts entitlements with leaves:approve.
+  'GET /api/hr/leave-balances': ['leaves:view'],
+  'POST /api/hr/leave-balances': ['leaves:approve'],
   'GET /api/payroll/salary-structures': ['payroll:view'],
   'POST /api/payroll/salary-structures': ['payroll:create'],
   'GET /api/payroll/payslips': ['payroll:view'],
   'GET /api/payroll/payslips/:employeeId': ['payroll:view'],
+  'POST /api/payroll/payslips/:id/pay': ['payroll:create'],
   'POST /api/payroll/generate': ['payroll:create'],
   'GET /api/biometric/devices': ['hr:view'],
   'POST /api/biometric/punch': ['hr:create'],

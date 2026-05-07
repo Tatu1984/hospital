@@ -100,6 +100,15 @@ import { paginate } from './utils/tenantScope';
 
 // Audit log writer (persists to AuditLog table)
 import { writeAudit } from './utils/audit';
+import {
+  workingDaysInclusive,
+  daysInMonth,
+  workingDaysInMonth,
+  adjustLeaveBalance,
+  markAttendanceLeave,
+  attendanceBreakdownForMonth,
+  nextPayslipNumber,
+} from './hr-helpers';
 
 // OT live-status feature
 import { notificationService } from './services/notification';
@@ -4495,13 +4504,20 @@ app.post('/api/hr/leaves', authenticateToken, async (req: any, res: Response) =>
     const employee = await prisma.employee.findFirst({ where: { id: employeeId, tenantId: req.user.tenantId } });
     if (!employee) return res.status(404).json({ error: 'Employee not found' });
 
+    // Pre-compute working days in the requested range so payroll can
+    // count paid-leave days without re-walking the calendar later.
+    const from = new Date(fromDate);
+    const to = new Date(toDate);
+    const days = workingDaysInclusive(from, to);
+
     const leave = await prisma.leaveRequest.create({
       data: {
         tenantId: req.user.tenantId,
         employeeId,
         leaveType,
-        fromDate: new Date(fromDate),
-        toDate: new Date(toDate),
+        fromDate: from,
+        toDate: to,
+        days: days as any,
         reason,
       },
     });
@@ -4519,17 +4535,45 @@ app.post('/api/hr/leaves/:id/approve', authenticateToken, async (req: any, res: 
 
     const owned = await prisma.leaveRequest.findFirst({ where: { id, tenantId: req.user.tenantId } });
     if (!owned) return res.status(404).json({ error: 'Leave request not found' });
+    if (owned.status === 'approved') return res.status(409).json({ error: 'Already approved' });
 
-    const leave = await prisma.leaveRequest.update({
-      where: { id },
-      data: {
-        status: 'approved',
-        approvedBy: req.user.userId,
-        approvedAt: new Date(),
-      },
+    const days = owned.days
+      ? Number(owned.days)
+      : workingDaysInclusive(owned.fromDate, owned.toDate);
+
+    const leave = await prisma.$transaction(async (tx) => {
+      // 1. Mark the leave approved.
+      const updated = await tx.leaveRequest.update({
+        where: { id },
+        data: {
+          status: 'approved',
+          approvedBy: req.user.userId,
+          approvedAt: new Date(),
+          days: owned.days || (days as any),
+        },
+      });
+      // 2. Bump LeaveBalance.used for this leaveType + year.
+      await adjustLeaveBalance(tx as any, {
+        tenantId: req.user.tenantId,
+        employeeId: owned.employeeId,
+        leaveType: owned.leaveType,
+        year: owned.fromDate.getFullYear(),
+        delta: days,
+      });
+      // 3. Backfill EmployeeAttendance with status 'on_leave' for each
+      //    day in the range — payroll later treats these as paid leave
+      //    days even if the employee never punched in.
+      await markAttendanceLeave(tx as any, {
+        tenantId: req.user.tenantId,
+        employeeId: owned.employeeId,
+        from: owned.fromDate,
+        to: owned.toDate,
+        remarks: `${owned.leaveType} leave approved`,
+      });
+      return updated;
     });
 
-    res.json({ message: 'Leave approved', leave });
+    res.json({ message: 'Leave approved', leave, daysDeducted: days });
   } catch (error) {
     console.error('Approve leave error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -4544,19 +4588,117 @@ app.post('/api/hr/leaves/:id/reject', authenticateToken, async (req: any, res: R
     const owned = await prisma.leaveRequest.findFirst({ where: { id, tenantId: req.user.tenantId } });
     if (!owned) return res.status(404).json({ error: 'Leave request not found' });
 
-    const leave = await prisma.leaveRequest.update({
-      where: { id },
-      data: {
-        status: 'rejected',
-        approvedBy: req.user.userId,
-        approvedAt: new Date(),
-        remarks,
-      },
+    // If we previously approved this leave we have to undo the balance
+    // hit and the attendance rows so the employee isn't double-counted.
+    const wasApproved = owned.status === 'approved';
+    const days = owned.days ? Number(owned.days) : workingDaysInclusive(owned.fromDate, owned.toDate);
+
+    const leave = await prisma.$transaction(async (tx) => {
+      const updated = await tx.leaveRequest.update({
+        where: { id },
+        data: {
+          status: 'rejected',
+          approvedBy: req.user.userId,
+          approvedAt: new Date(),
+          remarks,
+        },
+      });
+      if (wasApproved) {
+        await adjustLeaveBalance(tx as any, {
+          tenantId: req.user.tenantId,
+          employeeId: owned.employeeId,
+          leaveType: owned.leaveType,
+          year: owned.fromDate.getFullYear(),
+          delta: -days,
+        });
+        // Reset on_leave attendance rows back to absent so payroll
+        // doesn't keep paying for them. Caller can re-mark manually
+        // if the employee actually came in.
+        await tx.employeeAttendance.updateMany({
+          where: {
+            employeeId: owned.employeeId,
+            date: { gte: owned.fromDate, lte: owned.toDate },
+            status: 'on_leave',
+          },
+          data: { status: 'absent', remarks: 'Leave rejected — was on_leave' },
+        });
+      }
+      return updated;
     });
 
     res.json({ message: 'Leave rejected', leave });
   } catch (error) {
     console.error('Reject leave error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ============================================
+// HR — leave balances
+// ============================================
+
+// List leave balances for one employee (or all if no employeeId).
+// Filter by year (defaults to current). Balance.available is computed
+// in code as entitled + carriedFwd - used.
+app.get('/api/hr/leave-balances', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { employeeId, year } = req.query;
+    const yr = year ? parseInt(year as string, 10) : new Date().getFullYear();
+    const where: any = { tenantId: req.user.tenantId, year: yr };
+    if (employeeId) where.employeeId = employeeId;
+
+    const rows = await prisma.leaveBalance.findMany({
+      where,
+      orderBy: [{ employeeId: 'asc' }, { leaveType: 'asc' }],
+    });
+    res.json(rows.map((r) => ({
+      ...r,
+      entitled: Number(r.entitled),
+      used: Number(r.used),
+      carriedFwd: Number(r.carriedFwd),
+      encashable: r.encashable !== null ? Number(r.encashable) : null,
+      available: Number(r.entitled) + Number(r.carriedFwd) - Number(r.used),
+    })));
+  } catch (error) {
+    console.error('Get leave balances error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Admin set / adjust a leave balance. Used at year-start to seed the
+// hospital's leave policy (e.g. 12 SL + 12 CL + 18 EL per year). Idempotent
+// upsert by (employee, leaveType, year).
+app.post('/api/hr/leave-balances', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { employeeId, leaveType, year, entitled, carriedFwd, encashable, remarks } = req.body;
+    if (!employeeId || !leaveType || !year || entitled === undefined) {
+      return res.status(400).json({ error: 'employeeId, leaveType, year, entitled are required' });
+    }
+    const employee = await prisma.employee.findFirst({ where: { id: employeeId, tenantId: req.user.tenantId } });
+    if (!employee) return res.status(404).json({ error: 'Employee not found' });
+
+    const upserted = await prisma.leaveBalance.upsert({
+      where: { employeeId_leaveType_year: { employeeId, leaveType, year: Number(year) } },
+      create: {
+        tenantId: req.user.tenantId,
+        employeeId,
+        leaveType,
+        year: Number(year),
+        entitled: Number(entitled) as any,
+        carriedFwd: (carriedFwd ? Number(carriedFwd) : 0) as any,
+        encashable: encashable !== undefined && encashable !== null ? Number(encashable) as any : null,
+        remarks,
+      },
+      update: {
+        entitled: Number(entitled) as any,
+        carriedFwd: (carriedFwd ? Number(carriedFwd) : 0) as any,
+        encashable: encashable !== undefined && encashable !== null ? Number(encashable) as any : null,
+        remarks,
+      },
+    });
+    res.status(201).json(upserted);
+  } catch (error) {
+    console.error('Set leave balance error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -7675,109 +7817,247 @@ app.post('/api/payroll/salary-structures', authenticateToken, requirePermission(
   }
 });
 
-// List payslips
+// List payslips for the tenant. Filters by month, year, and/or
+// employeeId. Joined to Employee for the employee code + name so the
+// HR page can show a payroll-run table without a second fetch.
 app.get('/api/payroll/payslips', authenticateToken, requirePermission('payroll:view'), async (req: any, res: Response) => {
   try {
     const { month, year, employeeId } = req.query;
+    const where: any = { tenantId: req.user.tenantId };
+    if (employeeId) where.employeeId = employeeId;
+    if (month) where.month = parseInt(month as string, 10);
+    if (year) where.year = parseInt(year as string, 10);
 
-    // Mock data since model may not exist yet
-    const payslips = [
-      {
-        id: '1',
-        payslipNumber: 'PS202401001',
-        employeeName: 'John Doe',
-        employeeId: 'EMP001',
-        month: 1,
-        year: 2024,
-        basicSalary: 40000,
-        grossSalary: 60000,
-        totalDeductions: 6000,
-        netSalary: 54000,
-        status: 'paid',
-        paidDate: new Date(),
-      },
-    ];
+    // Payslip has no Prisma relation back to Employee (we deliberately
+    // avoided the FK so payslips survive employee deletion). Resolve
+    // employee headers in a follow-up batch query below.
+    const payslips = await prisma.payslip.findMany({
+      where,
+      orderBy: [{ year: 'desc' }, { month: 'desc' }, { createdAt: 'desc' }],
+      take: 500,
+    });
 
-    let filtered = payslips;
-    if (employeeId) {
-      filtered = filtered.filter(p => p.employeeId === employeeId);
-    }
-    if (month) {
-      filtered = filtered.filter(p => p.month === parseInt(month as string));
-    }
-    if (year) {
-      filtered = filtered.filter(p => p.year === parseInt(year as string));
-    }
+    // Resolve employee names + codes in one batch.
+    const empIds = Array.from(new Set(payslips.map((p) => p.employeeId)));
+    const employees = empIds.length
+      ? await prisma.employee.findMany({
+          where: { id: { in: empIds } },
+          select: { id: true, employeeId: true, name: true, department: true },
+        })
+      : [];
+    const empById = Object.fromEntries(employees.map((e) => [e.id, e]));
 
-    res.json(filtered);
+    res.json(payslips.map((p) => ({
+      id: p.id,
+      payslipNumber: p.payslipNumber,
+      employeeId: empById[p.employeeId]?.employeeId || p.employeeId,
+      employeeName: empById[p.employeeId]?.name || 'Unknown',
+      department: empById[p.employeeId]?.department || null,
+      month: p.month,
+      year: p.year,
+      monthDays: p.monthDays,
+      workingDays: p.workingDays,
+      daysPresent: Number(p.daysPresent),
+      daysHalfDay: Number(p.daysHalfDay),
+      daysOnPaidLeave: Number(p.daysOnPaidLeave),
+      daysLOP: Number(p.daysLOP),
+      baseSalary: Number(p.baseSalary),
+      perDayRate: Number(p.perDayRate),
+      earnedGross: Number(p.earnedGross),
+      deductions: p.deductions,
+      totalDeductions: Number(p.totalDeductions),
+      netPay: Number(p.netPay),
+      status: p.status,
+      paidAt: p.paidAt,
+      paymentRef: p.paymentRef,
+    })));
   } catch (error) {
     logger.error('Get payslips error:', error);
-    res.status(500).json({
-      error: 'INTERNAL_ERROR',
-      message: 'Failed to fetch payslips',
+    res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to fetch payslips' });
+  }
+});
+
+// Mark a payslip paid (after disbursement reconciliation).
+app.post('/api/payroll/payslips/:id/pay', authenticateToken, requirePermission('payroll:create'), async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { paymentMode, paymentRef, paymentDate } = req.body;
+    const owned = await prisma.payslip.findFirst({ where: { id, tenantId: req.user.tenantId } });
+    if (!owned) return res.status(404).json({ error: 'Payslip not found' });
+    if (owned.status === 'paid') return res.status(409).json({ error: 'Already paid' });
+    const updated = await prisma.payslip.update({
+      where: { id },
+      data: {
+        status: 'paid',
+        paidAt: paymentDate ? new Date(paymentDate) : new Date(),
+        paidBy: req.user.userId,
+        paymentRef: [paymentMode, paymentRef].filter(Boolean).join(' · ') || null,
+      },
     });
+    res.json(updated);
+  } catch (error) {
+    logger.error('Mark payslip paid error:', error);
+    res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to mark paid' });
   }
 });
 
 // Generate payroll
+// Generate payroll for a given (month, year). Real implementation:
+//   1. For each active employee (or filtered subset by employeeIds):
+//      - Pull attendance breakdown for the month from EmployeeAttendance
+//      - Compute pay days = present + 0.5 * half_day + paid_leave
+//      - Compute LOP days = working days - pay days
+//      - Per-day rate = base salary / month working days
+//      - Earned gross = per-day rate * pay days
+//      - Deductions: PF (12% capped at 1800), ESI (0.75% if gross < 21k),
+//        professional tax (state-specific, ₹200/month default), TDS
+//        (configurable). Stored as JSON for flexibility.
+//      - Net pay = earned gross - total deductions
+//   2. Upsert one Payslip row per (employee, month, year). Re-running
+//      generate for the same period overwrites existing draft payslips
+//      but refuses to overwrite ones already marked paid.
+//
+// This endpoint does NOT mark payslips as paid — that's a separate
+// workflow once the disbursement is reconciled.
 app.post('/api/payroll/generate', authenticateToken, requirePermission('payroll:create'), async (req: any, res: Response) => {
   try {
     const { month, year, employeeIds } = req.body;
-
-    if (!month || !year) {
-      return res.status(400).json({
-        error: 'VALIDATION_ERROR',
-        message: 'Month and year are required',
-      });
+    const m = Number(month);
+    const y = Number(year);
+    if (!m || !y || m < 1 || m > 12) {
+      return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'Valid month (1-12) and year required' });
     }
 
-    // Mock response since model may not exist yet
-    const result = {
-      message: 'Payroll generated successfully',
-      month,
-      year,
-      employeesProcessed: employeeIds?.length || 0,
-      totalAmount: 540000,
+    const where: any = { tenantId: req.user.tenantId, status: 'active' };
+    if (Array.isArray(employeeIds) && employeeIds.length > 0) {
+      where.id = { in: employeeIds };
+    }
+    const employees = await prisma.employee.findMany({ where });
+
+    const totalDays = daysInMonth(m, y);
+    const workDays = workingDaysInMonth(m, y);
+
+    let processed = 0;
+    let totalAmount = 0;
+    const skipped: Array<{ employeeId: string; reason: string }> = [];
+    const generatedPayslips: any[] = [];
+
+    for (const emp of employees) {
+      if (!emp.salary || Number(emp.salary) <= 0) {
+        skipped.push({ employeeId: emp.id, reason: 'No salary configured' });
+        continue;
+      }
+
+      // Refuse to overwrite a finalized/paid payslip for this period.
+      const existing = await prisma.payslip.findUnique({
+        where: { employeeId_month_year: { employeeId: emp.id, month: m, year: y } },
+      });
+      if (existing && (existing.status === 'paid' || existing.status === 'finalized')) {
+        skipped.push({ employeeId: emp.id, reason: `Already ${existing.status}` });
+        continue;
+      }
+
+      const breakdown = await attendanceBreakdownForMonth(prisma, { employeeId: emp.id, month: m, year: y });
+      const payDays = breakdown.daysPresent + 0.5 * breakdown.daysHalfDay + breakdown.daysOnPaidLeave;
+      const lopDays = Math.max(0, workDays - payDays);
+
+      const baseSalary = Number(emp.salary);
+      const perDayRate = workDays > 0 ? baseSalary / workDays : 0;
+      const earnedGross = Math.round(perDayRate * payDays * 100) / 100;
+
+      // Statutory deductions — Indian defaults. PF capped at 1800
+      // (12% of ₹15,000 ceiling). ESI applies only when gross <= ₹21,000.
+      const pfWage = Math.min(earnedGross, 15000);
+      const pf = Math.round(pfWage * 0.12 * 100) / 100;
+      const esi = earnedGross <= 21000 ? Math.round(earnedGross * 0.0075 * 100) / 100 : 0;
+      // Professional tax — Karnataka/Maharashtra typical ₹200/month if
+      // gross > ₹15,000. Adjust per state in tenant config later.
+      const professionalTax = earnedGross > 15000 ? 200 : 0;
+      const deductionsObj = { pf, esi, professionalTax, tds: 0, loan: 0, other: 0 };
+      const totalDeductions = pf + esi + professionalTax;
+      const netPay = Math.round((earnedGross - totalDeductions) * 100) / 100;
+
+      const payslipNumber = existing?.payslipNumber || (await nextPayslipNumber(prisma, { month: m, year: y }));
+
+      const data = {
+        tenantId: req.user.tenantId,
+        employeeId: emp.id,
+        month: m,
+        year: y,
+        payslipNumber,
+        monthDays: totalDays,
+        workingDays: workDays,
+        daysPresent: breakdown.daysPresent as any,
+        daysHalfDay: breakdown.daysHalfDay as any,
+        daysOnPaidLeave: breakdown.daysOnPaidLeave as any,
+        daysLOP: lopDays as any,
+        baseSalary: baseSalary as any,
+        perDayRate: perDayRate as any,
+        earnedGross: earnedGross as any,
+        deductions: deductionsObj,
+        totalDeductions: totalDeductions as any,
+        netPay: netPay as any,
+        status: 'draft',
+      };
+
+      const ps = existing
+        ? await prisma.payslip.update({ where: { id: existing.id }, data })
+        : await prisma.payslip.create({ data });
+
+      generatedPayslips.push(ps);
+      processed += 1;
+      totalAmount += netPay;
+    }
+
+    res.status(201).json({
+      message: 'Payroll generated',
+      month: m,
+      year: y,
+      employeesProcessed: processed,
+      employeesSkipped: skipped.length,
+      skipped,
+      totalAmount: Math.round(totalAmount * 100) / 100,
       generatedAt: new Date(),
       generatedBy: req.user.userId,
-    };
-
-    res.status(201).json(result);
+    });
   } catch (error) {
     logger.error('Generate payroll error:', error);
-    res.status(500).json({
-      error: 'INTERNAL_ERROR',
-      message: 'Failed to generate payroll',
-    });
+    res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to generate payroll' });
   }
 });
 
-// Get employee payslips
+// Get employee payslips. Real query against the persisted Payslip table.
 app.get('/api/payroll/payslips/:employeeId', authenticateToken, requirePermission('payroll:view'), async (req: any, res: Response) => {
   try {
     const { employeeId } = req.params;
     const { limit = 12 } = req.query;
 
-    // Mock data since model may not exist yet
-    const payslips = [
-      {
-        id: '1',
-        payslipNumber: 'PS202401001',
-        month: 1,
-        year: 2024,
-        grossSalary: 60000,
-        netSalary: 54000,
-        status: 'paid',
-      },
-    ];
+    const owned = await prisma.employee.findFirst({
+      where: { id: employeeId, tenantId: req.user.tenantId },
+    });
+    if (!owned) return res.status(404).json({ error: 'Employee not found' });
 
-    res.json(payslips.slice(0, parseInt(limit as string)));
+    const payslips = await prisma.payslip.findMany({
+      where: { employeeId, tenantId: req.user.tenantId },
+      orderBy: [{ year: 'desc' }, { month: 'desc' }],
+      take: Number(limit) || 12,
+    });
+
+    res.json(payslips.map((p) => ({
+      ...p,
+      daysPresent: Number(p.daysPresent),
+      daysHalfDay: Number(p.daysHalfDay),
+      daysOnPaidLeave: Number(p.daysOnPaidLeave),
+      daysLOP: Number(p.daysLOP),
+      baseSalary: Number(p.baseSalary),
+      perDayRate: Number(p.perDayRate),
+      earnedGross: Number(p.earnedGross),
+      totalDeductions: Number(p.totalDeductions),
+      netPay: Number(p.netPay),
+    })));
   } catch (error) {
     logger.error('Get employee payslips error:', error);
-    res.status(500).json({
-      error: 'INTERNAL_ERROR',
-      message: 'Failed to fetch employee payslips',
-    });
+    res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to fetch payslips' });
   }
 });
 
@@ -8138,95 +8418,177 @@ app.get('/api/biometric/devices', authenticateToken, requirePermission('hr:view'
   }
 });
 
-// Record biometric punch
+// Record biometric punch. Real implementation:
+//   - Resolves the employee by either Employee.id or Employee.employeeId
+//     (devices typically send the human-readable ID, e.g. "EMP001").
+//   - Upserts an EmployeeAttendance row keyed on (employeeId, date).
+//     First punch of the day creates the row with checkIn; subsequent
+//     punches update checkOut. Status auto-derived from hours worked.
+//   - Returns the resulting attendance row so the device or kiosk can
+//     show "checked in 09:00" / "checked out 17:30 — 8.5 hrs worked".
 app.post('/api/biometric/punch', authenticateToken, requirePermission('hr:create'), async (req: any, res: Response) => {
   try {
-    const { employeeId, deviceId, punchType, timestamp } = req.body;
+    const { employeeId: employeeRef, deviceId, punchType, timestamp } = req.body;
+    if (!employeeRef) {
+      return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'employeeId required' });
+    }
+    const at = timestamp ? new Date(timestamp) : new Date();
 
-    if (!employeeId || !deviceId) {
-      return res.status(400).json({
-        error: 'VALIDATION_ERROR',
-        message: 'Employee ID and Device ID are required',
+    // Resolve. Devices usually send the human-readable code (employeeId)
+    // not the UUID. Try both.
+    const employee = await prisma.employee.findFirst({
+      where: {
+        tenantId: req.user.tenantId,
+        OR: [{ id: employeeRef }, { employeeId: employeeRef }],
+      },
+    });
+    if (!employee) return res.status(404).json({ error: 'Employee not found' });
+
+    // Date-only key for the upsert
+    const date = new Date(at); date.setHours(0, 0, 0, 0);
+
+    const existing = await prisma.employeeAttendance.findUnique({
+      where: { employeeId_date: { employeeId: employee.id, date } },
+    });
+
+    let row;
+    if (!existing) {
+      // First punch of the day → check-in
+      row = await prisma.employeeAttendance.create({
+        data: {
+          tenantId: req.user.tenantId,
+          employeeId: employee.id,
+          date,
+          checkIn: at,
+          status: 'present',
+          remarks: deviceId ? `Device ${deviceId}` : null,
+        },
+      });
+    } else {
+      // Subsequent punch → check-out (always set to the latest punch).
+      // If checkIn is missing for any reason, set both.
+      const checkIn = existing.checkIn || at;
+      const checkOut = at;
+      const hours = (checkOut.getTime() - checkIn.getTime()) / (3600 * 1000);
+      // Half-day if < 5 hours, present if >= 5 hours, leave existing
+      // 'on_leave' / 'absent' alone (admin set those manually).
+      let newStatus = existing.status;
+      if (existing.status !== 'on_leave' && existing.status !== 'absent') {
+        newStatus = hours < 5 ? 'half_day' : 'present';
+      }
+      row = await prisma.employeeAttendance.update({
+        where: { id: existing.id },
+        data: { checkIn, checkOut, status: newStatus },
       });
     }
 
-    // Mock response since model may not exist yet
-    const punch = {
-      id: `punch_${Date.now()}`,
-      employeeId,
-      deviceId,
-      punchType: punchType || 'auto',
-      timestamp: timestamp ? new Date(timestamp) : new Date(),
-      status: 'recorded',
-      tenantId: req.user.tenantId,
-      createdAt: new Date(),
-    };
-
-    res.status(201).json(punch);
+    res.status(201).json({
+      id: row.id,
+      employeeId: employee.id,
+      employeeCode: employee.employeeId,
+      employeeName: employee.name,
+      date: row.date.toISOString().slice(0, 10),
+      checkIn: row.checkIn,
+      checkOut: row.checkOut,
+      status: row.status,
+      hoursWorked: row.checkIn && row.checkOut
+        ? Math.round(((row.checkOut.getTime() - row.checkIn.getTime()) / 3600000) * 10) / 10
+        : null,
+      deviceId: deviceId || null,
+      punchType: punchType || (existing ? 'check-out' : 'check-in'),
+    });
   } catch (error) {
     logger.error('Record biometric punch error:', error);
-    res.status(500).json({
-      error: 'INTERNAL_ERROR',
-      message: 'Failed to record biometric punch',
-    });
+    res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to record punch' });
   }
 });
 
-// Get today's attendance
+// Get today's attendance — real query against EmployeeAttendance.
+// Joins to Employee for name + department; computes the summary
+// (present / absent / on_leave / half_day) in code from the rows that
+// exist plus the count of active employees who have *no* row yet
+// today (those count as absent).
 app.get('/api/biometric/today', authenticateToken, requirePermission('hr:view'), async (req: any, res: Response) => {
   try {
     const { departmentId } = req.query;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
 
-    // Mock data since model may not exist yet
-    const attendance = [
-      {
-        employeeId: 'EMP001',
-        employeeName: 'John Doe',
-        department: 'Nursing',
-        checkIn: new Date(new Date().setHours(9, 0, 0)),
+    const empWhere: any = { tenantId: req.user.tenantId, status: 'active' };
+    if (departmentId) empWhere.department = departmentId;
+
+    const [attendance, allActiveEmployees] = await Promise.all([
+      prisma.employeeAttendance.findMany({
+        where: { tenantId: req.user.tenantId, date: today },
+        include: { employee: { select: { employeeId: true, name: true, department: true } } },
+        orderBy: { checkIn: 'asc' },
+      }),
+      prisma.employee.findMany({
+        where: empWhere,
+        select: { id: true, employeeId: true, name: true, department: true },
+      }),
+    ]);
+
+    // Filter attendance by department if requested.
+    const filtered = departmentId
+      ? attendance.filter((a) => a.employee?.department === departmentId)
+      : attendance;
+
+    const seenIds = new Set(filtered.map((a) => a.employeeId));
+    const noShowEmployees = allActiveEmployees.filter((e) => !seenIds.has(e.id));
+
+    // Compose the response rows. Includes "no-show" rows so the UI
+    // shows everyone, with status 'absent' for those who haven't punched.
+    const rows = [
+      ...filtered.map((a) => ({
+        employeeId: a.employee?.employeeId || a.employeeId,
+        employeeName: a.employee?.name || 'Unknown',
+        department: a.employee?.department || null,
+        checkIn: a.checkIn,
+        checkOut: a.checkOut,
+        status: a.status,
+        workingHours: a.checkIn && a.checkOut
+          ? Math.round(((a.checkOut.getTime() - a.checkIn.getTime()) / 3600000) * 10) / 10
+          : null,
+      })),
+      ...noShowEmployees.map((e) => ({
+        employeeId: e.employeeId,
+        employeeName: e.name,
+        department: e.department,
+        checkIn: null,
         checkOut: null,
-        status: 'present',
+        status: 'absent',
         workingHours: null,
-      },
-      {
-        employeeId: 'EMP002',
-        employeeName: 'Jane Smith',
-        department: 'Laboratory',
-        checkIn: new Date(new Date().setHours(9, 15, 0)),
-        checkOut: null,
-        status: 'present',
-        workingHours: null,
-      },
-      {
-        employeeId: 'EMP003',
-        employeeName: 'Bob Johnson',
-        department: 'Emergency',
-        checkIn: new Date(new Date().setHours(8, 45, 0)),
-        checkOut: new Date(new Date().setHours(17, 0, 0)),
-        status: 'present',
-        workingHours: 8.25,
-      },
+      })),
     ];
 
-    const summary = {
-      totalEmployees: 150,
-      present: 120,
-      absent: 25,
-      onLeave: 5,
-      late: 15,
-      earlyCheckout: 3,
-    };
+    const counts = { present: 0, absent: 0, onLeave: 0, halfDay: 0, late: 0 };
+    for (const r of rows) {
+      switch (r.status) {
+        case 'present':  counts.present += 1; break;
+        case 'absent':   counts.absent += 1; break;
+        case 'on_leave': counts.onLeave += 1; break;
+        case 'half_day': counts.halfDay += 1; break;
+      }
+      // Late = clocked in after 09:30
+      if (r.checkIn && new Date(r.checkIn).getHours() * 60 + new Date(r.checkIn).getMinutes() > 9 * 60 + 30) {
+        counts.late += 1;
+      }
+    }
 
     res.json({
-      summary,
-      attendance,
+      summary: {
+        totalEmployees: allActiveEmployees.length,
+        present: counts.present,
+        absent: counts.absent,
+        onLeave: counts.onLeave,
+        halfDay: counts.halfDay,
+        late: counts.late,
+      },
+      attendance: rows,
     });
   } catch (error) {
     logger.error('Get today attendance error:', error);
-    res.status(500).json({
-      error: 'INTERNAL_ERROR',
-      message: 'Failed to fetch today\'s attendance',
-    });
+    res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to fetch today\'s attendance' });
   }
 });
 

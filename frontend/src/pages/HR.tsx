@@ -8,8 +8,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { UserPlus, Clock, CheckCircle, XCircle, Users } from 'lucide-react';
+import { UserPlus, Clock, CheckCircle, XCircle, Users, Wallet, Calculator } from 'lucide-react';
 import api from '../services/api';
+import LeaveBalancePanel from '../components/hr/LeaveBalancePanel';
+import PayrollPanel from '../components/hr/PayrollPanel';
 
 interface Employee {
   id: string;
@@ -269,6 +271,12 @@ export default function HR() {
               <TabsTrigger value="employees">Employees ({stats.totalEmployees})</TabsTrigger>
               <TabsTrigger value="attendance">Attendance</TabsTrigger>
               <TabsTrigger value="leaves">Leave Requests ({stats.pendingLeaves})</TabsTrigger>
+              <TabsTrigger value="balances" className="gap-1">
+                <Wallet className="w-3.5 h-3.5" /> Leave Balances
+              </TabsTrigger>
+              <TabsTrigger value="payroll" className="gap-1">
+                <Calculator className="w-3.5 h-3.5" /> Payroll
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="employees">
@@ -431,6 +439,14 @@ export default function HR() {
                   )}
                 </TableBody>
               </Table>
+            </TabsContent>
+
+            <TabsContent value="balances">
+              <LeaveBalancePanel />
+            </TabsContent>
+
+            <TabsContent value="payroll">
+              <PayrollPanel />
             </TabsContent>
           </Tabs>
         </CardContent>
