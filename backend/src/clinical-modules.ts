@@ -9,23 +9,27 @@
 // Tenant isolation: every where-clause filters by req.user.tenantId.
 // Auth + RBAC are applied at the route registration in server.ts.
 
-import { Request, Response, Router } from 'express';
+import { Request, Response, Router, RequestHandler } from 'express';
 import { prisma } from './shared/prisma';
 import { authenticateToken } from './middleware';
 
 type AuthedReq = Request & { user?: { userId: string; tenantId: string; branchId?: string } };
 
+// Mounted at '/api' by server.ts. Critical: do NOT use router.use(auth)
+// here. Express runs router.use middleware for every request that
+// matches the mount prefix, including /api/auth/login — which would
+// then 401 on every login attempt because the user has no token yet.
+//
+// Instead, auth is attached per-route via the `auth` middleware short-
+// hand below. Routes inside this file that aren't auth-gated would
+// fall through to the rest of the app stack without disturbing them.
 export const clinicalModulesRouter = Router();
-
-// Auth applies to every route in this router. The global RBAC middleware
-// in routes/index.ts then checks the user's permissions against the
-// route. Mounted at /api by server.ts.
-clinicalModulesRouter.use(authenticateToken);
+const auth: RequestHandler = authenticateToken as any;
 
 // =============== DIALYSIS ===============
 
 // Machines: list / create / update / delete.
-clinicalModulesRouter.get('/dialysis/machines', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.get('/dialysis/machines', auth, async (req: AuthedReq, res: Response) => {
   try {
     const items = await prisma.dialysisMachine.findMany({
       where: { tenantId: req.user!.tenantId },
@@ -38,7 +42,7 @@ clinicalModulesRouter.get('/dialysis/machines', async (req: AuthedReq, res: Resp
   }
 });
 
-clinicalModulesRouter.post('/dialysis/machines', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.post('/dialysis/machines', auth, async (req: AuthedReq, res: Response) => {
   try {
     const created = await prisma.dialysisMachine.create({
       data: { ...req.body, tenantId: req.user!.tenantId, branchId: req.body.branchId || req.user!.branchId },
@@ -51,7 +55,7 @@ clinicalModulesRouter.post('/dialysis/machines', async (req: AuthedReq, res: Res
   }
 });
 
-clinicalModulesRouter.put('/dialysis/machines/:id', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.put('/dialysis/machines/:id', auth, async (req: AuthedReq, res: Response) => {
   try {
     const owned = await prisma.dialysisMachine.findFirst({ where: { id: req.params.id, tenantId: req.user!.tenantId } });
     if (!owned) return res.status(404).json({ error: 'Machine not found' });
@@ -63,7 +67,7 @@ clinicalModulesRouter.put('/dialysis/machines/:id', async (req: AuthedReq, res: 
   }
 });
 
-clinicalModulesRouter.delete('/dialysis/machines/:id', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.delete('/dialysis/machines/:id', auth, async (req: AuthedReq, res: Response) => {
   try {
     const owned = await prisma.dialysisMachine.findFirst({ where: { id: req.params.id, tenantId: req.user!.tenantId } });
     if (!owned) return res.status(404).json({ error: 'Machine not found' });
@@ -76,7 +80,7 @@ clinicalModulesRouter.delete('/dialysis/machines/:id', async (req: AuthedReq, re
 });
 
 // Sessions: list / create / update / delete + status flips.
-clinicalModulesRouter.get('/dialysis/sessions', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.get('/dialysis/sessions', auth, async (req: AuthedReq, res: Response) => {
   try {
     const { date, patientId, status } = req.query;
     const where: any = { tenantId: req.user!.tenantId };
@@ -100,7 +104,7 @@ clinicalModulesRouter.get('/dialysis/sessions', async (req: AuthedReq, res: Resp
   }
 });
 
-clinicalModulesRouter.post('/dialysis/sessions', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.post('/dialysis/sessions', auth, async (req: AuthedReq, res: Response) => {
   try {
     const data = { ...req.body, tenantId: req.user!.tenantId };
     if (data.scheduledDate) data.scheduledDate = new Date(data.scheduledDate);
@@ -112,7 +116,7 @@ clinicalModulesRouter.post('/dialysis/sessions', async (req: AuthedReq, res: Res
   }
 });
 
-clinicalModulesRouter.put('/dialysis/sessions/:id', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.put('/dialysis/sessions/:id', auth, async (req: AuthedReq, res: Response) => {
   try {
     const owned = await prisma.dialysisSession.findFirst({ where: { id: req.params.id, tenantId: req.user!.tenantId } });
     if (!owned) return res.status(404).json({ error: 'Session not found' });
@@ -129,7 +133,7 @@ clinicalModulesRouter.put('/dialysis/sessions/:id', async (req: AuthedReq, res: 
   }
 });
 
-clinicalModulesRouter.delete('/dialysis/sessions/:id', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.delete('/dialysis/sessions/:id', auth, async (req: AuthedReq, res: Response) => {
   try {
     const owned = await prisma.dialysisSession.findFirst({ where: { id: req.params.id, tenantId: req.user!.tenantId } });
     if (!owned) return res.status(404).json({ error: 'Session not found' });
@@ -143,7 +147,7 @@ clinicalModulesRouter.delete('/dialysis/sessions/:id', async (req: AuthedReq, re
 
 // =============== MORTUARY ===============
 
-clinicalModulesRouter.get('/mortuary', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.get('/mortuary', auth, async (req: AuthedReq, res: Response) => {
   try {
     const { status } = req.query;
     const where: any = { tenantId: req.user!.tenantId };
@@ -158,7 +162,7 @@ clinicalModulesRouter.get('/mortuary', async (req: AuthedReq, res: Response) => 
   }
 });
 
-clinicalModulesRouter.post('/mortuary', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.post('/mortuary', auth, async (req: AuthedReq, res: Response) => {
   try {
     const data = { ...req.body, tenantId: req.user!.tenantId };
     if (data.dateOfDeath) data.dateOfDeath = new Date(data.dateOfDeath);
@@ -173,7 +177,7 @@ clinicalModulesRouter.post('/mortuary', async (req: AuthedReq, res: Response) =>
   }
 });
 
-clinicalModulesRouter.put('/mortuary/:id', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.put('/mortuary/:id', auth, async (req: AuthedReq, res: Response) => {
   try {
     const owned = await prisma.mortuaryRecord.findFirst({ where: { id: req.params.id, tenantId: req.user!.tenantId } });
     if (!owned) return res.status(404).json({ error: 'Record not found' });
@@ -190,7 +194,7 @@ clinicalModulesRouter.put('/mortuary/:id', async (req: AuthedReq, res: Response)
   }
 });
 
-clinicalModulesRouter.delete('/mortuary/:id', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.delete('/mortuary/:id', auth, async (req: AuthedReq, res: Response) => {
   try {
     const owned = await prisma.mortuaryRecord.findFirst({ where: { id: req.params.id, tenantId: req.user!.tenantId } });
     if (!owned) return res.status(404).json({ error: 'Record not found' });
@@ -204,7 +208,7 @@ clinicalModulesRouter.delete('/mortuary/:id', async (req: AuthedReq, res: Respon
 
 // =============== PHLEBOTOMY ROUNDS ===============
 
-clinicalModulesRouter.get('/phlebotomy/rounds', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.get('/phlebotomy/rounds', auth, async (req: AuthedReq, res: Response) => {
   try {
     const { date, status } = req.query;
     const where: any = { tenantId: req.user!.tenantId };
@@ -222,7 +226,7 @@ clinicalModulesRouter.get('/phlebotomy/rounds', async (req: AuthedReq, res: Resp
   }
 });
 
-clinicalModulesRouter.post('/phlebotomy/rounds', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.post('/phlebotomy/rounds', auth, async (req: AuthedReq, res: Response) => {
   try {
     const data = { ...req.body, tenantId: req.user!.tenantId, branchId: req.body.branchId || req.user!.branchId };
     if (data.scheduledDate) data.scheduledDate = new Date(data.scheduledDate);
@@ -234,7 +238,7 @@ clinicalModulesRouter.post('/phlebotomy/rounds', async (req: AuthedReq, res: Res
   }
 });
 
-clinicalModulesRouter.put('/phlebotomy/rounds/:id', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.put('/phlebotomy/rounds/:id', auth, async (req: AuthedReq, res: Response) => {
   try {
     const owned = await prisma.phlebotomyRound.findFirst({ where: { id: req.params.id, tenantId: req.user!.tenantId } });
     if (!owned) return res.status(404).json({ error: 'Round not found' });
@@ -251,7 +255,7 @@ clinicalModulesRouter.put('/phlebotomy/rounds/:id', async (req: AuthedReq, res: 
 
 // =============== PHYSIOTHERAPY ===============
 
-clinicalModulesRouter.get('/physio/plans', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.get('/physio/plans', auth, async (req: AuthedReq, res: Response) => {
   try {
     const { patientId, status } = req.query;
     const where: any = { tenantId: req.user!.tenantId };
@@ -270,7 +274,7 @@ clinicalModulesRouter.get('/physio/plans', async (req: AuthedReq, res: Response)
   }
 });
 
-clinicalModulesRouter.post('/physio/plans', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.post('/physio/plans', auth, async (req: AuthedReq, res: Response) => {
   try {
     const data = { ...req.body, tenantId: req.user!.tenantId };
     if (data.startDate) data.startDate = new Date(data.startDate);
@@ -283,7 +287,7 @@ clinicalModulesRouter.post('/physio/plans', async (req: AuthedReq, res: Response
   }
 });
 
-clinicalModulesRouter.put('/physio/plans/:id', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.put('/physio/plans/:id', auth, async (req: AuthedReq, res: Response) => {
   try {
     const owned = await prisma.physioPlan.findFirst({ where: { id: req.params.id, tenantId: req.user!.tenantId } });
     if (!owned) return res.status(404).json({ error: 'Plan not found' });
@@ -298,7 +302,7 @@ clinicalModulesRouter.put('/physio/plans/:id', async (req: AuthedReq, res: Respo
   }
 });
 
-clinicalModulesRouter.get('/physio/sessions', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.get('/physio/sessions', auth, async (req: AuthedReq, res: Response) => {
   try {
     const { planId, patientId, date } = req.query;
     const where: any = { tenantId: req.user!.tenantId };
@@ -317,7 +321,7 @@ clinicalModulesRouter.get('/physio/sessions', async (req: AuthedReq, res: Respon
   }
 });
 
-clinicalModulesRouter.post('/physio/sessions', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.post('/physio/sessions', auth, async (req: AuthedReq, res: Response) => {
   try {
     const data = { ...req.body, tenantId: req.user!.tenantId };
     if (data.scheduledDate) data.scheduledDate = new Date(data.scheduledDate);
@@ -329,7 +333,7 @@ clinicalModulesRouter.post('/physio/sessions', async (req: AuthedReq, res: Respo
   }
 });
 
-clinicalModulesRouter.put('/physio/sessions/:id', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.put('/physio/sessions/:id', auth, async (req: AuthedReq, res: Response) => {
   try {
     const owned = await prisma.physioSession.findFirst({ where: { id: req.params.id, tenantId: req.user!.tenantId } });
     if (!owned) return res.status(404).json({ error: 'Session not found' });
@@ -345,7 +349,7 @@ clinicalModulesRouter.put('/physio/sessions/:id', async (req: AuthedReq, res: Re
 
 // =============== CSSD ===============
 
-clinicalModulesRouter.get('/cssd/cycles', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.get('/cssd/cycles', auth, async (req: AuthedReq, res: Response) => {
   try {
     const items = await prisma.sterilizationCycle.findMany({
       where: { tenantId: req.user!.tenantId },
@@ -359,7 +363,7 @@ clinicalModulesRouter.get('/cssd/cycles', async (req: AuthedReq, res: Response) 
   }
 });
 
-clinicalModulesRouter.post('/cssd/cycles', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.post('/cssd/cycles', auth, async (req: AuthedReq, res: Response) => {
   try {
     const data = { ...req.body, tenantId: req.user!.tenantId };
     if (!data.cycleNumber) data.cycleNumber = `CY${Date.now().toString().slice(-8)}`;
@@ -373,7 +377,7 @@ clinicalModulesRouter.post('/cssd/cycles', async (req: AuthedReq, res: Response)
   }
 });
 
-clinicalModulesRouter.put('/cssd/cycles/:id', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.put('/cssd/cycles/:id', auth, async (req: AuthedReq, res: Response) => {
   try {
     const owned = await prisma.sterilizationCycle.findFirst({ where: { id: req.params.id, tenantId: req.user!.tenantId } });
     if (!owned) return res.status(404).json({ error: 'Cycle not found' });
@@ -388,7 +392,7 @@ clinicalModulesRouter.put('/cssd/cycles/:id', async (req: AuthedReq, res: Respon
   }
 });
 
-clinicalModulesRouter.get('/cssd/instruments', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.get('/cssd/instruments', auth, async (req: AuthedReq, res: Response) => {
   try {
     const items = await prisma.cSSDInstrument.findMany({
       where: { tenantId: req.user!.tenantId },
@@ -402,7 +406,7 @@ clinicalModulesRouter.get('/cssd/instruments', async (req: AuthedReq, res: Respo
   }
 });
 
-clinicalModulesRouter.post('/cssd/instruments', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.post('/cssd/instruments', auth, async (req: AuthedReq, res: Response) => {
   try {
     const data = { ...req.body, tenantId: req.user!.tenantId };
     const created = await prisma.cSSDInstrument.create({ data });
@@ -416,7 +420,7 @@ clinicalModulesRouter.post('/cssd/instruments', async (req: AuthedReq, res: Resp
 
 // =============== PATHOLOGY ===============
 
-clinicalModulesRouter.get('/pathology/cases', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.get('/pathology/cases', auth, async (req: AuthedReq, res: Response) => {
   try {
     const { status, priority, patientId } = req.query;
     const where: any = { tenantId: req.user!.tenantId };
@@ -431,7 +435,7 @@ clinicalModulesRouter.get('/pathology/cases', async (req: AuthedReq, res: Respon
   }
 });
 
-clinicalModulesRouter.post('/pathology/cases', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.post('/pathology/cases', auth, async (req: AuthedReq, res: Response) => {
   try {
     const data = { ...req.body, tenantId: req.user!.tenantId };
     if (!data.caseNumber) data.caseNumber = `PA${Date.now().toString().slice(-8)}`;
@@ -446,7 +450,7 @@ clinicalModulesRouter.post('/pathology/cases', async (req: AuthedReq, res: Respo
   }
 });
 
-clinicalModulesRouter.put('/pathology/cases/:id', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.put('/pathology/cases/:id', auth, async (req: AuthedReq, res: Response) => {
   try {
     const owned = await prisma.pathologyCase.findFirst({ where: { id: req.params.id, tenantId: req.user!.tenantId } });
     if (!owned) return res.status(404).json({ error: 'Case not found' });
@@ -463,7 +467,7 @@ clinicalModulesRouter.put('/pathology/cases/:id', async (req: AuthedReq, res: Re
 
 // =============== EQUIPMENT MAINTENANCE ===============
 
-clinicalModulesRouter.get('/maintenance/tickets', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.get('/maintenance/tickets', auth, async (req: AuthedReq, res: Response) => {
   try {
     const { status, priority } = req.query;
     const where: any = { tenantId: req.user!.tenantId };
@@ -477,7 +481,7 @@ clinicalModulesRouter.get('/maintenance/tickets', async (req: AuthedReq, res: Re
   }
 });
 
-clinicalModulesRouter.post('/maintenance/tickets', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.post('/maintenance/tickets', auth, async (req: AuthedReq, res: Response) => {
   try {
     const data = { ...req.body, tenantId: req.user!.tenantId };
     if (!data.ticketNumber) data.ticketNumber = `MT${Date.now().toString().slice(-8)}`;
@@ -491,7 +495,7 @@ clinicalModulesRouter.post('/maintenance/tickets', async (req: AuthedReq, res: R
   }
 });
 
-clinicalModulesRouter.put('/maintenance/tickets/:id', async (req: AuthedReq, res: Response) => {
+clinicalModulesRouter.put('/maintenance/tickets/:id', auth, async (req: AuthedReq, res: Response) => {
   try {
     const owned = await prisma.maintenanceTicket.findFirst({ where: { id: req.params.id, tenantId: req.user!.tenantId } });
     if (!owned) return res.status(404).json({ error: 'Ticket not found' });
