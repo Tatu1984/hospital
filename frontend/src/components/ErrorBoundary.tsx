@@ -41,6 +41,21 @@ export class ErrorBoundary extends Component<Props, State> {
     this.setState({ error: null });
   };
 
+  // Recognize the failure mode where Vite's lazy() couldn't fetch a chunk —
+  // typically because a new deploy retired the old hashed filename. The
+  // lazyWithRetry helper auto-reloads once; if we still land here, a
+  // reload didn't help, so present "Reload page" as the primary recovery
+  // and explain why this is happening.
+  static isChunkLoadError(error: Error): boolean {
+    const msg = error?.message || '';
+    return (
+      msg.includes('Failed to fetch dynamically imported module') ||
+      msg.includes('Loading chunk') ||
+      msg.includes('Importing a module script failed') ||
+      msg.includes('error loading dynamically imported module')
+    );
+  }
+
   render(): ReactNode {
     const { error } = this.state;
     if (!error) return this.props.children;
@@ -49,13 +64,18 @@ export class ErrorBoundary extends Component<Props, State> {
       return this.props.fallback(error, this.reset);
     }
 
+    const chunkError = ErrorBoundary.isChunkLoadError(error);
+
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] p-8 text-center">
-        <div className="text-6xl mb-4">⚠️</div>
-        <h2 className="text-2xl font-bold text-slate-800 mb-2">Something went wrong</h2>
+        <div className="text-6xl mb-4">{chunkError ? '🔄' : '⚠️'}</div>
+        <h2 className="text-2xl font-bold text-slate-800 mb-2">
+          {chunkError ? 'A new version is available' : 'Something went wrong'}
+        </h2>
         <p className="text-slate-600 max-w-md mb-2">
-          An unexpected error happened on this page. The rest of the app is still usable —
-          you can go back, refresh, or try again.
+          {chunkError
+            ? 'The app was updated while you had this page open. Reload to get the new version — your work in other tabs is unaffected.'
+            : 'An unexpected error happened on this page. The rest of the app is still usable — you can go back, refresh, or try again.'}
         </p>
         {import.meta.env.DEV && (
           <pre className="text-xs text-left text-rose-700 bg-rose-50 p-3 rounded max-w-2xl overflow-auto mb-4">
@@ -64,18 +84,39 @@ export class ErrorBoundary extends Component<Props, State> {
           </pre>
         )}
         <div className="flex gap-2">
-          <button
-            onClick={this.reset}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-          >
-            Try again
-          </button>
-          <button
-            onClick={() => window.location.reload()}
-            className="px-4 py-2 border border-slate-300 text-slate-700 rounded-md hover:bg-slate-50"
-          >
-            Reload page
-          </button>
+          {chunkError ? (
+            // Reload-first, retry-second: a chunk error almost always
+            // wants a reload, never an in-place retry.
+            <>
+              <button
+                onClick={() => window.location.reload()}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+              >
+                Reload page
+              </button>
+              <button
+                onClick={this.reset}
+                className="px-4 py-2 border border-slate-300 text-slate-700 rounded-md hover:bg-slate-50"
+              >
+                Stay on old version
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={this.reset}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+              >
+                Try again
+              </button>
+              <button
+                onClick={() => window.location.reload()}
+                className="px-4 py-2 border border-slate-300 text-slate-700 rounded-md hover:bg-slate-50"
+              >
+                Reload page
+              </button>
+            </>
+          )}
         </div>
       </div>
     );

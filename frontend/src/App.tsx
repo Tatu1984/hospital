@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react';
+import { Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ToastProvider } from './components/Toast';
@@ -7,6 +7,10 @@ import Login from './pages/Login';
 import NewDashboard from './pages/NewDashboard';
 import DoctorDashboard from './pages/DoctorDashboard';
 import MainLayout from './components/MainLayout';
+// Use lazyWithRetry instead of React.lazy so a stale-chunk fetch (from
+// a deploy that landed while the user had the SPA loaded) auto-reloads
+// the page once instead of crashing into the error boundary.
+import { lazyWithRetry as lazy } from './lib/lazyWithRetry';
 
 // Roles that get the doctor-specific landing dashboard (chart-style: IPD
 // patients grouped by ward + OPD lineup) instead of the generic 34-tile
