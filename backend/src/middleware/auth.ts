@@ -16,6 +16,11 @@ export interface AuthenticatedRequest extends Request {
     // don't, so they're optional and consumers should null-check.
     patientId?: string | null;
     plat?: 'mobile' | 'web';
+    // Per-user permission overrides on top of role-implied permissions.
+    // Always present (defaulted to empty arrays in authenticateToken)
+    // for tokens issued after the role-management feature shipped.
+    extraPermissions?: string[];
+    revokedPermissions?: string[];
   };
 }
 
@@ -67,6 +72,12 @@ export const authenticateToken = (
       roleIds: decoded.roleIds,
       patientId: decoded.patientId ?? null,
       plat: decoded.plat,
+      // Per-user permission overrides — empty arrays for tokens issued
+      // before this feature shipped, populated for newer logins. Used
+      // by requirePermission() to grant or deny on top of the user's
+      // role-implied permission set.
+      extraPermissions: (decoded as any).extraPermissions || [],
+      revokedPermissions: (decoded as any).revokedPermissions || [],
     };
 
     next();

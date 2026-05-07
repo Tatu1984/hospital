@@ -29,8 +29,9 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { Settings, Users, FileText, Activity, Plus, Edit, Trash2, Key, Building2, Mail, Phone, TestTube } from 'lucide-react';
+import { Settings, Users, FileText, Activity, Plus, Edit, Trash2, Key, Building2, Mail, Phone, TestTube, ShieldCheck } from 'lucide-react';
 import LabConfiguration from './LabConfiguration';
+import RoleManagementPanel from '../components/admin/RoleManagementPanel';
 import api from '../services/api';
 import UserFormModal from '../components/UserFormModal';
 
@@ -427,10 +428,14 @@ const SystemControl: React.FC = () => {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-6">
           <TabsTrigger value="users">
             <Users className="mr-2 h-4 w-4" />
             User Management
+          </TabsTrigger>
+          <TabsTrigger value="roles">
+            <ShieldCheck className="mr-2 h-4 w-4" />
+            Roles & Permissions
           </TabsTrigger>
           <TabsTrigger value="settings">
             <Settings className="mr-2 h-4 w-4" />
@@ -748,6 +753,13 @@ const SystemControl: React.FC = () => {
               </Button>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* Roles & Permissions Tab — DB-backed RBAC. Admin can edit
+            existing role permission sets, create custom roles, and
+            disable/delete custom roles. */}
+        <TabsContent value="roles" className="space-y-4">
+          <RoleManagementPanel />
         </TabsContent>
 
         {/* Lab Configuration Tab — master-data screen for lab test catalog

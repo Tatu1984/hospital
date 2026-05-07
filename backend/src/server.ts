@@ -14,8 +14,21 @@ import {
   ROLE_PERMISSIONS,
   ROUTE_MODULES,
   Permission,
-  Role
+  Role,
+  loadRoleCache,
+  listAllPermissions,
 } from './rbac';
+
+// Load DB-backed role cache as soon as the module is imported. Fire-and-
+// forget — the cache starts pre-populated with the hardcoded
+// ROLE_PERMISSIONS defaults from rbac.ts, so even if this Promise hasn't
+// resolved when the first request arrives, permission checks still
+// behave correctly. Once it resolves, custom roles + admin edits
+// become live without a redeploy.
+void loadRoleCache(prisma).catch((err) => {
+  // eslint-disable-next-line no-console
+  console.error('[rbac] failed to load role cache from DB:', err?.message || err);
+});
 
 // Import middleware
 import {
@@ -843,12 +856,20 @@ app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (r
     // accumulated stale failures doesn't trip the lock.
     await clearFailedLogins(user.id);
 
+    // Bake the user's permission overrides into the access token so the
+    // auth middleware doesn't need a DB hit on every request to discover
+    // them. Trade-off: a permission change made by an admin doesn't
+    // take effect for the affected user until their token expires
+    // (max 1 hour) — same trade-off the JWT-based RBAC already has for
+    // role changes.
     const accessTokenPayload = {
       userId: user.id,
       username: user.username,
       tenantId: user.tenantId,
       branchId: user.branchId,
       roleIds: user.roleIds,
+      extraPermissions: user.extraPermissions || [],
+      revokedPermissions: user.revokedPermissions || [],
     };
     const token = jwt.sign(
       accessTokenPayload,
@@ -871,8 +892,11 @@ app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (r
     // frontend and backend are on different *.vercel.app domains.
     setRefreshCookie(res, refreshToken);
 
-    // Get user permissions based on roles
-    const permissions = getUserPermissions(user.roleIds);
+    // Get user permissions based on roles + per-user overrides.
+    const permissions = getUserPermissions(user.roleIds, {
+      extras: user.extraPermissions || [],
+      revoked: user.revokedPermissions || [],
+    });
 
     res.json({
       token,
@@ -1102,13 +1126,18 @@ app.get('/api/auth/me', authenticateToken, async (req: any, res: Response) => {
       include: { tenant: true, branch: true },
     });
     if (!user) return res.status(401).json({ error: 'Session invalid' });
-    const permissions = getUserPermissions(user.roleIds);
+    const permissions = getUserPermissions(user.roleIds, {
+      extras: user.extraPermissions || [],
+      revoked: user.revokedPermissions || [],
+    });
     return res.json({
       id: user.id,
       username: user.username,
       name: user.name,
       email: user.email,
       roleIds: user.roleIds,
+      extraPermissions: user.extraPermissions || [],
+      revokedPermissions: user.revokedPermissions || [],
       permissions,
       tenant: user.tenant,
       branch: user.branch,
@@ -6714,6 +6743,177 @@ app.post('/api/users/:id/reset-password', authenticateToken, async (req: any, re
 });
 
 // Get audit logs
+// =====================================================================
+// Role + Permission management (DB-backed RBAC).
+//
+// Roles are persisted in the `roles` table; the in-memory cache in
+// rbac.ts is reloaded after every mutation so requirePermission() picks
+// up changes immediately. The permission catalogue is code-driven (the
+// Permission union type in rbac.ts) — admins can pick from the existing
+// set when defining a role; adding a brand-new permission code still
+// requires a backend change because route gates are code, not data.
+// =====================================================================
+
+// List all defined permissions (read-only). Used by the admin role
+// editor to render a checklist.
+app.get('/api/admin/permissions', authenticateToken, requirePermission('users:manage'), async (_req: any, res: Response) => {
+  res.json(listAllPermissions());
+});
+
+// List roles. Includes both system-seeded roles (isSystem=true) and
+// any custom roles the tenant has created.
+app.get('/api/admin/roles', authenticateToken, requirePermission('users:view'), async (_req: any, res: Response) => {
+  try {
+    const rows = await prisma.role.findMany({
+      where: { isActive: true },
+      orderBy: [{ isSystem: 'desc' }, { name: 'asc' }],
+    });
+    res.json(rows);
+  } catch (error) {
+    console.error('list roles error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Create a custom role. ID is auto-generated UUID; isSystem is forced
+// to false. Permissions are validated against the catalogue.
+app.post('/api/admin/roles', authenticateToken, requirePermission('users:manage'), async (req: any, res: Response) => {
+  try {
+    const { name, description, permissions, tenantId } = req.body || {};
+    if (!name || typeof name !== 'string') {
+      return res.status(400).json({ error: 'name is required' });
+    }
+    const allowedPerms = new Set(listAllPermissions().map((p) => p.code));
+    const cleanedPerms = (Array.isArray(permissions) ? permissions : [])
+      .filter((p: string) => allowedPerms.has(p as Permission));
+    const created = await prisma.role.create({
+      data: {
+        // ID = uppercase-snake-cased name so it's a sensible string in
+        // User.roleIds. Append a short suffix if collision.
+        id: await uniqueRoleId(prisma, name),
+        tenantId: tenantId || req.user.tenantId,
+        name,
+        description: description || null,
+        permissions: cleanedPerms,
+        isSystem: false,
+        isActive: true,
+      },
+    });
+    await loadRoleCache(prisma);
+    auditLogger.securityEvent('ROLE_CREATED', { roleId: created.id, by: req.user.userId });
+    res.status(201).json(created);
+  } catch (error) {
+    console.error('create role error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update a role's name/description/permissions. System roles can be
+// edited (their permission lists), but their id+isSystem are locked.
+app.put('/api/admin/roles/:id', authenticateToken, requirePermission('users:manage'), async (req: any, res: Response) => {
+  try {
+    const owned = await prisma.role.findUnique({ where: { id: req.params.id } });
+    if (!owned) return res.status(404).json({ error: 'Role not found' });
+
+    const { name, description, permissions, isActive } = req.body || {};
+    const allowedPerms = new Set(listAllPermissions().map((p) => p.code));
+    const data: any = {};
+    if (name !== undefined) data.name = name;
+    if (description !== undefined) data.description = description;
+    if (Array.isArray(permissions)) {
+      data.permissions = permissions.filter((p: string) => allowedPerms.has(p as Permission) || p === '*');
+    }
+    if (typeof isActive === 'boolean' && !owned.isSystem) data.isActive = isActive;
+
+    const updated = await prisma.role.update({ where: { id: req.params.id }, data });
+    await loadRoleCache(prisma);
+    auditLogger.securityEvent('ROLE_UPDATED', { roleId: updated.id, by: req.user.userId });
+    res.json(updated);
+  } catch (error) {
+    console.error('update role error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete a custom role. System roles cannot be deleted (would leave
+// existing users with dangling roleIds). Admin can disable instead.
+app.delete('/api/admin/roles/:id', authenticateToken, requirePermission('users:manage'), async (req: any, res: Response) => {
+  try {
+    const owned = await prisma.role.findUnique({ where: { id: req.params.id } });
+    if (!owned) return res.status(404).json({ error: 'Role not found' });
+    if (owned.isSystem) {
+      return res.status(403).json({ error: 'System roles cannot be deleted. Use isActive=false to disable.' });
+    }
+    // Refuse delete if any active user still has this role.
+    const inUse = await prisma.user.count({
+      where: { isActive: true, roleIds: { has: req.params.id } },
+    });
+    if (inUse > 0) {
+      return res.status(409).json({
+        error: 'Role still assigned to users',
+        message: `${inUse} active user(s) still reference this role. Reassign them first.`,
+      });
+    }
+    await prisma.role.delete({ where: { id: req.params.id } });
+    await loadRoleCache(prisma);
+    auditLogger.securityEvent('ROLE_DELETED', { roleId: req.params.id, by: req.user.userId });
+    res.status(204).end();
+  } catch (error) {
+    console.error('delete role error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Helper — derive a friendly ID from a role name. Lowercase snake_case
+// (e.g. "Lab Manager" → "lab_manager"). Append a numeric suffix if a
+// row already exists with that ID.
+async function uniqueRoleId(prisma: any, name: string): Promise<string> {
+  const base = String(name).trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'ROLE';
+  let id = base;
+  let n = 2;
+  while (await prisma.role.findUnique({ where: { id } })) {
+    id = `${base}_${n++}`;
+    if (n > 50) break;
+  }
+  return id;
+}
+
+// Update per-user permission overrides. Used by the user-edit form to
+// grant or revoke a specific permission for one user without creating
+// a new role. Touches only the two override columns; other fields go
+// through the existing /api/users/:id endpoint.
+app.put('/api/users/:id/permission-overrides', authenticateToken, requirePermission('users:manage'), async (req: any, res: Response) => {
+  try {
+    const { extraPermissions, revokedPermissions } = req.body || {};
+    const owned = await prisma.user.findFirst({ where: { id: req.params.id, tenantId: req.user.tenantId } });
+    if (!owned) return res.status(404).json({ error: 'User not found' });
+    const allowedPerms = new Set(listAllPermissions().map((p) => p.code));
+    const cleanExtras = (Array.isArray(extraPermissions) ? extraPermissions : [])
+      .filter((p: string) => allowedPerms.has(p as Permission));
+    const cleanRevoked = (Array.isArray(revokedPermissions) ? revokedPermissions : [])
+      .filter((p: string) => allowedPerms.has(p as Permission));
+    const updated = await prisma.user.update({
+      where: { id: req.params.id },
+      data: { extraPermissions: cleanExtras, revokedPermissions: cleanRevoked },
+    });
+    auditLogger.securityEvent('USER_PERMS_OVERRIDE', { userId: updated.id, by: req.user.userId, extras: cleanExtras, revoked: cleanRevoked });
+    void writeAudit({
+      prisma, req,
+      userId: req.user.userId, tenantId: req.user.tenantId,
+      action: 'USER_PERMS_OVERRIDE', resource: 'User', resourceId: updated.id,
+      newValue: { extraPermissions: cleanExtras, revokedPermissions: cleanRevoked },
+    });
+    res.json({
+      id: updated.id,
+      extraPermissions: updated.extraPermissions,
+      revokedPermissions: updated.revokedPermissions,
+    });
+  } catch (error) {
+    console.error('user perm override error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.get('/api/audit-logs', authenticateToken, async (req: any, res: Response) => {
   try {
     const { module, dateFrom, dateTo, action, userId } = req.query;

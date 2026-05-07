@@ -108,6 +108,14 @@ model User {
   // qualifications, specialization, registration #, joining date, etc.
   // JSON keeps the schema stable while the admin form evolves.
   profile             Json?
+  // Per-user permission overrides on top of the union of permissions
+  // implied by roleIds. extraPermissions are added; revokedPermissions
+  // are subtracted (revoke wins over add). Stored as bare permission
+  // strings like 'patients:view'. Most users have neither array
+  // populated; this is for the rare exception where a single user
+  // should have one extra ability or one fewer than their role.
+  extraPermissions    String[]        @default([])
+  revokedPermissions  String[]        @default([])
   createdAt           DateTime        @default(now())
   updatedAt           DateTime        @updatedAt
   admissions          Admission[]     @relation("AdmittingDoctor")
@@ -122,6 +130,32 @@ model User {
   tenant              Tenant          @relation(fields: [tenantId], references: [id])
 
   @@map("users")
+}
+
+// Roles + permission lists. ID-as-string lets system roles keep their
+// legacy names ('ADMIN', 'DOCTOR', 'NURSE', ...) so existing User.roleIds
+// references stay valid. Custom roles get a UUID. tenantId NULL = global
+// system role, otherwise = tenant-specific custom role. isSystem prevents
+// admins from deleting the seeded baseline roles.
+//
+// permissions is a string array of 'resource:action' codes (e.g.
+// 'patients:view'). The full catalogue lives in the Permission union
+// type in src/rbac.ts — that union is what the route registry checks
+// against, so it must stay in sync. We seed the system roles from the
+// hardcoded ROLE_PERMISSIONS_DEFAULTS map on boot.
+model Role {
+  id          String   @id
+  tenantId    String?
+  name        String
+  description String?
+  permissions String[] @default([])
+  isSystem    Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId])
+  @@map("roles")
 }
 
 // Refresh-token blacklist. Logout writes the SHA-256 hash of the refresh

@@ -144,6 +144,15 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   // ('dashboard:view') because the user's *own* password is not
   // privileged data they don't already have.
   'POST /api/auth/change-password': ['dashboard:view'],
+  // Per-user permission overrides — admin grants/revokes individual
+  // permissions on top of role-implied permissions for one user.
+  'PUT /api/users/:id/permission-overrides': ['users:manage'],
+  // Role + permission catalogue admin (DB-backed RBAC).
+  'GET /api/admin/permissions': ['users:manage'],
+  'GET /api/admin/roles': ['users:view'],
+  'POST /api/admin/roles': ['users:manage'],
+  'PUT /api/admin/roles/:id': ['users:manage'],
+  'DELETE /api/admin/roles/:id': ['users:manage'],
   'GET /api/doctors': ['patients:view'],
   'GET /api/referral-doctors': ['commissions:view'],
   'GET /api/audit-logs': ['system:manage'],

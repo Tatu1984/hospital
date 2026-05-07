@@ -500,13 +500,104 @@ export const ROUTE_MODULES: Record<string, Permission[]> = {
   '/system-control': ['system:manage'],
 };
 
-// Helper function to check if user has a specific permission
-export function hasPermission(userRoles: string[], permission: Permission): boolean {
+// =====================================================================
+// DB-backed role cache.
+//
+// Roles used to be a hardcoded TS map (ROLE_PERMISSIONS above). They're
+// now rows in the `roles` table so admins can create/edit/delete custom
+// roles without a code change. To keep the existing sync API of the
+// hasPermission / requirePermission middleware, we cache the role →
+// permissions mapping in memory and refresh it on boot + after any
+// role mutation. The hardcoded ROLE_PERMISSIONS above is treated as
+// the seed defaults: on boot we make sure each system role exists in
+// the DB and matches its hardcoded permission list, then load the DB
+// rows into the cache.
+// =====================================================================
+
+// In-memory cache. Keys are role IDs (string), values are permission
+// arrays. Populated by loadRoleCache() at boot and after writes.
+let rolePermissionsCache: Record<string, Permission[]> = { ...ROLE_PERMISSIONS } as any;
+
+export function getCachedRolePermissions(roleId: string): Permission[] | undefined {
+  return rolePermissionsCache[roleId];
+}
+
+export function getAllCachedRoles(): Array<{ id: string; permissions: Permission[] }> {
+  return Object.entries(rolePermissionsCache).map(([id, permissions]) => ({ id, permissions }));
+}
+
+// Refresh the cache from the DB. Call this after any mutation to a
+// role (create / update / delete). The seedSystemRoles function is
+// invoked first so the cache always sees the seeded baseline even on
+// a fresh database.
+export async function loadRoleCache(prisma: any): Promise<void> {
+  await seedSystemRoles(prisma);
+  const rows = await prisma.role.findMany({ where: { isActive: true } });
+  const next: Record<string, Permission[]> = {};
+  for (const r of rows) next[r.id] = r.permissions as Permission[];
+  // Fall back to hardcoded defaults for any role missing in the DB
+  // (e.g. ADMIN before seedSystemRoles runs successfully on first boot).
+  for (const [id, perms] of Object.entries(ROLE_PERMISSIONS)) {
+    if (!next[id]) next[id] = perms as Permission[];
+  }
+  rolePermissionsCache = next;
+}
+
+// Idempotent insert of the system roles. Re-run on every boot — only
+// inserts rows that don't already exist. After first run, admins can
+// edit the permissions list freely; subsequent boots won't overwrite
+// their changes (we only insert rows that are absent).
+export async function seedSystemRoles(prisma: any): Promise<void> {
+  const SYSTEM_ROLE_LABELS: Record<string, string> = {
+    ADMIN: 'Administrator',
+    DOCTOR: 'Doctor',
+    NURSE: 'Nurse',
+    FRONT_OFFICE: 'Front Office',
+    BILLING: 'Billing',
+    LAB_TECH: 'Lab Technician',
+    RADIOLOGY_TECH: 'Radiology Technician',
+    PHARMACIST: 'Pharmacist',
+    EMERGENCY: 'Emergency',
+    ICU: 'ICU',
+    OT: 'Operation Theatre',
+    IPD: 'IPD Coordinator',
+    HR: 'HR Manager',
+    INVENTORY: 'Inventory Manager',
+    HOUSEKEEPING: 'Housekeeping',
+    DIET: 'Diet & Kitchen',
+    AMBULANCE: 'Ambulance',
+    BLOOD_BANK: 'Blood Bank',
+    QUALITY: 'Quality',
+  };
+  for (const [id, perms] of Object.entries(ROLE_PERMISSIONS)) {
+    const existing = await prisma.role.findUnique({ where: { id } });
+    if (existing) continue;
+    await prisma.role.create({
+      data: {
+        id,
+        name: SYSTEM_ROLE_LABELS[id] || id,
+        description: `Seeded system role — ${id}`,
+        permissions: perms as string[],
+        isSystem: true,
+        isActive: true,
+      },
+    });
+  }
+}
+
+// Helper function to check if user has a specific permission. Now
+// honors per-user extra/revoked permission overrides if a third arg
+// is passed; existing callers that only pass roleIds keep working.
+export function hasPermission(
+  userRoles: string[],
+  permission: Permission,
+  overrides?: { extras?: string[]; revoked?: string[] },
+): boolean {
+  if (overrides?.revoked?.includes(permission as string)) return false;
+  if (overrides?.extras?.includes(permission as string)) return true;
   for (const role of userRoles) {
-    const rolePermissions = ROLE_PERMISSIONS[role as Role];
-    if (rolePermissions && rolePermissions.includes(permission)) {
-      return true;
-    }
+    const rolePermissions = rolePermissionsCache[role];
+    if (rolePermissions && rolePermissions.includes(permission)) return true;
   }
   return false;
 }
@@ -521,33 +612,75 @@ export function hasAllPermissions(userRoles: string[], permissions: Permission[]
   return permissions.every(permission => hasPermission(userRoles, permission));
 }
 
-// Get all permissions for a user based on their roles
-export function getUserPermissions(userRoles: string[]): Permission[] {
+// Get all permissions for a user based on their roles + optional
+// per-user extra/revoked overrides. revoked wins over extras.
+export function getUserPermissions(
+  userRoles: string[],
+  overrides?: { extras?: string[]; revoked?: string[] },
+): Permission[] {
   const permissions = new Set<Permission>();
   for (const role of userRoles) {
-    const rolePermissions = ROLE_PERMISSIONS[role as Role];
-    if (rolePermissions) {
-      rolePermissions.forEach(p => permissions.add(p));
-    }
+    const rolePermissions = rolePermissionsCache[role];
+    if (rolePermissions) rolePermissions.forEach(p => permissions.add(p));
   }
+  if (overrides?.extras) overrides.extras.forEach(p => permissions.add(p as Permission));
+  if (overrides?.revoked) overrides.revoked.forEach(p => permissions.delete(p as Permission));
   return Array.from(permissions);
 }
 
-// Middleware to require specific permission(s)
+// Middleware to require specific permission(s). Honors the user's
+// per-user overrides written to req.user by the auth middleware.
 export function requirePermission(...permissions: Permission[]) {
   return (req: any, res: Response, next: NextFunction) => {
     const userRoles = req.user?.roleIds || [];
-
-    if (!hasAnyPermission(userRoles, permissions)) {
+    const overrides = {
+      extras: req.user?.extraPermissions || [],
+      revoked: req.user?.revokedPermissions || [],
+    };
+    const hasAny = permissions.some((p) => hasPermission(userRoles, p, overrides));
+    if (!hasAny) {
       return res.status(403).json({
         error: 'Access denied',
         message: 'You do not have permission to perform this action',
         required: permissions
       });
     }
-
     next();
   };
+}
+
+// Master list of every defined permission, used by the admin UI to
+// render a checklist when creating/editing roles. This stays in code
+// because the Permission union type is what the route registry checks
+// against — adding a permission requires both adding it here and using
+// it on a route, both of which are code changes.
+export function listAllPermissions(): { code: Permission; group: string }[] {
+  // Heuristic grouping: split on first colon.
+  const seen = new Set<string>();
+  const all: Permission[] = [];
+  for (const perms of Object.values(ROLE_PERMISSIONS)) {
+    for (const p of perms) {
+      if (typeof p === 'string' && !seen.has(p) && (p as string) !== '*') {
+        seen.add(p);
+        all.push(p);
+      }
+    }
+  }
+  // Plus a curated extra list for permissions that may not yet be on
+  // any seeded role but are referenced by the route registry.
+  const extras: Permission[] = [
+    'dialysis:view', 'dialysis:create', 'dialysis:update', 'dialysis:manage',
+    'mortuary:view', 'mortuary:create', 'mortuary:update', 'mortuary:manage',
+    'physio:view', 'physio:create', 'physio:update',
+    'pathology:view', 'pathology:create', 'pathology:update',
+    'phlebotomy:view', 'phlebotomy:create', 'phlebotomy:update',
+  ];
+  for (const p of extras) {
+    if (!seen.has(p)) { seen.add(p); all.push(p); }
+  }
+  return all
+    .map((code) => ({ code, group: typeof code === 'string' && code.includes(':') ? code.split(':')[0] : 'other' }))
+    .sort((a, b) => a.group.localeCompare(b.group) || a.code.localeCompare(b.code));
 }
 
 // Middleware to require specific role(s)
