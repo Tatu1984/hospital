@@ -112,6 +112,18 @@ export type Permission =
   // CSSD
   | 'cssd:view' | 'cssd:create' | 'cssd:update' | 'cssd:manage'
 
+  // Dialysis
+  | 'dialysis:view' | 'dialysis:create' | 'dialysis:update' | 'dialysis:manage'
+
+  // Mortuary
+  | 'mortuary:view' | 'mortuary:create' | 'mortuary:update' | 'mortuary:manage'
+
+  // Physiotherapy
+  | 'physio:view' | 'physio:create' | 'physio:update'
+
+  // Pathology
+  | 'pathology:view' | 'pathology:create' | 'pathology:update'
+
   // HR Extended (already have hr:view and hr:manage)
   | 'hr:create'
 
@@ -172,6 +184,10 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'payroll:view', 'payroll:create', 'payroll:edit',
     'accounting:view', 'accounting:create', 'accounting:edit',
     'cssd:view', 'cssd:create', 'cssd:update', 'cssd:manage',
+    'dialysis:view', 'dialysis:create', 'dialysis:update', 'dialysis:manage',
+    'mortuary:view', 'mortuary:create', 'mortuary:update', 'mortuary:manage',
+    'physio:view', 'physio:create', 'physio:update',
+    'pathology:view', 'pathology:create', 'pathology:update',
     'reports:view', 'reports:export',
     'analytics:view',
     'master_data:view', 'master_data:edit',
@@ -207,6 +223,10 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'billing:view',
     'invoices:view',
     'health-checkup:view', 'health-checkup:create',
+    'dialysis:view', 'dialysis:create', 'dialysis:update',
+    'physio:view', 'physio:create', 'physio:update',
+    'pathology:view', 'pathology:create', 'pathology:update',
+    'mortuary:view', 'mortuary:create',
     'reports:view',
   ],
 

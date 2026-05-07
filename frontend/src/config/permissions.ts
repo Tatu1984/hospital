@@ -59,7 +59,9 @@ export const rolePermissions: Record<Role, string[]> = {
     'operation-theatre', 'pharmacy', 'doctor-assistant', 'video-conversation',
     'nurse-station', 'mrd-management', 'dicom-pacs', 'billing',
     // My Earnings — doctor's personal payout/finance page.
-    'my-earnings'
+    'my-earnings',
+    // New clinical modules
+    'dialysis', 'physiotherapy', 'mortuary',
   ],
 
   // NURSE - Patient care focus

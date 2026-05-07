@@ -74,6 +74,7 @@ const MainLayout = () => {
         { path: '/emergency', icon: AlertCircle, label: 'Emergency' },
         { path: '/icu', icon: Heart, label: 'ICU' },
         { path: '/operation-theatre', icon: Scissors, label: 'OT' },
+        { path: '/dialysis', icon: Activity, label: 'Dialysis' },
       ]
     },
     {

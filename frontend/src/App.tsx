@@ -72,6 +72,7 @@ const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const SurgeryTracker = lazy(() => import('./pages/SurgeryTracker'));
 const PatientChart = lazy(() => import('./pages/PatientChart'));
 const DoctorFinance = lazy(() => import('./pages/DoctorFinance'));
+const Dialysis = lazy(() => import('./pages/Dialysis'));
 
 // Some smaller modules still live in AllModules.tsx — split that into one
 // async chunk. Each named import resolves once the chunk loads.
@@ -218,6 +219,8 @@ const AppRoutes = () => {
             Page itself only fetches the caller's own DoctorRevenue rows
             so additional RBAC gating would be redundant. */}
         <Route path="my-earnings" element={<RoleProtectedRoute path="my-earnings"><DoctorFinance /></RoleProtectedRoute>} />
+        {/* Dialysis / Nephrology — clinical module */}
+        <Route path="dialysis" element={<RoleProtectedRoute path="dialysis"><Dialysis /></RoleProtectedRoute>} />
 
         {/* Core Clinical Modules */}
         <Route path="patients" element={<RoleProtectedRoute path="patients"><PatientRegistration /></RoleProtectedRoute>} />

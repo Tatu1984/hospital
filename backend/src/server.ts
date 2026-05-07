@@ -363,6 +363,15 @@ app.get('/health', (req: Request, res: Response) => {
 // stays cleanly separable from the desktop portal routes that follow below.
 app.use('/api/mobile/v1', mobileRouter);
 
+// Clinical/operational module endpoints (dialysis, mortuary, phlebotomy
+// rounds, physiotherapy, CSSD, pathology, equipment maintenance). The
+// router applies authenticateToken internally (at the top, before any
+// routes) so we don't accidentally gate non-auth routes (login,
+// health) by mounting auth at /api globally. RBAC keys are registered
+// in routes/index.ts.
+import { clinicalModulesRouter } from './clinical-modules';
+app.use('/api', clinicalModulesRouter);
+
 app.get('/api/health', async (req: Request, res: Response) => {
   const healthCheck = {
     status: 'ok',

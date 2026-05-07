@@ -310,6 +310,14 @@ const modules = [
     icon: UserPlus,
     color: 'from-blue-800 to-blue-900',
     path: '/doctor-registration'
+  },
+  {
+    id: 'dialysis',
+    title: 'Dialysis',
+    description: 'Nephrology — sessions, machines, vascular access',
+    icon: Activity,
+    color: 'from-rose-500 to-rose-600',
+    path: '/dialysis'
   }
 ];
 

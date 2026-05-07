@@ -1367,6 +1367,323 @@ model Payslip {
 }
 
 // ===========================
+// DIALYSIS / NEPHROLOGY
+// ===========================
+
+// One physical dialysis machine/chair. Status reflects current state so
+// scheduling can avoid double-booking and maintenance can be tracked.
+model DialysisMachine {
+  id            String            @id @default(uuid())
+  tenantId      String
+  branchId      String?
+  machineName   String
+  machineCode   String
+  modality      String            @default("HD") // HD = haemodialysis, HDF, PD, SLED
+  manufacturer  String?
+  model         String?
+  serialNumber  String?
+  installDate   DateTime?
+  lastServiceAt DateTime?
+  status        String            @default("available") // available, in_use, maintenance, retired
+  location      String?
+  notes         String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  sessions      DialysisSession[]
+
+  @@unique([tenantId, machineCode])
+  @@index([tenantId])
+  @@map("dialysis_machines")
+}
+
+// One dialysis session for a patient. Pre/post weights + UF volume +
+// session duration are the headline clinical numbers; vascular access
+// type matters for nursing technique. Status drives the workflow:
+// scheduled → in_progress → completed | cancelled.
+model DialysisSession {
+  id             String           @id @default(uuid())
+  tenantId       String
+  patientId      String
+  machineId      String?
+  nephrologistId String? // FK to User
+  nurseId        String? // FK to User
+  scheduledDate  DateTime
+  scheduledTime  String?
+  startedAt      DateTime?
+  endedAt        DateTime?
+  durationMin    Int? // typically 240 for HD
+  modality       String           @default("HD")
+  vascularAccess String? // AVF, AVG, central catheter (right IJ / fem), peritoneal
+  dialyzer       String? // make + flux
+  bloodFlowRate  Int? // ml/min, typical 250-400
+  dialysateFlow  Int? // ml/min, typical 500
+  ufGoalMl       Int? // ultrafiltration goal in mL
+  ufActualMl     Int? // actually removed
+  preWeightKg    Decimal?         @db.Decimal(5, 2)
+  postWeightKg   Decimal?         @db.Decimal(5, 2)
+  preBpSys       Int?
+  preBpDia       Int?
+  postBpSys      Int?
+  postBpDia      Int?
+  heparin        String? // dose + protocol
+  complications  String?
+  notes          String?
+  status         String           @default("scheduled") // scheduled, in_progress, completed, cancelled, missed
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  machine        DialysisMachine? @relation(fields: [machineId], references: [id])
+
+  @@index([tenantId])
+  @@index([patientId])
+  @@index([scheduledDate])
+  @@map("dialysis_sessions")
+}
+
+// ===========================
+// MORTUARY
+// ===========================
+
+// Deceased registry + cold-storage tracking. Body number is what the
+// hospital uses to identify the case (separate from the patient's MRN).
+model MortuaryRecord {
+  id              String    @id @default(uuid())
+  tenantId        String
+  patientId       String? // null for unidentified bodies
+  bodyNumber      String
+  deceasedName    String
+  age             Int?
+  gender          String?
+  contact         String?
+  dateOfDeath     DateTime
+  causeOfDeath    String?
+  doctorOnDuty    String? // FK to User but lazy
+  fridgeUnit      String? // unit identifier within mortuary
+  shelfNumber     String?
+  storedAt        DateTime?
+  releasedAt      DateTime?
+  releasedTo      String? // family contact name + relationship
+  releaseAuthBy   String? // who authorised release
+  autopsyRequired Boolean   @default(false)
+  autopsyAt       DateTime?
+  autopsyFindings String?
+  remarks         String?
+  status          String    @default("stored") // stored, released, autopsy, transferred
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([tenantId, bodyNumber])
+  @@index([tenantId])
+  @@map("mortuary_records")
+}
+
+// ===========================
+// PHLEBOTOMY (sample collection rounds)
+// ===========================
+
+// A round = one phlebotomist's batch of collections during a shift.
+// Individual sample collection links back to the existing Order model.
+model PhlebotomyRound {
+  id            String   @id @default(uuid())
+  tenantId      String
+  branchId      String?
+  phlebotomist  String? // FK to User
+  shift         String? // morning, afternoon, night
+  scheduledDate DateTime
+  area          String? // OPD, IPD ward, home-collection route
+  totalSamples  Int      @default(0)
+  collected     Int      @default(0)
+  rejected      Int      @default(0)
+  status        String   @default("planned") // planned, in_progress, completed
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([scheduledDate])
+  @@map("phlebotomy_rounds")
+}
+
+// ===========================
+// PHYSIOTHERAPY
+// ===========================
+
+// A treatment plan defines goals + protocol for a course of therapy.
+// Sessions roll up to a plan; a plan can span weeks.
+model PhysioPlan {
+  id             String          @id @default(uuid())
+  tenantId       String
+  patientId      String
+  therapistId    String? // FK to User
+  diagnosis      String?
+  goals          String?
+  protocol       String? // exercises, modalities, frequency, duration
+  totalSessions  Int             @default(10)
+  completedCount Int             @default(0)
+  startDate      DateTime
+  endDate        DateTime?
+  status         String          @default("active") // active, paused, completed, cancelled
+  notes          String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  sessions       PhysioSession[]
+
+  @@index([tenantId])
+  @@index([patientId])
+  @@map("physio_plans")
+}
+
+model PhysioSession {
+  id            String      @id @default(uuid())
+  tenantId      String
+  planId        String?
+  patientId     String
+  therapistId   String?
+  scheduledDate DateTime
+  scheduledTime String?
+  durationMin   Int?
+  modalities    String? // ultrasound, TENS, IFT, hot pack, exercises
+  exercises     String?
+  painPre       Int? // VAS 0-10
+  painPost      Int?
+  rangeOfMotion String?
+  notes         String?
+  status        String      @default("scheduled") // scheduled, completed, no_show, cancelled
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  plan          PhysioPlan? @relation(fields: [planId], references: [id])
+
+  @@index([tenantId])
+  @@index([patientId])
+  @@index([scheduledDate])
+  @@map("physio_sessions")
+}
+
+// ===========================
+// CSSD (Central Sterile Supply Department)
+// ===========================
+
+// One sterilization cycle on an autoclave / ETO chamber. Items in the
+// cycle are referenced by pack name (item-level tracking is a future
+// iteration once barcode-on-pack is rolled out).
+model SterilizationCycle {
+  id                  String    @id @default(uuid())
+  tenantId            String
+  cycleNumber         String
+  machineId           String? // autoclave / ETO machine
+  machineName         String?
+  cycleType           String // steam, ETO, plasma
+  loadType            String? // instrument, linen, glassware
+  startedAt           DateTime
+  endedAt             DateTime?
+  temperatureC        Decimal?  @db.Decimal(5, 1)
+  pressureBar         Decimal?  @db.Decimal(4, 2)
+  durationMin         Int?
+  loadCount           Int?
+  biologicalIndicator String? // pass, fail, pending
+  chemicalIndicator   String? // pass, fail
+  releasedBy          String?
+  status              String    @default("running") // running, completed, failed, recalled
+  notes               String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@unique([tenantId, cycleNumber])
+  @@index([tenantId])
+  @@map("sterilization_cycles")
+}
+
+model CSSDInstrument {
+  id               String    @id @default(uuid())
+  tenantId         String
+  instrumentCode   String
+  name             String
+  category         String? // surgical, dental, ENT, etc.
+  status           String    @default("available") // available, in_use, sterilizing, damaged, retired
+  lastSterilizedAt DateTime?
+  expiresAt        DateTime?
+  location         String?
+  notes            String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([tenantId, instrumentCode])
+  @@index([tenantId])
+  @@map("cssd_instruments")
+}
+
+// ===========================
+// PATHOLOGY (specialized cases beyond routine lab)
+// ===========================
+
+// One pathology case: histopath, cytology, IHC, frozen section. Linked
+// to a patient + referring doctor; specimens come in, get grossed,
+// processed, examined, reported. Status drives the workflow.
+model PathologyCase {
+  id                  String    @id @default(uuid())
+  tenantId            String
+  caseNumber          String
+  patientId           String
+  referringDoctor     String? // FK to User but lazy
+  pathologistId       String? // FK to User
+  caseType            String // histopath, cytology, frozen_section, IHC, FNAC
+  specimenSource      String? // skin, breast, GI, cervix, etc.
+  clinicalHistory     String?
+  grossDescription    String?
+  microscopicFindings String?
+  impression          String?
+  ihcMarkers          Json? // array of { marker, result }
+  receivedAt          DateTime  @default(now())
+  reportedAt          DateTime?
+  status              String    @default("received") // received, grossing, processing, examined, reported, amended
+  priority            String    @default("routine") // routine, urgent, frozen
+  remarks             String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@unique([tenantId, caseNumber])
+  @@index([tenantId])
+  @@index([patientId])
+  @@map("pathology_cases")
+}
+
+// ===========================
+// EQUIPMENT MAINTENANCE
+// ===========================
+
+// Maintenance ticket against an asset. Type covers preventive +
+// corrective + AMC visits. Linked to existing Asset model so the asset
+// page can show its maintenance history.
+model MaintenanceTicket {
+  id            String    @id @default(uuid())
+  tenantId      String
+  ticketNumber  String
+  assetId       String? // FK to Asset (legacy; not all assets are in the model yet)
+  assetName     String
+  assetCategory String? // imaging, ICU, OT, lab
+  type          String // preventive, corrective, calibration, amc
+  priority      String    @default("normal") // urgent, normal, low
+  reportedBy    String?
+  assignedTo    String? // technician name or vendor
+  vendor        String?
+  reportedAt    DateTime  @default(now())
+  startedAt     DateTime?
+  completedAt   DateTime?
+  description   String
+  rootCause     String?
+  partsReplaced String?
+  costAmount    Decimal?  @db.Decimal(10, 2)
+  downtimeHours Decimal?  @db.Decimal(6, 2)
+  status        String    @default("open") // open, in_progress, on_hold, completed, cancelled
+  notes         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([tenantId, ticketNumber])
+  @@index([tenantId])
+  @@map("maintenance_tickets")
+}
+
+// ===========================
 // AMBULANCE MANAGEMENT
 // ===========================
 

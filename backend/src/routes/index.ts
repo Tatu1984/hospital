@@ -396,8 +396,49 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   'PUT /api/diet/orders/:id': ['diet:manage'],
   'GET /api/cssd/cycles': ['cssd:view'],
   'POST /api/cssd/cycles': ['cssd:create'],
+  'PUT /api/cssd/cycles/:id': ['cssd:update'],
   'PUT /api/cssd/cycles/:id/complete': ['cssd:update'],
   'GET /api/cssd/instruments': ['cssd:view'],
+  'POST /api/cssd/instruments': ['cssd:create'],
+
+  // Dialysis (machines + sessions)
+  'GET /api/dialysis/machines': ['dialysis:view'],
+  'POST /api/dialysis/machines': ['dialysis:manage'],
+  'PUT /api/dialysis/machines/:id': ['dialysis:manage'],
+  'DELETE /api/dialysis/machines/:id': ['dialysis:manage'],
+  'GET /api/dialysis/sessions': ['dialysis:view'],
+  'POST /api/dialysis/sessions': ['dialysis:create'],
+  'PUT /api/dialysis/sessions/:id': ['dialysis:update'],
+  'DELETE /api/dialysis/sessions/:id': ['dialysis:manage'],
+
+  // Mortuary
+  'GET /api/mortuary': ['mortuary:view'],
+  'POST /api/mortuary': ['mortuary:create'],
+  'PUT /api/mortuary/:id': ['mortuary:update'],
+  'DELETE /api/mortuary/:id': ['mortuary:manage'],
+
+  // Phlebotomy collection rounds
+  'GET /api/phlebotomy/rounds': ['lab:view'],
+  'POST /api/phlebotomy/rounds': ['lab:create'],
+  'PUT /api/phlebotomy/rounds/:id': ['lab:edit'],
+
+  // Physiotherapy plans + sessions
+  'GET /api/physio/plans': ['physio:view'],
+  'POST /api/physio/plans': ['physio:create'],
+  'PUT /api/physio/plans/:id': ['physio:update'],
+  'GET /api/physio/sessions': ['physio:view'],
+  'POST /api/physio/sessions': ['physio:create'],
+  'PUT /api/physio/sessions/:id': ['physio:update'],
+
+  // Pathology cases
+  'GET /api/pathology/cases': ['pathology:view'],
+  'POST /api/pathology/cases': ['pathology:create'],
+  'PUT /api/pathology/cases/:id': ['pathology:update'],
+
+  // Equipment maintenance tickets
+  'GET /api/maintenance/tickets': ['inventory:view'],
+  'POST /api/maintenance/tickets': ['inventory:manage'],
+  'PUT /api/maintenance/tickets/:id': ['inventory:manage'],
 
   // Quality
   'GET /api/quality/incidents': ['quality:view'],
