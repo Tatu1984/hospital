@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { generateRadiologyReportPDF } from '../utils/pdfGenerator';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Plus, Scan, FileImage, CheckCircle, Calendar } from 'lucide-react';
@@ -503,7 +504,22 @@ export default function Radiology() {
                               </Button>
                             )}
                             {order.status === 'completed' && order.results && order.results.length > 0 && (
-                              <Button variant="outline" size="sm">
+                              <Button variant="outline" size="sm" onClick={() => {
+                                const r = order.results?.[0]?.resultData || {};
+                                generateRadiologyReportPDF({
+                                  reportNumber: order.orderId,
+                                  date: new Date().toLocaleDateString(),
+                                  patientName: order.patientName,
+                                  patientMRN: order.patientMRN || '',
+                                  modality: order.details?.modality || r.modality,
+                                  bodyPart: order.details?.bodyPart || r.bodyPart,
+                                  studyDate: order.orderedAt,
+                                  findings: r.findings,
+                                  impression: r.impression,
+                                  technique: r.technique,
+                                  radiologist: r.radiologist,
+                                });
+                              }}>
                                 <CheckCircle className="w-4 h-4 mr-1" />
                                 View Report
                               </Button>

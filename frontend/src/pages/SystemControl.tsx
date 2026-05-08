@@ -125,9 +125,13 @@ const SystemControl: React.FC = () => {
   const [auditFilters, setAuditFilters] = useState({
     module: 'all',
     userId: '',
+    ipAddress: '',
     dateFrom: '',
     dateTo: '',
   });
+  // IP rollup — "who's accessing the system from which IP". Loaded
+  // independently of the line-by-line audit log for performance.
+  const [ipRollup, setIpRollup] = useState<Array<{ ipAddress: string; events: number; uniqueUsers: number; lastSeen: string }>>([]);
 
   // Reports State
   const [reports, setReports] = useState<Report[]>([]);
@@ -178,10 +182,17 @@ const SystemControl: React.FC = () => {
       const params: Record<string, string> = {};
       if (auditFilters.module && auditFilters.module !== 'all') params.module = auditFilters.module;
       if (auditFilters.userId) params.userId = auditFilters.userId;
+      if (auditFilters.ipAddress) params.ipAddress = auditFilters.ipAddress;
       if (auditFilters.dateFrom) params.dateFrom = auditFilters.dateFrom;
       if (auditFilters.dateTo) params.dateTo = auditFilters.dateTo;
-      const response = await api.get('/api/audit-logs', { params });
-      setAuditLogs(response.data);
+      const [logs, byIp] = await Promise.all([
+        api.get('/api/audit-logs', { params }),
+        api.get('/api/audit-logs/by-ip', {
+          params: { ...(params.dateFrom ? { dateFrom: params.dateFrom } : {}), ...(params.dateTo ? { dateTo: params.dateTo } : {}) },
+        }).catch(() => ({ data: [] })),
+      ]);
+      setAuditLogs(logs.data);
+      setIpRollup(byIp.data || []);
     } catch (error) {
       console.error('Error fetching audit logs:', error);
       // Mock data
@@ -777,7 +788,7 @@ const SystemControl: React.FC = () => {
               <CardDescription>View system activity and user actions</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-4 gap-4">
+              <div className="grid grid-cols-5 gap-4">
                 <div className="space-y-2">
                   <Label>Module</Label>
                   <Select
@@ -802,6 +813,17 @@ const SystemControl: React.FC = () => {
                       <SelectItem value="System Control">System Control</SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>IP Address</Label>
+                  <Input
+                    type="text"
+                    placeholder="e.g. 192.168.1."
+                    value={auditFilters.ipAddress}
+                    onChange={(e) =>
+                      setAuditFilters({ ...auditFilters, ipAddress: e.target.value })
+                    }
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>Date From</Label>
@@ -830,6 +852,53 @@ const SystemControl: React.FC = () => {
                   </Button>
                 </div>
               </div>
+
+              {/* Activity by IP — top sources of access. Click any row to
+                  filter the audit table below by that IP. */}
+              {ipRollup.length > 0 && (
+                <Card className="bg-slate-50 border-slate-200">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                      Activity by IP
+                      <Badge variant="outline" className="text-xs">{ipRollup.length} addresses</Badge>
+                    </CardTitle>
+                    <CardDescription className="text-xs">Click any row to filter the audit table by that IP.</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="overflow-x-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>IP Address</TableHead>
+                            <TableHead className="text-right">Events</TableHead>
+                            <TableHead className="text-right">Unique users</TableHead>
+                            <TableHead>Last seen</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {ipRollup.slice(0, 15).map((row) => (
+                            <TableRow
+                              key={row.ipAddress}
+                              className="cursor-pointer hover:bg-white"
+                              onClick={() => {
+                                setAuditFilters({ ...auditFilters, ipAddress: row.ipAddress });
+                                setTimeout(fetchAuditLogs, 0);
+                              }}
+                            >
+                              <TableCell className="font-mono text-xs">{row.ipAddress}</TableCell>
+                              <TableCell className="text-right">{row.events}</TableCell>
+                              <TableCell className="text-right">{row.uniqueUsers}</TableCell>
+                              <TableCell className="text-xs text-slate-500">
+                                {row.lastSeen ? new Date(row.lastSeen).toLocaleString() : '—'}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
               <Table>
                 <TableHeader>

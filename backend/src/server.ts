@@ -6914,9 +6914,57 @@ app.put('/api/users/:id/permission-overrides', authenticateToken, requirePermiss
   }
 });
 
+// Rollup of activity by IP address — for the "who's doing what from
+// where" admin view. Returns top IPs with: total events, unique users,
+// last seen timestamp. Uses a single grouped query so a hospital with
+// many endpoints doesn't slow down the page.
+app.get('/api/audit-logs/by-ip', authenticateToken, requirePermission('system:manage'), async (req: any, res: Response) => {
+  try {
+    const { dateFrom, dateTo, limit } = req.query;
+    const where: any = { tenantId: req.user.tenantId, ipAddress: { not: null } };
+    if (dateFrom || dateTo) {
+      where.timestamp = {};
+      if (dateFrom) where.timestamp.gte = new Date(dateFrom as string);
+      if (dateTo) where.timestamp.lte = new Date(dateTo as string);
+    }
+    const grouped = await prisma.auditLog.groupBy({
+      by: ['ipAddress'],
+      where,
+      _count: { _all: true },
+      _max: { timestamp: true },
+      orderBy: { _count: { ipAddress: 'desc' } },
+      take: Math.min(parseInt((limit as string) || '50', 10), 200),
+    });
+    // Add unique-user count per IP via a follow-up query — Prisma
+    // groupBy doesn't natively support COUNT(DISTINCT) so we compute it
+    // here.
+    const ips = grouped.map((g) => g.ipAddress).filter(Boolean) as string[];
+    const userByIp: Record<string, Set<string>> = {};
+    if (ips.length > 0) {
+      const rows = await prisma.auditLog.findMany({
+        where: { tenantId: req.user.tenantId, ipAddress: { in: ips } },
+        select: { ipAddress: true, userId: true },
+      });
+      for (const r of rows) {
+        if (!r.ipAddress || !r.userId) continue;
+        (userByIp[r.ipAddress] = userByIp[r.ipAddress] || new Set()).add(r.userId);
+      }
+    }
+    res.json(grouped.map((g) => ({
+      ipAddress: g.ipAddress,
+      events: g._count._all,
+      uniqueUsers: userByIp[g.ipAddress || '']?.size || 0,
+      lastSeen: g._max.timestamp,
+    })));
+  } catch (error) {
+    console.error('audit by-ip error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.get('/api/audit-logs', authenticateToken, async (req: any, res: Response) => {
   try {
-    const { module, dateFrom, dateTo, action, userId } = req.query;
+    const { module, dateFrom, dateTo, action, userId, ipAddress } = req.query;
     const { skip, take } = paginate(req);
 
     // AuditLog now has a direct tenantId column (added in
@@ -6926,6 +6974,9 @@ app.get('/api/audit-logs', authenticateToken, async (req: any, res: Response) =>
     if (module) where.resource = module;
     if (action) where.action = { contains: action as string, mode: 'insensitive' };
     if (userId) where.userId = userId;
+    // IP filter — substring match so partial-IP search works
+    // (e.g. "192.168.1." finds all internal /24 access).
+    if (ipAddress) where.ipAddress = { contains: ipAddress as string };
     if (dateFrom || dateTo) {
       where.timestamp = {};
       if (dateFrom) where.timestamp.gte = new Date(dateFrom as string);

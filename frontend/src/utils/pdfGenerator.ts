@@ -173,6 +173,76 @@ export function generateBillPDF(billData: {
   doc.save(`Bill_${billData.billNumber}.pdf`);
 }
 
+// Generate Radiology Report PDF. Same hospital header + patient block as
+// the lab report; body is freeform text (findings + impression) instead
+// of a tabular result list because radiology reports don't tabulate.
+export function generateRadiologyReportPDF(reportData: {
+  reportNumber: string;
+  date: string;
+  patientName: string;
+  patientMRN: string;
+  patientAge?: string;
+  patientGender?: string;
+  referringDoctor?: string;
+  modality?: string;        // X-Ray / CT / MRI / Ultrasound
+  bodyPart?: string;
+  studyDate?: string;
+  findings?: string;
+  impression?: string;
+  technique?: string;
+  radiologist?: string;
+}) {
+  const doc = newPdf();
+  let y = addHeader(doc, 'RADIOLOGY REPORT');
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+
+  // Patient block
+  doc.text(`Report No: ${reportData.reportNumber}`, 20, y);
+  doc.text(`Patient: ${reportData.patientName}`, 20, y + 5);
+  doc.text(`MRN: ${reportData.patientMRN}`, 20, y + 10);
+  if (reportData.patientAge) {
+    doc.text(`Age/Gender: ${reportData.patientAge}/${reportData.patientGender || 'N/A'}`, 20, y + 15);
+  }
+  doc.text(`Report Date: ${reportData.date}`, 120, y);
+  if (reportData.studyDate) doc.text(`Study Date: ${reportData.studyDate}`, 120, y + 5);
+  if (reportData.referringDoctor) doc.text(`Referring Doctor: ${reportData.referringDoctor}`, 120, y + 10);
+  y += 25;
+
+  // Modality + body part highlighted
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.text(`Study: ${reportData.modality || 'Imaging'}${reportData.bodyPart ? ` — ${reportData.bodyPart}` : ''}`, 20, y);
+  y += 8;
+
+  const writeSection = (label: string, body: string | undefined) => {
+    if (!body) return;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+    doc.text(label, 20, y); y += 5;
+    doc.setFont('helvetica', 'normal');
+    const lines = doc.splitTextToSize(body, 170);
+    doc.text(lines, 20, y);
+    y += lines.length * 5 + 4;
+  };
+  writeSection('Technique:', reportData.technique);
+  writeSection('Findings:', reportData.findings);
+  writeSection('Impression:', reportData.impression);
+
+  // Signature block
+  if (reportData.radiologist) {
+    y = Math.max(y, 240);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Radiologist: ${reportData.radiologist}`, 20, y);
+  }
+
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'italic');
+  doc.text(`Generated on: ${new Date().toLocaleString()}`, 105, 285, { align: 'center' });
+
+  doc.save(`Radiology_${reportData.reportNumber}.pdf`);
+}
+
 // Generate Lab Report PDF
 export function generateLabReportPDF(reportData: {
   reportNumber: string;
