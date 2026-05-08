@@ -48,8 +48,8 @@ export default function HealthRecordsScreen() {
     }
   }
 
-  useEffect(() => { void load(); }, []);
-  useFocusEffect(useCallback(() => { void load(); }, []));
+  useEffect(() => { load().catch(() => undefined); }, []);
+  useFocusEffect(useCallback(() => { load().catch(() => undefined); }, []));
 
   if (loading) {
     return (
@@ -101,7 +101,7 @@ export default function HealthRecordsScreen() {
 
       <ScrollView
         contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(); }} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load().catch(() => undefined); }} />}
       >
         {error && (
           <View className="p-4 bg-amber-50 border border-amber-200 rounded-xl">

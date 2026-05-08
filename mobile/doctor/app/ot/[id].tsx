@@ -50,7 +50,7 @@ export default function OTStageScreen() {
     }
   }
 
-  useEffect(() => { void load(); }, [id]);
+  useEffect(() => { load().catch(() => undefined); }, [id]);
 
   async function recordStage(code: string) {
     if (!id) return;
@@ -87,12 +87,12 @@ export default function OTStageScreen() {
       <View className="px-4 py-3 bg-white border-b border-slate-200 flex-row items-center">
         <TouchableOpacity onPress={() => router.back()} className="p-2 -ml-2"><ChevronLeft color="#0f172a" size={24} /></TouchableOpacity>
         <Text className="flex-1 text-base font-semibold text-slate-900">OT live status</Text>
-        <TouchableOpacity onPress={() => { setRefreshing(true); void load(); }} className="p-2 -mr-2"><RefreshCw color="#64748b" size={20} /></TouchableOpacity>
+        <TouchableOpacity onPress={() => { setRefreshing(true); load().catch(() => undefined); }} className="p-2 -mr-2"><RefreshCw color="#64748b" size={20} /></TouchableOpacity>
       </View>
 
       <ScrollView
         contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(); }} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load().catch(() => undefined); }} />}
       >
         <Text className="text-xs uppercase tracking-wide font-semibold text-slate-500 mb-2">Stage</Text>
         <View>
@@ -105,7 +105,7 @@ export default function OTStageScreen() {
                 disabled={busyStage !== null}
                 onPress={() => recordStage(s.code)}
                 className={`mb-2 rounded-xl p-4 flex-row items-center ${
-                  isCurrent ? 'bg-primary-600' : isPast ? 'bg-white border border-slate-200' : 'bg-white border border-slate-200'
+                  isCurrent ? 'bg-primary-600' : 'bg-white border border-slate-200'
                 }`}
               >
                 {isPast && <CheckCircle2 color="#10b981" size={18} />}

@@ -38,9 +38,9 @@ export default function AppointmentsScreen() {
   }
 
   // Refresh when this tab regains focus — e.g. after returning from /book.
-  useFocusEffect(useCallback(() => { void load(); }, []));
+  useFocusEffect(useCallback(() => { load().catch(() => undefined); }, []));
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { load().catch(() => undefined); }, []);
 
   async function onCancel(id: string) {
     Alert.alert('Cancel appointment?', 'You can book a new one any time.', [
@@ -76,7 +76,7 @@ export default function AppointmentsScreen() {
     <SafeAreaView className="flex-1 bg-slate-50" edges={['top']}>
       <ScrollView
         contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(); }} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load().catch(() => undefined); }} />}
       >
         <View className="flex-row items-center justify-between">
           <Text className="text-2xl font-bold text-slate-900">Appointments</Text>

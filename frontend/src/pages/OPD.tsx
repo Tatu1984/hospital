@@ -384,7 +384,15 @@ export default function OPD() {
           <div className="py-4">
             <div className="grid grid-cols-2 gap-3 max-h-96 overflow-y-auto">
               {radiologyTests.map((test) => (
-                <div key={test.id} className="flex items-center space-x-2 p-3 border rounded-lg hover:bg-slate-50 cursor-pointer" onClick={() => toggleTest(test.id)}>
+                <div
+                  key={test.id}
+                  role="checkbox"
+                  aria-checked={selectedTests.includes(test.id)}
+                  tabIndex={0}
+                  className="flex items-center space-x-2 p-3 border rounded-lg hover:bg-slate-50 cursor-pointer"
+                  onClick={() => toggleTest(test.id)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleTest(test.id); } }}
+                >
                   <input
                     type="checkbox"
                     checked={selectedTests.includes(test.id)}

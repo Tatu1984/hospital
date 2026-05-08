@@ -398,7 +398,11 @@ export default function ICU() {
                             </div>
                           )}
 
-                          <div className="flex gap-2 pt-2 border-t" onClick={(e) => e.stopPropagation()}>
+                          {/* Each button stops propagation individually,
+                              so the wrapper div doesn't need its own
+                              onClick — having one would force a keyboard
+                              handler purely for a a11y rule. */}
+                          <div className="flex gap-2 pt-2 border-t">
                             <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); openVitalsDialog(bed); }} className="flex-1">
                               <Activity className="w-3 h-3 mr-1" />
                               Vitals

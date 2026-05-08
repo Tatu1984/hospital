@@ -13,7 +13,7 @@ export default function RootLayout() {
   const router = useRouter();
 
   useEffect(() => {
-    void hydrate();
+    hydrate().catch(() => undefined);
   }, [hydrate]);
 
   useEffect(() => {

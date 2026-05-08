@@ -42,12 +42,12 @@ export default function PatientsScreen() {
     }
   }, []);
 
-  useEffect(() => { void load(''); }, [load]);
+  useEffect(() => { load('').catch(() => undefined); }, [load]);
 
   function onSearchChange(v: string) {
     setSearch(v);
     if (searchTimer.current) clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => { void load(v); }, 250);
+    searchTimer.current = setTimeout(() => { load(v).catch(() => undefined); }, 250);
   }
 
   function calcAge(dob: string | null) {
@@ -81,7 +81,7 @@ export default function PatientsScreen() {
 
       <ScrollView
         contentContainerStyle={{ padding: 16, paddingTop: 0, paddingBottom: 32 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(search); }} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(search).catch(() => undefined); }} />}
       >
         {error && (
           <View className="p-4 bg-amber-50 border border-amber-200 rounded-xl">

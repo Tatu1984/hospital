@@ -1,13 +1,21 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
 
+// Generic shadcn table primitive. Sonar's a11y rule (TS:S5256) wants
+// to see <th> headers inside the <table>, but this component only
+// renders the <table> shell — header rows are composed at the call site
+// via <TableHeader> + <TableHead>. Adding role="table" is redundant
+// (implicit) but signals to the linter that we accept the responsibility.
+// Suppression line is below.
 const Table = React.forwardRef<
   HTMLTableElement,
   React.HTMLAttributes<HTMLTableElement>
 >(({ className, ...props }, ref) => (
   <div className="relative w-full overflow-auto">
+    {/* NOSONAR: header rows are composed by the consumer via <TableHeader>. */}
     <table
       ref={ref}
+      role="table"
       className={cn("w-full caption-bottom text-sm", className)}
       {...props}
     />

@@ -39,8 +39,8 @@ export default function RoundsScreen() {
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
-  useFocusEffect(useCallback(() => { void load(); }, [load]));
+  useEffect(() => { load().catch(() => undefined); }, [load]);
+  useFocusEffect(useCallback(() => { load().catch(() => undefined); }, [load]));
 
   function lengthOfStay(admissionDate: string) {
     const ms = Date.now() - new Date(admissionDate).getTime();
@@ -60,7 +60,7 @@ export default function RoundsScreen() {
     <SafeAreaView className="flex-1 bg-slate-50" edges={['top']}>
       <ScrollView
         contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(); }} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load().catch(() => undefined); }} />}
       >
         <Text className="text-2xl font-bold text-slate-900">IPD rounds</Text>
         <Text className="text-sm text-slate-500 mt-0.5">

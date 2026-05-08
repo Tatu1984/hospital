@@ -39,7 +39,7 @@ export default function HomeScreen() {
     }
   }
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { load().catch(() => undefined); }, []);
 
   if (loading) {
     return (
@@ -53,7 +53,7 @@ export default function HomeScreen() {
     <SafeAreaView className="flex-1 bg-slate-50" edges={['top']}>
       <ScrollView
         contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(); }} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load().catch(() => undefined); }} />}
       >
         <MotiView from={{ opacity: 0, translateY: 8 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 300 }}>
           <Text className="text-sm text-slate-500">Welcome back</Text>

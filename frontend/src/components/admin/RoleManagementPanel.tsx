@@ -117,8 +117,10 @@ export default function RoleManagementPanel() {
     }
   }
 
-  // Group permissions for the editor UI
-  const groups = Array.from(new Set(permissions.map((p) => p.group))).sort();
+  // Group permissions for the editor UI. Explicit localeCompare for a
+  // well-defined sort across locales (Sonar TS:S2871).
+  const groups = Array.from(new Set(permissions.map((p) => p.group)))
+    .sort((a, b) => a.localeCompare(b));
   const filteredPerms = filter
     ? permissions.filter((p) => p.code.toLowerCase().includes(filter.toLowerCase()))
     : permissions;

@@ -38,8 +38,8 @@ export default function BillsScreen() {
     }
   }
 
-  useEffect(() => { void load(); }, []);
-  useFocusEffect(useCallback(() => { void load(); }, []));
+  useEffect(() => { load().catch(() => undefined); }, []);
+  useFocusEffect(useCallback(() => { load().catch(() => undefined); }, []));
 
   if (loading) {
     return (
@@ -56,7 +56,7 @@ export default function BillsScreen() {
     <SafeAreaView className="flex-1 bg-slate-50" edges={['top']}>
       <ScrollView
         contentContainerStyle={{ padding: 16, paddingBottom: 32 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(); }} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load().catch(() => undefined); }} />}
       >
         <Text className="text-2xl font-bold text-slate-900">Bills</Text>
         <Text className="text-sm text-slate-500 mt-0.5">

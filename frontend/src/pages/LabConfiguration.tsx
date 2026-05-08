@@ -148,7 +148,11 @@ export default function LabConfiguration() {
     else setParameters([]);
   }, [selectedTest?.id]);
 
-  const categories = Array.from(new Set(tests.map((t) => t.category))).sort();
+  // Use localeCompare so the comparator is well-defined across locales —
+  // Sonar (correctly) flags the bare .sort() default on strings as
+  // implementation-dependent.
+  const categories = Array.from(new Set(tests.map((t) => t.category)))
+    .sort((a, b) => a.localeCompare(b));
   const filteredTests = tests.filter((t) => {
     if (categoryFilter !== 'all' && t.category !== categoryFilter) return false;
     if (!search.trim()) return true;

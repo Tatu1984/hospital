@@ -10,7 +10,7 @@ export default function RootLayout() {
   const segments = useSegments();
   const router = useRouter();
 
-  useEffect(() => { void hydrate(); }, [hydrate]);
+  useEffect(() => { hydrate().catch(() => undefined); }, [hydrate]);
 
   useEffect(() => {
     if (!hydrated) return;

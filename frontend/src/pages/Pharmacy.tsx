@@ -437,8 +437,11 @@ export default function Pharmacy() {
                     {filteredDrugs.slice(0, 10).map(drug => (
                       <div
                         key={drug.id}
+                        role="button"
+                        tabIndex={0}
                         className="p-3 hover:bg-slate-50 cursor-pointer border-b last:border-b-0 flex justify-between items-center"
                         onClick={() => addToCart(drug)}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); addToCart(drug); } }}
                       >
                         <div>
                           <div className="font-medium">{drug.name}</div>

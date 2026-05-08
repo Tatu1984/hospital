@@ -71,20 +71,20 @@ export default function PatientProfileScreen() {
   }, []);
 
   useEffect(() => {
-    void reload();
+    reload().catch(() => undefined);
   }, [reload]);
 
   // Refresh when returning from /edit-profile so the new values show.
   useFocusEffect(
     useCallback(() => {
-      void reload();
+      reload().catch(() => undefined);
     }, [reload]),
   );
 
   function onLogout() {
     Alert.alert('Sign out', 'Are you sure you want to sign out?', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign out', style: 'destructive', onPress: () => void logout() },
+      { text: 'Sign out', style: 'destructive', onPress: () => logout().catch(() => undefined) },
     ]);
   }
 
@@ -97,7 +97,7 @@ export default function PatientProfileScreen() {
             refreshing={refreshing}
             onRefresh={() => {
               setRefreshing(true);
-              void reload();
+              reload().catch(() => undefined);
             }}
           />
         }

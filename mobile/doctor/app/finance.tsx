@@ -122,7 +122,7 @@ export default function DoctorFinanceScreen() {
     }
   }
   useEffect(() => {
-    void load();
+    load().catch(() => undefined);
   }, []);
 
   if (loading) {
@@ -141,7 +141,7 @@ export default function DoctorFinanceScreen() {
         <TouchableOpacity
           onPress={() => {
             setLoading(true);
-            void load();
+            load().catch(() => undefined);
           }}
           className="mt-4 bg-teal-600 px-6 py-3 rounded-2xl"
         >
@@ -169,7 +169,7 @@ export default function DoctorFinanceScreen() {
             refreshing={refreshing}
             onRefresh={() => {
               setRefreshing(true);
-              void load();
+              load().catch(() => undefined);
             }}
             tintColor="#14b8a6"
           />

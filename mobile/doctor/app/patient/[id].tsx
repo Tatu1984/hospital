@@ -160,14 +160,14 @@ export default function PatientChartScreen() {
   useEffect(() => {
     if (!id) return;
     setLoading(true);
-    void reload();
+    reload().catch(() => undefined);
   }, [id, reload]);
 
   // Refresh whenever the screen regains focus — covers the
   // "doctor entered a result, came back" round-trip without manual pull.
   useFocusEffect(
     useCallback(() => {
-      void reload();
+      reload().catch(() => undefined);
     }, [reload]),
   );
 
@@ -217,7 +217,7 @@ export default function PatientChartScreen() {
             refreshing={refreshing}
             onRefresh={() => {
               setRefreshing(true);
-              void reload();
+              reload().catch(() => undefined);
             }}
             tintColor="#14b8a6"
           />

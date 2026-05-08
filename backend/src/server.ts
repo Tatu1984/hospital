@@ -6868,7 +6868,14 @@ app.delete('/api/admin/roles/:id', authenticateToken, requirePermission('users:m
 // (e.g. "Lab Manager" → "lab_manager"). Append a numeric suffix if a
 // row already exists with that ID.
 async function uniqueRoleId(prisma: any, name: string): Promise<string> {
-  const base = String(name).trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'ROLE';
+  // Each replace gets its own explicit pattern — the original combined
+  // /^_+|_+$/g was flagged by Sonar (TS:S5852) for ambiguous operator
+  // precedence between alternation and anchors. Splitting into two
+  // calls is clearer and still O(n).
+  const base = String(name).trim().toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+/, '')
+    .replace(/_+$/, '') || 'ROLE';
   let id = base;
   let n = 2;
   while (await prisma.role.findUnique({ where: { id } })) {

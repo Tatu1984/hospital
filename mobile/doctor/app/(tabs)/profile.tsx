@@ -39,7 +39,8 @@ export default function ProfileScreen() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    void doctorAPI
+    // Already chains .catch — no `void` operator needed.
+    doctorAPI
       .myDashboard()
       .then((r) => setDoctorMeta(r.data?.doctor || null))
       .catch(() => undefined)
@@ -49,7 +50,7 @@ export default function ProfileScreen() {
   function onLogout() {
     Alert.alert('Sign out', 'Are you sure you want to sign out?', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign out', style: 'destructive', onPress: () => void logout() },
+      { text: 'Sign out', style: 'destructive', onPress: () => logout().catch(() => undefined) },
     ]);
   }
 
