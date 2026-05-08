@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import { config } from '../config';
 import { logger, auditLogger } from '../utils/logger';
+import { clientIp } from '../utils/audit';
 
 // CSRF token store (in production, use Redis or database)
 const csrfTokenStore = new Map<string, { token: string; createdAt: number }>();
@@ -101,7 +102,7 @@ export const verifyCSRF = (req: Request, res: Response, next: NextFunction) => {
 
   if (!sessionId) {
     auditLogger.securityEvent('CSRF_NO_SESSION', {
-      ip: req.ip,
+      ip: clientIp(req),
       path: req.path,
       method: req.method,
     });
@@ -119,7 +120,7 @@ export const verifyCSRF = (req: Request, res: Response, next: NextFunction) => {
 
   if (!csrfToken) {
     auditLogger.securityEvent('CSRF_MISSING_TOKEN', {
-      ip: req.ip,
+      ip: clientIp(req),
       path: req.path,
       method: req.method,
       sessionId,
@@ -133,7 +134,7 @@ export const verifyCSRF = (req: Request, res: Response, next: NextFunction) => {
 
   if (!verifyCSRFToken(sessionId, csrfToken)) {
     auditLogger.securityEvent('CSRF_INVALID_TOKEN', {
-      ip: req.ip,
+      ip: clientIp(req),
       path: req.path,
       method: req.method,
       sessionId,
@@ -221,7 +222,7 @@ export const doubleSubmitCookie = {
         Buffer.from(headerToken)
       )) {
         auditLogger.securityEvent('CSRF_MISMATCH', {
-          ip: req.ip,
+          ip: clientIp(req),
           path: req.path,
         });
 

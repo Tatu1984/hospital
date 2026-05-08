@@ -112,7 +112,7 @@ import { logger, auditLogger } from './utils/logger';
 import { paginate } from './utils/tenantScope';
 
 // Audit log writer (persists to AuditLog table)
-import { writeAudit } from './utils/audit';
+import { writeAudit, clientIp } from './utils/audit';
 import {
   workingDaysInclusive,
   daysInMonth,
@@ -181,6 +181,18 @@ if ((process.env.JWT_SECRET || '').length < 32) {
 }
 
 const app = express();
+// Trust the X-Forwarded-For header so req.ip returns the *original*
+// client IP, not the IP of whatever reverse proxy fronts us. Without
+// this, Vercel-hosted requests show the Vercel edge IP, every audit
+// log row reads the same handful of internal addresses, and rate
+// limiting groups all real users into one bucket.
+//
+// `true` trusts all hops in the chain. Vercel sets X-Forwarded-For
+// once and signs the request, so this is safe in our deployment;
+// for self-hosted setups behind multiple proxies, narrow this to a
+// specific hop count or subnet list per Express docs.
+app.set('trust proxy', true);
+
 // `prisma` is the shared, $extends-wrapped singleton from src/shared/prisma.ts.
 // Imported at the top of this file. Centralisation lets the PHI encryption
 // layer wrap every Patient read/write without touching individual handlers.
@@ -348,7 +360,7 @@ const authenticateToken = (req: any, res: Response, next: any) => {
         });
       }
       auditLogger.securityEvent('INVALID_TOKEN', {
-        ip: req.ip,
+        ip: clientIp(req),
         path: req.path,
         error: err.message,
       });
@@ -812,7 +824,7 @@ app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (r
     });
 
     if (!user || !user.isActive) {
-      auditLogger.securityEvent('LOGIN_FAILED', { username, reason: 'invalid_user', ip: req.ip });
+      auditLogger.securityEvent('LOGIN_FAILED', { username, reason: 'invalid_user', ip: clientIp(req) });
       // Unknown / disabled user: no tenantId to attach to the audit row, so
       // writeAudit() will skip the DB write but Winston still has it.
       void writeAudit({ prisma, req, userId: user?.id ?? null, tenantId: user?.tenantId ?? null, action: 'LOGIN_FAILED', resource: 'Authentication', resourceId: username });
@@ -838,7 +850,7 @@ app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (r
     const validPassword = await bcrypt.compare(password, user.passwordHash);
     if (!validPassword) {
       const failedCount = await recordFailedLogin(user.id);
-      auditLogger.securityEvent('LOGIN_FAILED', { username, reason: 'invalid_password', ip: req.ip, failedCount });
+      auditLogger.securityEvent('LOGIN_FAILED', { username, reason: 'invalid_password', ip: clientIp(req), failedCount });
       void writeAudit({ prisma, req, userId: user.id, tenantId: user.tenantId, action: 'LOGIN_FAILED', resource: 'Authentication', resourceId: username });
       // Tell the user when they're getting close — once they hit the
       // threshold the next attempt returns ACCOUNT_LOCKED above. Not
@@ -884,7 +896,7 @@ app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (r
 
     // lastLoginAt is already stamped inside clearFailedLogins above.
 
-    auditLogger.securityEvent('LOGIN_SUCCESS', { userId: user.id, username, ip: req.ip });
+    auditLogger.securityEvent('LOGIN_SUCCESS', { userId: user.id, username, ip: clientIp(req) });
     void writeAudit({ prisma, req, userId: user.id, tenantId: user.tenantId, action: 'LOGIN_SUCCESS', resource: 'Authentication', resourceId: user.id });
 
     // Set the refresh token as an httpOnly cookie so JS in the page (and
@@ -940,7 +952,7 @@ app.post('/api/auth/refresh', async (req: Request, res: Response) => {
     // refresh token here so a stolen token from a logged-out session can't
     // mint new accesses for the rest of the 7d window.
     if (await isRefreshTokenBlacklisted(refreshToken)) {
-      auditLogger.securityEvent('REFRESH_TOKEN_REJECTED', { ip: req.ip, reason: 'blacklisted', userId: decoded.userId });
+      auditLogger.securityEvent('REFRESH_TOKEN_REJECTED', { ip: clientIp(req), reason: 'blacklisted', userId: decoded.userId });
       return res.status(401).json({ error: 'INVALID_TOKEN', message: 'Token has been revoked' });
     }
     const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
@@ -970,7 +982,7 @@ app.post('/api/auth/refresh', async (req: Request, res: Response) => {
     // still using the body fallback keeps working. Drop in the next pass.
     return res.json({ token: newAccess, refreshToken: newRefresh });
   } catch (e: any) {
-    auditLogger.securityEvent('REFRESH_TOKEN_REJECTED', { ip: req.ip, reason: e?.name || 'unknown' });
+    auditLogger.securityEvent('REFRESH_TOKEN_REJECTED', { ip: clientIp(req), reason: e?.name || 'unknown' });
     return res.status(401).json({ error: 'INVALID_TOKEN', message: 'Refresh token invalid or expired' });
   }
 });
@@ -993,7 +1005,7 @@ app.post('/api/auth/logout', async (req: Request, res: Response) => {
     }
     await blacklistRefreshToken(refreshToken, { userId, reason: 'logout' }).catch(() => undefined);
   }
-  auditLogger.securityEvent('LOGOUT', { ip: req.ip });
+  auditLogger.securityEvent('LOGOUT', { ip: clientIp(req) });
   return res.status(204).end();
 });
 
@@ -1023,7 +1035,7 @@ app.post('/api/auth/forgot-password', async (req: Request, res: Response) => {
         process.env.REFRESH_TOKEN_SECRET!,
         { expiresIn: '30m' } as jwt.SignOptions
       );
-      auditLogger.securityEvent('PASSWORD_RESET_REQUESTED', { userId: user.id, email, ip: req.ip });
+      auditLogger.securityEvent('PASSWORD_RESET_REQUESTED', { userId: user.id, email, ip: clientIp(req) });
       void writeAudit({ prisma, req, userId: user.id, tenantId: user.tenantId, action: 'PASSWORD_RESET_REQUESTED', resource: 'Authentication', resourceId: user.id });
       // No email gateway wired yet. Until SMTP/SES is configured, the token
       // is delivered out-of-band by an operator who reads it from a private
@@ -1062,7 +1074,7 @@ app.post('/api/auth/reset-password', async (req: Request, res: Response) => {
     }
     const passwordHash = await bcrypt.hash(password, 10);
     await prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
-    auditLogger.securityEvent('PASSWORD_RESET_COMPLETED', { userId: user.id, ip: req.ip });
+    auditLogger.securityEvent('PASSWORD_RESET_COMPLETED', { userId: user.id, ip: clientIp(req) });
     void writeAudit({ prisma, req, userId: user.id, tenantId: user.tenantId, action: 'PASSWORD_RESET_COMPLETED', resource: 'Authentication', resourceId: user.id });
     return res.status(204).end();
   } catch (error: any) {
@@ -1097,13 +1109,13 @@ app.post('/api/auth/change-password', authenticateToken, async (req: any, res: R
 
     const ok = await bcrypt.compare(currentPassword, user.passwordHash);
     if (!ok) {
-      auditLogger.securityEvent('PASSWORD_CHANGE_BAD_CURRENT', { userId: user.id, ip: req.ip });
+      auditLogger.securityEvent('PASSWORD_CHANGE_BAD_CURRENT', { userId: user.id, ip: clientIp(req) });
       return res.status(401).json({ error: 'Current password is incorrect' });
     }
 
     const passwordHash = await bcrypt.hash(newPassword, 10);
     await prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
-    auditLogger.securityEvent('PASSWORD_CHANGED', { userId: user.id, ip: req.ip });
+    auditLogger.securityEvent('PASSWORD_CHANGED', { userId: user.id, ip: clientIp(req) });
     void writeAudit({
       prisma, req,
       userId: user.id, tenantId: user.tenantId,
@@ -7322,6 +7334,7 @@ app.get('/api/audit-logs', authenticateToken, async (req: any, res: Response) =>
         ? `${log.resource} · id ${log.resourceId}`
         : (log.newValue ? JSON.stringify(log.newValue).slice(0, 120) : ''),
       ipAddress: log.ipAddress || 'N/A',
+      userAgent: log.userAgent || null,
       timestamp: log.timestamp.toISOString(),
     })));
   } catch (error) {

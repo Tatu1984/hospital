@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import { config } from '../config';
 import { logger, auditLogger } from '../utils/logger';
 import { hasAnyPermission, Permission, Role } from '../rbac';
+import { clientIp } from '../utils/audit';
 
 // Extended request interface with user data
 export interface AuthenticatedRequest extends Request {
@@ -90,7 +91,7 @@ export const authenticateToken = (
     }
     if (error instanceof jwt.JsonWebTokenError) {
       auditLogger.securityEvent('INVALID_TOKEN', {
-        ip: req.ip,
+        ip: clientIp(req),
         path: req.path,
         error: error.message,
       });

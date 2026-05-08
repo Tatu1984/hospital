@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { config } from '../config';
 import { logger, auditLogger } from '../utils/logger';
 import { AuthenticatedRequest } from './auth';
+import { clientIp } from '../utils/audit';
 
 // HIPAA-compliant encryption for PHI (Protected Health Information)
 const ENCRYPTION_ALGORITHM = 'aes-256-gcm';
@@ -169,7 +170,7 @@ export const phiAccessLogger = (
         resourceId: req.params.id,
         statusCode: res.statusCode,
         duration,
-        ip: req.ip,
+        ip: clientIp(req),
         userAgent: req.headers['user-agent'],
         timestamp: new Date().toISOString(),
       });
