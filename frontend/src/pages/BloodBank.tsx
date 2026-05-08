@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Droplet, UserPlus, Package, AlertTriangle, CheckCircle, Clock, Users } from 'lucide-react';
+import { Droplet, UserPlus, Package, AlertTriangle, CheckCircle, Clock, Users, Plus } from 'lucide-react';
 import api from '../services/api';
 
 interface BloodInventory {
@@ -73,6 +73,19 @@ export default function BloodBank() {
   const [isDonorDialogOpen, setIsDonorDialogOpen] = useState(false);
   const [isRequestDialogOpen, setIsRequestDialogOpen] = useState(false);
   const [isIssueDialogOpen, setIsIssueDialogOpen] = useState(false);
+  // Add-Unit dialog: receives a fresh blood bag into inventory.
+  // Distinct from "Register Donor" (which adds a person) and from
+  // "New Request" (which is a clinician asking for blood).
+  const [isUnitDialogOpen, setIsUnitDialogOpen] = useState(false);
+  const [unitFormData, setUnitFormData] = useState({
+    bloodType: '',
+    component: 'PACKED_RBC',
+    bagNumber: '',
+    volume: '350',
+    collectionDate: new Date().toISOString().slice(0, 10),
+    expiryDays: '42', // PRBC default 42 days
+    location: '',
+  });
   const [loading, setLoading] = useState(false);
 
   const [donorFormData, setDonorFormData] = useState<DonorFormData>({
@@ -173,6 +186,42 @@ export default function BloodBank() {
     } catch (error) {
       console.error('Error registering donor:', error);
       alert('Failed to register donor');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Receive a fresh blood unit into inventory. Expiry is derived from
+  // collectionDate + expiryDays so the user picks a sensible component-
+  // based default (PRBC=42, platelets=5, FFP=365) but can override.
+  const handleAddUnit = async () => {
+    if (!unitFormData.bloodType || !unitFormData.component) {
+      alert('Blood type and component are required');
+      return;
+    }
+    setLoading(true);
+    try {
+      const collection = new Date(unitFormData.collectionDate);
+      const expiry = new Date(collection.getTime() + Number(unitFormData.expiryDays) * 24 * 3600 * 1000);
+      await api.post('/api/blood-bank/inventory', {
+        bloodType: unitFormData.bloodType,
+        component: unitFormData.component,
+        bagNumber: unitFormData.bagNumber || undefined,
+        volume: Number(unitFormData.volume) || 350,
+        collectionDate: collection.toISOString(),
+        expiryDate: expiry.toISOString(),
+        location: unitFormData.location || undefined,
+      });
+      await fetchInventory();
+      setIsUnitDialogOpen(false);
+      setUnitFormData({
+        bloodType: '', component: 'PACKED_RBC', bagNumber: '', volume: '350',
+        collectionDate: new Date().toISOString().slice(0, 10),
+        expiryDays: '42', location: '',
+      });
+      alert('Unit added to inventory');
+    } catch (e: any) {
+      alert(e?.response?.data?.error || 'Failed to add unit');
     } finally {
       setLoading(false);
     }
@@ -339,6 +388,10 @@ export default function BloodBank() {
             <UserPlus className="w-5 h-5 mr-2" />
             Register Donor
           </Button>
+          <Button onClick={() => setIsUnitDialogOpen(true)} variant="outline">
+            <Plus className="w-5 h-5 mr-2" />
+            Add Unit
+          </Button>
           <Button onClick={() => setIsRequestDialogOpen(true)}>
             <Package className="w-5 h-5 mr-2" />
             New Request
@@ -483,6 +536,61 @@ export default function BloodBank() {
                     </TableRow>
                   );
                 })
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      {/* Donor registry — list of all registered donors with quick
+          eligibility view. Use "Register Donor" in the header to add. */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Donor Registry ({donors.length})</CardTitle>
+          <CardDescription>Registered donors and their eligibility status</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Blood Type</TableHead>
+                <TableHead>Phone</TableHead>
+                <TableHead>Last Donation</TableHead>
+                <TableHead>Total Donations</TableHead>
+                <TableHead>Eligibility</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {donors.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center py-8 text-slate-500">
+                    No donors registered yet. Click "Register Donor" above to add one.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                donors.map((d) => (
+                  <TableRow key={d.id}>
+                    <TableCell className="font-medium">{d.name}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline">{d.bloodType}</Badge>
+                    </TableCell>
+                    <TableCell>{d.phone || '—'}</TableCell>
+                    <TableCell>
+                      {d.lastDonationDate
+                        ? new Date(d.lastDonationDate).toLocaleDateString()
+                        : 'Never'}
+                    </TableCell>
+                    <TableCell>{d.totalDonations}</TableCell>
+                    <TableCell>
+                      {d.eligibleForDonation ? (
+                        <Badge className="bg-emerald-600">Eligible</Badge>
+                      ) : (
+                        <Badge variant="outline">Deferred</Badge>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))
               )}
             </TableBody>
           </Table>
@@ -798,6 +906,112 @@ export default function BloodBank() {
             </Button>
             <Button onClick={handleRegisterDonor} disabled={loading}>
               {loading ? 'Registering...' : 'Register Donor'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Unit to Inventory Dialog — receive a fresh blood bag.
+          Distinct from the donor form (which records the person) and
+          from the request form (which is a clinician asking). */}
+      <Dialog open={isUnitDialogOpen} onOpenChange={setIsUnitDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Add Unit to Inventory</DialogTitle>
+            <DialogDescription>
+              Receive a fresh blood bag. Bag number auto-generates if blank;
+              expiry derives from collection date + component-typical days
+              (PRBC 42, platelets 5, FFP 365 frozen).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-4 py-4">
+            <div className="space-y-2">
+              <Label>Blood Type *</Label>
+              <Select
+                value={unitFormData.bloodType}
+                onValueChange={(v) => setUnitFormData({ ...unitFormData, bloodType: v })}
+              >
+                <SelectTrigger><SelectValue placeholder="Select…" /></SelectTrigger>
+                <SelectContent>
+                  {['A+','A-','B+','B-','AB+','AB-','O+','O-'].map((g) => (
+                    <SelectItem key={g} value={g}>{g}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Component *</Label>
+              <Select
+                value={unitFormData.component}
+                onValueChange={(v) => {
+                  // Adjust default expiry days based on component
+                  const defaults: Record<string, string> = {
+                    WHOLE_BLOOD: '35',
+                    PACKED_RBC: '42',
+                    PLATELETS: '5',
+                    FFP: '365',
+                    CRYOPRECIPITATE: '365',
+                  };
+                  setUnitFormData({ ...unitFormData, component: v, expiryDays: defaults[v] || '42' });
+                }}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="WHOLE_BLOOD">Whole Blood</SelectItem>
+                  <SelectItem value="PACKED_RBC">Packed RBC</SelectItem>
+                  <SelectItem value="PLATELETS">Platelets</SelectItem>
+                  <SelectItem value="FFP">Fresh Frozen Plasma</SelectItem>
+                  <SelectItem value="CRYOPRECIPITATE">Cryoprecipitate</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Bag Number</Label>
+              <Input
+                placeholder="Auto-generated if blank"
+                value={unitFormData.bagNumber}
+                onChange={(e) => setUnitFormData({ ...unitFormData, bagNumber: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Volume (mL)</Label>
+              <Input
+                type="number"
+                value={unitFormData.volume}
+                onChange={(e) => setUnitFormData({ ...unitFormData, volume: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Collection Date</Label>
+              <Input
+                type="date"
+                value={unitFormData.collectionDate}
+                onChange={(e) => setUnitFormData({ ...unitFormData, collectionDate: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Days until expiry</Label>
+              <Input
+                type="number"
+                value={unitFormData.expiryDays}
+                onChange={(e) => setUnitFormData({ ...unitFormData, expiryDays: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2 col-span-2">
+              <Label>Storage location</Label>
+              <Input
+                placeholder="Fridge / shelf identifier"
+                value={unitFormData.location}
+                onChange={(e) => setUnitFormData({ ...unitFormData, location: e.target.value })}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsUnitDialogOpen(false)} disabled={loading}>
+              Cancel
+            </Button>
+            <Button onClick={handleAddUnit} disabled={loading}>
+              {loading ? 'Saving…' : 'Add to Inventory'}
             </Button>
           </DialogFooter>
         </DialogContent>

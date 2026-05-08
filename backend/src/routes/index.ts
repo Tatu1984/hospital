@@ -304,6 +304,7 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
 
   // Blood Bank
   'GET /api/blood-bank/inventory': ['blood_bank:view'],
+  'POST /api/blood-bank/inventory': ['blood_bank:manage'],
   'GET /api/blood-bank/donors': ['blood_donors:view'],
   'POST /api/blood-bank/donors': ['blood_donors:create'],
   'GET /api/blood-bank/requests': ['blood_requests:view'],

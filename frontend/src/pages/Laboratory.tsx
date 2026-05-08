@@ -527,14 +527,32 @@ export default function Laboratory() {
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleCollectSample(order.id)}
-                        >
-                          <Barcode className="w-4 h-4 mr-1" />
-                          Collect Sample
-                        </Button>
+                        {/* Two-step flow: Collect → Enter Result. Both
+                            buttons live on this tab so the lab tech doesn't
+                            have to switch tabs after collecting. Clicking
+                            Enter Result auto-collects + opens the result
+                            dialog so single-step entry works too. */}
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleCollectSample(order.id)}
+                          >
+                            <Barcode className="w-4 h-4 mr-1" />
+                            Collect Sample
+                          </Button>
+                          <Button
+                            variant="default"
+                            size="sm"
+                            onClick={async () => {
+                              await handleCollectSample(order.id);
+                              openResultDialog(order);
+                            }}
+                          >
+                            <TestTube className="w-4 h-4 mr-1" />
+                            Enter Result
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}

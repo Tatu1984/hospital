@@ -4179,6 +4179,39 @@ app.get('/api/track/surgery/:token', async (req: Request, res: Response) => {
 // BLOOD BANK APIs
 // ===========================
 
+// Add a fresh unit to inventory. Triggered when a donor's bag is
+// received in the blood bank, or when a unit is imported from a blood
+// camp. The serology fields aren't enforced at the schema layer (yet)
+// so we trust the form's "all negative" tickbox; status defaults to
+// 'available'. Auto-generates bagNumber if blank.
+app.post('/api/blood-bank/inventory', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { bloodType, component, bagNumber, volume, collectionDate, expiryDate, donationId, location, status } = req.body || {};
+    if (!bloodType || !component) {
+      return res.status(400).json({ error: 'bloodType and component are required' });
+    }
+    const created = await prisma.bloodInventory.create({
+      data: {
+        tenantId: req.user.tenantId,
+        bloodType,
+        component,
+        bagNumber: bagNumber || `BG${Date.now().toString().slice(-8)}`,
+        volume: Number(volume) || 350,
+        collectionDate: collectionDate ? new Date(collectionDate) : new Date(),
+        expiryDate: expiryDate ? new Date(expiryDate) : new Date(Date.now() + 42 * 24 * 3600 * 1000), // PRBC default 42 days
+        donationId: donationId || null,
+        location: location || null,
+        status: status || 'available',
+      },
+    });
+    res.status(201).json(created);
+  } catch (error: any) {
+    if (error.code === 'P2002') return res.status(409).json({ error: 'Bag number already exists' });
+    console.error('Create blood inventory error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.get('/api/blood-bank/inventory', authenticateToken, async (req: any, res: Response) => {
   try {
     const now = new Date();

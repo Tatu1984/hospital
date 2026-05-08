@@ -555,14 +555,35 @@ export default function Radiology() {
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleScheduleStudy(order.id)}
-                        >
-                          <Calendar className="w-4 h-4 mr-1" />
-                          Schedule Study
-                        </Button>
+                        {/* Three-step flow: Schedule → Complete Imaging →
+                            Enter Report. The "Enter Report Now" button
+                            collapses all three into one click — it
+                            schedules + marks imaging complete + opens the
+                            report dialog so a radiologist who already has
+                            the images in hand doesn't have to click through
+                            three status changes. */}
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleScheduleStudy(order.id)}
+                          >
+                            <Calendar className="w-4 h-4 mr-1" />
+                            Schedule
+                          </Button>
+                          <Button
+                            variant="default"
+                            size="sm"
+                            onClick={async () => {
+                              await handleScheduleStudy(order.id);
+                              await handleCompleteStudy(order.id);
+                              openReportDialog(order);
+                            }}
+                          >
+                            <Scan className="w-4 h-4 mr-1" />
+                            Enter Report Now
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
