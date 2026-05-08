@@ -149,6 +149,9 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   'PUT /api/tenant/letterhead': ['system:manage'],
   // Integrations hub — third-party API connections (SMS, email, payment,
   // telemed, accounting, PACS, lab analyzers, custom REST). Admin only.
+  // Public-safe metadata view (no credentials) for module pages to show
+  // "Connected to X" status — accessible to any authenticated user.
+  'GET /api/integrations/active': ['dashboard:view'],
   'GET /api/admin/integrations': ['system:manage'],
   'POST /api/admin/integrations': ['system:manage'],
   'PUT /api/admin/integrations/:id': ['system:manage'],

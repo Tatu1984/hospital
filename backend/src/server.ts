@@ -6812,6 +6812,44 @@ function maskIntegrationCredentials(row: any): any {
   return masked;
 }
 
+// Public-safe (any authenticated user) view of active integrations.
+// Returns NO credentials — only enough metadata for module pages to
+// render "Connected to MSG91" / "Connected to AccuBook" status. Used
+// by the Tally / Video / DICOM / Medical-Device pages to switch from
+// scaffold view to connected view.
+app.get('/api/integrations/active', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { category, module } = req.query;
+    const where: any = { tenantId: req.user.tenantId, enabled: true };
+    if (category) where.category = category;
+    const rows = await prisma.integration.findMany({
+      where,
+      orderBy: [{ category: 'asc' }, { name: 'asc' }],
+    });
+    // If a specific module was requested, prefer rows that target it.
+    let filtered = rows;
+    if (module && typeof module === 'string') {
+      const exact = rows.filter((r) => (r.targetModules || []).includes(module));
+      if (exact.length > 0) filtered = exact;
+    }
+    res.json(filtered.map((r) => ({
+      id: r.id,
+      name: r.name,
+      category: r.category,
+      provider: r.provider,
+      baseUrl: r.baseUrl,
+      targetModules: r.targetModules,
+      enabled: r.enabled,
+      lastTestStatus: r.lastTestStatus,
+      lastTestResult: r.lastTestResult,
+      lastTestedAt: r.lastTestedAt,
+    })));
+  } catch (error) {
+    console.error('list active integrations error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.get('/api/admin/integrations', authenticateToken, requirePermission('system:manage'), async (req: any, res: Response) => {
   try {
     const { category } = req.query;

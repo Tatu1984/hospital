@@ -40,6 +40,7 @@ import { Badge } from '@/components/ui/badge';
 import { Navigate } from 'react-router-dom';
 import api from '../services/api';
 import PayrollPanel from '../components/hr/PayrollPanel';
+import IntegrationStatusCard from '../components/modules/IntegrationStatusCard';
 
 // ===========================================================
 // TIER 1 — REAL CRUD
@@ -489,108 +490,219 @@ export function DoctorAccounting() {
 // TIER 3 — SCAFFOLDED, INTEGRATION DEFERRED
 // ===========================================================
 
-// Tally ↔ Accubook integration. The accubook project (sister repo) is
-// a full double-entry accounting system; once its API is exposed, this
-// page will surface sync status, ledger mapping, and journal-export.
+// Tally / Accounting — integration-aware. Reads the active 'accounting'
+// integration from the hub (System Control → Integrations); when present,
+// shows connected state with sync controls. When absent, shows setup
+// steps + a deep link to configure.
 export function Tally() {
   return (
-    <ScaffoldPage
-      icon={Calculator} tint="bg-yellow-600"
-      title="Tally / Accounting Integration"
-      description="Two-way sync with the AccuBook double-entry ledger"
-      bodyTitle="Integration setup pending"
-      paragraphs={[
-        'HospitalPro is wired to integrate with AccuBook (the sister project at /Desktop/projects/accubook). AccuBook provides full double-entry accounting — ledger groups, fiscal years, vouchers, journal entries.',
-        'Activation steps remaining (on the ops team):',
-        '  1. Deploy AccuBook backend with API exposed at a known URL',
-        '  2. Set EXPO_PUBLIC_ACCUBOOK_URL + ACCUBOOK_API_KEY in HospitalPro env',
-        '  3. Map HospitalPro income heads → AccuBook ledgers (one-time setup screen)',
-        '  4. Enable nightly sync of paid invoices → revenue voucher entries',
-      ]}
-      todos={[
-        'POST /api/accounting/sync — push posted invoices to AccuBook',
-        'GET  /api/accounting/sync-status — show last successful run',
-        'Journal entry export (CSV / XML for Tally Desktop)',
-        'Ledger reconciliation report',
-      ]}
-    />
+    <div className="p-6 space-y-4">
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 rounded-xl bg-yellow-600 flex items-center justify-center">
+          <Calculator className="w-5 h-5 text-white" />
+        </div>
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Tally / Accounting</h1>
+          <p className="text-sm text-slate-500">Two-way sync with AccuBook double-entry ledger</p>
+        </div>
+      </div>
+
+      <IntegrationStatusCard
+        category="accounting"
+        targetModule="tally"
+        label="Accounting integration"
+        suggestedProvider="accubook"
+        setupSteps={[
+          'Deploy AccuBook backend with API exposed at a known URL',
+          'In System Control → Integrations, click "+ New integration" → AccuBook',
+          'Enter the AccuBook base URL + API token + organization ID',
+          'Bind to modules "billing" and "tally"',
+          'Click Re-test to verify connectivity',
+        ]}
+      >
+        {(integ) => integ ? (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Sync controls</CardTitle>
+              <CardDescription>
+                Push posted invoices to AccuBook as journal vouchers, or run a reconciliation report.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                <div className="border rounded p-3">
+                  <div className="text-xs uppercase tracking-wide text-slate-500">Push invoices</div>
+                  <div className="text-xs text-slate-700 mt-1">
+                    Sends posted invoices since the last successful sync to AccuBook as
+                    revenue vouchers. Runs nightly via cron once enabled.
+                  </div>
+                </div>
+                <div className="border rounded p-3">
+                  <div className="text-xs uppercase tracking-wide text-slate-500">Pull ledgers</div>
+                  <div className="text-xs text-slate-700 mt-1">
+                    Refreshes the chart-of-accounts mapping so HospitalPro income heads
+                    point at the correct AccuBook ledgers.
+                  </div>
+                </div>
+                <div className="border rounded p-3">
+                  <div className="text-xs uppercase tracking-wide text-slate-500">Reconcile</div>
+                  <div className="text-xs text-slate-700 mt-1">
+                    Compares HospitalPro paid totals against AccuBook receipts for a date range.
+                  </div>
+                </div>
+              </div>
+              <p className="text-xs text-slate-500 italic">
+                Sync endpoints (POST /api/accounting/sync, GET /api/accounting/sync-status,
+                ledger reconciliation) are pending implementation. The integration credentials
+                are persisted; the runtime sync layer is the next step.
+              </p>
+            </CardContent>
+          </Card>
+        ) : null}
+      </IntegrationStatusCard>
+    </div>
   );
 }
 
 export function VideoConversation() {
   return (
-    <ScaffoldPage
-      icon={Video} tint="bg-purple-600"
-      title="Video / Phone Conversation"
-      description="Telemedicine — Zoom or Teams meeting bridge"
-      bodyTitle="External provider not yet configured"
-      paragraphs={[
-        'Telemedicine consults open a Zoom (or Microsoft Teams) meeting created via that provider\'s API.',
-        'Both providers have similar shapes: server-to-server OAuth → POST /meetings with topic+duration → embed the join URL in the appointment.',
-        'Activation steps remaining:',
-        '  1. Register a Zoom Server-to-Server OAuth app under the hospital\'s Zoom account',
-        '  2. Set ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET in backend env',
-        '  3. Enable feature flag `tele_consults_enabled` per branch',
-      ]}
-      todos={[
-        'POST /api/teleconsult/meetings — server-side meeting create',
-        'Embed join URL on Appointment record',
-        'SMS template for sending join URL to patient',
-        'Recording playback + storage retention policy (6 months default)',
-      ]}
-    />
+    <div className="p-6 space-y-4">
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 rounded-xl bg-purple-600 flex items-center justify-center">
+          <Video className="w-5 h-5 text-white" />
+        </div>
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Video / Phone Conversation</h1>
+          <p className="text-sm text-slate-500">Telemedicine — Zoom or Teams meeting bridge</p>
+        </div>
+      </div>
+
+      <IntegrationStatusCard
+        category="telemed"
+        targetModule="video-conversation"
+        label="Telemedicine integration"
+        suggestedProvider="zoom"
+        setupSteps={[
+          'Register a Zoom Server-to-Server OAuth app (or Microsoft Teams app) under the hospital\'s account',
+          'In System Control → Integrations, click "+ New integration" → Zoom',
+          'Enter Account ID, Client ID, Client Secret',
+          'Bind to module "video-conversation"',
+          'Click Re-test to verify the OAuth credentials',
+        ]}
+      >
+        {(integ) => integ ? (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Tele-consultation</CardTitle>
+              <CardDescription>
+                Create a meeting on demand or embed a join URL on an appointment.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="text-sm">
+              <p className="text-slate-700">
+                Meeting-create endpoint (POST /api/teleconsult/meetings), join-URL embedding on
+                Appointment records, and recording-retention policy are pending implementation.
+                Credentials are stored and ready to use.
+              </p>
+            </CardContent>
+          </Card>
+        ) : null}
+      </IntegrationStatusCard>
+    </div>
   );
 }
 
 export function DICOMPACS() {
   return (
-    <ScaffoldPage
-      icon={ImageIcon} tint="bg-purple-700"
-      title="DICOM / PACS"
-      description="Imaging worklist + study viewer"
-      bodyTitle="PACS server not yet attached"
-      paragraphs={[
-        'For radiology imaging we plan to use Orthanc or dcm4chee as the PACS — both are open-source DICOM servers with REST APIs.',
-        'The radiology orders already flow through HospitalPro; what we need is the PACS to provide the actual image archive + DICOM viewer.',
-        'Activation steps remaining:',
-        '  1. Deploy Orthanc (Docker image is ~1 GB) on a dedicated VM with NVMe storage',
-        '  2. Configure DICOM modality worklist so X-ray / CT / MRI machines push images to Orthanc',
-        '  3. Set ORTHANC_URL + ORTHANC_BASIC_AUTH in HospitalPro env',
-        '  4. Enable the OHIF web viewer (or Stone of Orthanc) for DICOM rendering',
-      ]}
-      todos={[
-        'GET /api/pacs/worklist — pull modality worklist from Orthanc',
-        'GET /api/pacs/study/:id — proxy DICOM metadata',
-        'Embed OHIF / Stone viewer for image review',
-        'CD/DVD burning workflow for patient discharge',
-      ]}
-    />
+    <div className="p-6 space-y-4">
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 rounded-xl bg-purple-700 flex items-center justify-center">
+          <ImageIcon className="w-5 h-5 text-white" />
+        </div>
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">DICOM / PACS</h1>
+          <p className="text-sm text-slate-500">Imaging worklist + study viewer</p>
+        </div>
+      </div>
+
+      <IntegrationStatusCard
+        category="dicom"
+        targetModule="dicom-pacs"
+        label="PACS server"
+        suggestedProvider="orthanc"
+        setupSteps={[
+          'Deploy Orthanc on a dedicated VM with NVMe storage',
+          'Configure DICOM modality worklist so X-ray / CT / MRI machines push images to Orthanc',
+          'In System Control → Integrations, click "+ New integration" → Orthanc PACS',
+          'Enter the Orthanc base URL + Basic-auth credentials',
+          'Bind to modules "radiology" and "dicom-pacs"',
+        ]}
+      >
+        {(integ) => integ ? (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Worklist + viewer</CardTitle>
+              <CardDescription>
+                Pull modality worklist from PACS and embed the OHIF / Stone viewer for image review.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="text-sm">
+              <p className="text-slate-700">
+                Worklist endpoint (GET /api/pacs/worklist), study metadata proxy, and OHIF
+                viewer embed are pending implementation. Credentials are stored.
+              </p>
+            </CardContent>
+          </Card>
+        ) : null}
+      </IntegrationStatusCard>
+    </div>
   );
 }
 
 export function MedicalDevice() {
   return (
-    <ScaffoldPage
-      icon={Monitor} tint="bg-emerald-700"
-      title="Medical Device Integration"
-      description="ICU monitors, lab analyzers, vital-signs streams"
-      bodyTitle="Device gateway not yet deployed"
-      paragraphs={[
-        'Clinical devices speak HL7 v2 (lab analyzers, ECG, blood-gas), ASTM (older lab gear), or proprietary protocols (vendor-specific monitor SDKs).',
-        'Integration approach: a small middleware (Mirth Connect or a custom Node service) that listens on the device\'s LAN, parses the HL7/ASTM message, and POSTs to HospitalPro.',
-        'Activation steps remaining:',
-        '  1. Inventory: which devices, what protocols, what physical/network ports',
-        '  2. Deploy Mirth Connect on a hospital-LAN VM',
-        '  3. Build per-device adapter channels',
-        '  4. Set MIRTH_INBOUND_TOKEN in HospitalPro env',
-      ]}
-      todos={[
-        'POST /api/devices/hl7 — receive parsed HL7 messages',
-        'Map device codes → patient encounters',
-        'Real-time vitals stream (SSE) for ICU monitor wall',
-        'Critical-value alerting via SMS',
-      ]}
-    />
+    <div className="p-6 space-y-4">
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 rounded-xl bg-emerald-700 flex items-center justify-center">
+          <Monitor className="w-5 h-5 text-white" />
+        </div>
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Medical Device Integration</h1>
+          <p className="text-sm text-slate-500">ICU monitors, lab analyzers, vital-signs streams</p>
+        </div>
+      </div>
+
+      <IntegrationStatusCard
+        category="lab_analyzer"
+        targetModule="medical-device"
+        label="Device gateway"
+        suggestedProvider="mirth"
+        setupSteps={[
+          'Inventory: which devices, what protocols (HL7 v2, ASTM, vendor SDK), what physical/network ports',
+          'Deploy Mirth Connect on a hospital-LAN VM',
+          'Build per-device adapter channels',
+          'In System Control → Integrations, click "+ New integration" → Mirth Connect',
+          'Bind to modules "laboratory" and "medical-device"',
+        ]}
+      >
+        {(integ) => integ ? (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Connected devices</CardTitle>
+              <CardDescription>
+                Real-time vitals stream + critical-value alerting once devices register with the gateway.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="text-sm">
+              <p className="text-slate-700">
+                HL7 inbound endpoint (POST /api/devices/hl7), device → encounter mapping, and
+                vitals SSE stream for the ICU monitor wall are pending implementation.
+              </p>
+            </CardContent>
+          </Card>
+        ) : null}
+      </IntegrationStatusCard>
+    </div>
   );
 }
 
