@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Plus, TestTube, Barcode, CheckCircle, FileText } from 'lucide-react';
 import api from '../services/api';
 import { generateLabReportPDF } from '../utils/pdfGenerator';
+import PdfPreviewDialog, { type PdfDoc } from '../components/PdfPreviewDialog';
 
 interface LabOrder {
   id: string;
@@ -50,6 +51,8 @@ export default function Laboratory() {
   const [isResultDialogOpen, setIsResultDialogOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<LabOrder | null>(null);
   const [loading, setLoading] = useState(false);
+  // PDF preview state — null means dialog is closed.
+  const [pdfPreview, setPdfPreview] = useState<PdfDoc | null>(null);
 
   const [orderFormData, setOrderFormData] = useState({
     patientId: '',
@@ -476,7 +479,7 @@ export default function Laboratory() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => generateLabReportPDF({
+                                onClick={() => setPdfPreview(generateLabReportPDF({
                                   reportNumber: order.orderId,
                                   date: order.orderedAt,
                                   patientName: order.patientName,
@@ -488,7 +491,7 @@ export default function Laboratory() {
                                     normalRange: result.normalRange || '',
                                     flag: result.flag
                                   })) || []
-                                })}
+                                }))}
                               >
                                 <FileText className="w-4 h-4 mr-1" />
                                 View Report
@@ -711,6 +714,11 @@ export default function Laboratory() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* In-app PDF preview — opens when "View Report" is clicked.
+          Has explicit Print + Download buttons; the embedded browser
+          PDF viewer also has its own toolbar. */}
+      <PdfPreviewDialog pdf={pdfPreview} onClose={() => setPdfPreview(null)} />
     </div>
   );
 }

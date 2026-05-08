@@ -60,6 +60,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           localStorage.setItem('permissions', JSON.stringify(fresh.permissions || []));
         })
         .catch(() => undefined);
+      // Letterhead is fetched on every hydrate so PDFs always have a
+      // fresh background image; cache survives in localStorage too.
+      void import('../lib/letterheadStore').then((m) => m.loadLetterhead());
     }
     setLoading(false);
   }, []);
@@ -76,6 +79,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     tokenStore.set(token);
     localStorage.setItem('user', JSON.stringify(user));
     localStorage.setItem('permissions', JSON.stringify(user.permissions || []));
+    // Pre-fetch the tenant letterhead so the first PDF generated this
+    // session has the right background.
+    void import('../lib/letterheadStore').then((m) => m.loadLetterhead());
   };
 
   const logout = useCallback(() => {

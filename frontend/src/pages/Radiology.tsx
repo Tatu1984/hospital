@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { generateRadiologyReportPDF } from '../utils/pdfGenerator';
+import PdfPreviewDialog, { type PdfDoc } from '../components/PdfPreviewDialog';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Plus, Scan, FileImage, CheckCircle, Calendar } from 'lucide-react';
@@ -50,6 +51,8 @@ export default function Radiology() {
   const [isReportDialogOpen, setIsReportDialogOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<RadiologyOrder | null>(null);
   const [loading, setLoading] = useState(false);
+  // PDF preview state — null means dialog is closed.
+  const [pdfPreview, setPdfPreview] = useState<PdfDoc | null>(null);
 
   const [orderFormData, setOrderFormData] = useState({
     patientId: '',
@@ -506,7 +509,7 @@ export default function Radiology() {
                             {order.status === 'completed' && order.results && order.results.length > 0 && (
                               <Button variant="outline" size="sm" onClick={() => {
                                 const r = order.results?.[0]?.resultData || {};
-                                generateRadiologyReportPDF({
+                                setPdfPreview(generateRadiologyReportPDF({
                                   reportNumber: order.orderId,
                                   date: new Date().toLocaleDateString(),
                                   patientName: order.patientName,
@@ -518,7 +521,7 @@ export default function Radiology() {
                                   impression: r.impression,
                                   technique: r.technique,
                                   radiologist: r.radiologist,
-                                });
+                                }));
                               }}>
                                 <CheckCircle className="w-4 h-4 mr-1" />
                                 View Report
@@ -720,6 +723,11 @@ export default function Radiology() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* In-app PDF preview — shows the report with explicit Print +
+          Download buttons; the embedded PDF viewer also has its own
+          toolbar. */}
+      <PdfPreviewDialog pdf={pdfPreview} onClose={() => setPdfPreview(null)} />
     </div>
   );
 }

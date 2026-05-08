@@ -6777,6 +6777,48 @@ app.post('/api/users/:id/reset-password', authenticateToken, async (req: any, re
 
 // Get audit logs
 // =====================================================================
+// Letterhead — per-tenant A4 background image used by every printed
+// PDF report. Stored in tenant.config.letterhead as a data URL (PNG
+// or JPG). Size limit 2 MB to keep config payload manageable.
+// =====================================================================
+app.get('/api/tenant/letterhead', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const tenant = await prisma.tenant.findUnique({ where: { id: req.user.tenantId } });
+    const config: any = tenant?.config || {};
+    res.json({ letterhead: config.letterhead || null });
+  } catch (error) {
+    console.error('get letterhead error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/tenant/letterhead', authenticateToken, requirePermission('system:manage'), async (req: any, res: Response) => {
+  try {
+    const { letterhead } = req.body || {};
+    if (letterhead && typeof letterhead === 'string') {
+      // Reject anything that doesn't look like an image data URL.
+      if (!/^data:image\/(png|jpe?g|webp);base64,/.test(letterhead)) {
+        return res.status(400).json({ error: 'Letterhead must be a base64 image data URL (PNG/JPG/WEBP)' });
+      }
+      // 2 MB cap on the data URL string. Above this jsPDF rendering
+      // becomes slow and the tenant config row gets fat.
+      if (letterhead.length > 2_800_000) {
+        return res.status(413).json({ error: 'Letterhead too large (max ~2 MB)' });
+      }
+    }
+    const tenant = await prisma.tenant.findUnique({ where: { id: req.user.tenantId } });
+    const config: any = tenant?.config || {};
+    config.letterhead = letterhead || null;
+    await prisma.tenant.update({ where: { id: req.user.tenantId }, data: { config } });
+    auditLogger.securityEvent('LETTERHEAD_UPDATED', { tenantId: req.user.tenantId, by: req.user.userId, cleared: !letterhead });
+    res.json({ letterhead: config.letterhead });
+  } catch (error) {
+    console.error('put letterhead error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// =====================================================================
 // Role + Permission management (DB-backed RBAC).
 //
 // Roles are persisted in the `roles` table; the in-memory cache in

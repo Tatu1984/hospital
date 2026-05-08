@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Plus, Receipt, Trash2, Printer, DollarSign } from 'lucide-react';
 import api from '../services/api';
 import { generateBillPDF } from '../utils/pdfGenerator';
+import PdfPreviewDialog, { type PdfDoc } from '../components/PdfPreviewDialog';
 
 interface BillItem {
   id: string;
@@ -55,6 +56,8 @@ export default function BillingPage() {
   const queryParams = new URLSearchParams(location.search);
 
   const [bills, setBills] = useState<Bill[]>([]);
+  // PDF preview state — null means dialog is closed.
+  const [pdfPreview, setPdfPreview] = useState<PdfDoc | null>(null);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [billItems, setBillItems] = useState<BillItem[]>([]);
 
@@ -588,7 +591,7 @@ export default function BillingPage() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => generateBillPDF({
+                          onClick={() => setPdfPreview(generateBillPDF({
                             billNumber: bill.billNo,
                             date: new Date(bill.date).toLocaleDateString(),
                             patientName: bill.patientName,
@@ -606,7 +609,7 @@ export default function BillingPage() {
                             paymentMode: bill.paymentMode,
                             paidAmount: bill.paid,
                             balance: bill.balance
-                          })}
+                          }))}
                         >
                           <Printer className="w-4 h-4" />
                         </Button>
@@ -624,6 +627,10 @@ export default function BillingPage() {
           </Table>
         </CardContent>
       </Card>
+
+      {/* In-app PDF preview — shows the bill with explicit Print +
+          Download buttons. */}
+      <PdfPreviewDialog pdf={pdfPreview} onClose={() => setPdfPreview(null)} />
     </div>
   );
 }

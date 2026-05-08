@@ -5,6 +5,7 @@ import jsPDF from 'jspdf';
 // expose a tiny doc.autoTable(options) shim on each instance below so
 // the existing call sites (~10 of them) keep working without a sweep.
 import autoTable from 'jspdf-autotable';
+import { getLetterhead } from '../lib/letterheadStore';
 
 declare module 'jspdf' {
   interface jsPDF {
@@ -39,8 +40,33 @@ const hospitalInfo: HospitalInfo = {
   email: 'info@busitemahospital.ug'
 };
 
-// Generate a header for all PDF reports
+// Generate a header for all PDF reports.
+//
+// Two modes:
+//   1. Letterhead uploaded — paint the user's letterhead image as a
+//      full A4 background (210x297 mm). The hospital name/address that
+//      we'd normally print is now embedded in the letterhead artwork,
+//      so we only print the report title centered below the letterhead's
+//      typical top-margin (~50 mm).
+//   2. No letterhead — fall back to the typed text header (hospital
+//      name, address, phone, line, then title).
 function addHeader(doc: jsPDF, title: string) {
+  const letterhead = getLetterhead();
+  if (letterhead) {
+    try {
+      // A4 in jsPDF default mm units = 210 x 297. Stretch the image to
+      // cover the whole page; the user's letterhead artwork is expected
+      // to be A4-proportioned (the upload UI guides them on this).
+      doc.addImage(letterhead, 'PNG', 0, 0, 210, 297);
+    } catch {
+      // Bad data URL → fall through to text header
+    }
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text(title, 105, 55, { align: 'center' });
+    return 65; // start content lower to clear the letterhead's own header
+  }
+
   // Hospital name
   doc.setFontSize(20);
   doc.setFont('helvetica', 'bold');
@@ -170,7 +196,14 @@ export function generateBillPDF(billData: {
   doc.text(`Generated on: ${new Date().toLocaleString()}`, 105, 285, { align: 'center' });
 
   // Save
-  doc.save(`Bill_${billData.billNumber}.pdf`);
+  return { doc, filename: `Bill_${billData.billNumber}.pdf` };
+}
+
+// Convenience helper for callers that just want to trigger a download
+// (back-compat with the old behaviour). New callers should pass the
+// returned `{ doc, filename }` to <PdfPreviewDialog/> for in-app preview.
+export function downloadPdf(p: { doc: jsPDF; filename: string }): void {
+  p.doc.save(p.filename);
 }
 
 // Generate Radiology Report PDF. Same hospital header + patient block as
@@ -240,7 +273,7 @@ export function generateRadiologyReportPDF(reportData: {
   doc.setFont('helvetica', 'italic');
   doc.text(`Generated on: ${new Date().toLocaleString()}`, 105, 285, { align: 'center' });
 
-  doc.save(`Radiology_${reportData.reportNumber}.pdf`);
+  return { doc, filename: `Radiology_${reportData.reportNumber}.pdf` };
 }
 
 // Generate Lab Report PDF
@@ -346,7 +379,7 @@ export function generateLabReportPDF(reportData: {
   doc.text(`Generated on: ${new Date().toLocaleString()}`, 105, 285, { align: 'center' });
 
   // Save
-  doc.save(`LabReport_${reportData.reportNumber}.pdf`);
+  return { doc, filename: `LabReport_${reportData.reportNumber}.pdf` };
 }
 
 // Generate Discharge Summary PDF
@@ -467,5 +500,5 @@ export function generateDischargeSummaryPDF(data: {
   doc.text(`Generated on: ${new Date().toLocaleString()}`, 105, 285, { align: 'center' });
 
   // Save
-  doc.save(`DischargeSummary_${data.patientMRN}_${data.dischargeDate.replace(/\//g, '-')}.pdf`);
+  return { doc, filename: `DischargeSummary_${data.patientMRN}_${data.dischargeDate.replace(/\//g, '-')}.pdf` };
 }

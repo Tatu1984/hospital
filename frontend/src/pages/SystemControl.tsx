@@ -32,6 +32,7 @@ import { Badge } from '@/components/ui/badge';
 import { Settings, Users, FileText, Activity, Plus, Edit, Trash2, Key, Building2, Mail, Phone, TestTube, ShieldCheck } from 'lucide-react';
 import LabConfiguration from './LabConfiguration';
 import RoleManagementPanel from '../components/admin/RoleManagementPanel';
+import LetterheadUploader from '../components/admin/LetterheadUploader';
 import api from '../services/api';
 import UserFormModal from '../components/UserFormModal';
 
@@ -548,6 +549,10 @@ const SystemControl: React.FC = () => {
 
         {/* System Settings Tab */}
         <TabsContent value="settings" className="space-y-4">
+          {/* Letterhead — A4 image used as background on every printed
+              PDF (bills, lab/radiology reports, discharge summaries). */}
+          <LetterheadUploader />
+
           <Card>
             <CardHeader>
               <CardTitle>Hospital Information</CardTitle>

@@ -144,6 +144,9 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   // ('dashboard:view') because the user's *own* password is not
   // privileged data they don't already have.
   'POST /api/auth/change-password': ['dashboard:view'],
+  // Tenant letterhead — A4 image used as background on printed PDFs.
+  'GET /api/tenant/letterhead': ['dashboard:view'],
+  'PUT /api/tenant/letterhead': ['system:manage'],
   // Per-user permission overrides — admin grants/revokes individual
   // permissions on top of role-implied permissions for one user.
   'PUT /api/users/:id/permission-overrides': ['users:manage'],
