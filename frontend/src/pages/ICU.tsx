@@ -331,7 +331,14 @@ export default function ICU() {
             <TabsContent value="all">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {icuBeds.map((bed) => (
-                  <Card key={bed.id} className={bed.status === 'OCCUPIED' ? 'border-blue-200 bg-blue-50' : ''}>
+                  // Whole card is clickable — opens the Details dialog. The
+                  // inner Vitals / Vent / Details buttons stop event
+                  // propagation so they still trigger their own dialogs.
+                  <Card
+                    key={bed.id}
+                    onClick={() => openDetailsDialog(bed)}
+                    className={`cursor-pointer transition-shadow hover:shadow-lg ${bed.status === 'OCCUPIED' ? 'border-blue-200 bg-blue-50' : 'hover:border-slate-300'}`}
+                  >
                     <CardHeader className="pb-3">
                       <div className="flex justify-between items-start">
                         <div>
@@ -391,18 +398,18 @@ export default function ICU() {
                             </div>
                           )}
 
-                          <div className="flex gap-2 pt-2 border-t">
-                            <Button size="sm" variant="outline" onClick={() => openVitalsDialog(bed)} className="flex-1">
+                          <div className="flex gap-2 pt-2 border-t" onClick={(e) => e.stopPropagation()}>
+                            <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); openVitalsDialog(bed); }} className="flex-1">
                               <Activity className="w-3 h-3 mr-1" />
                               Vitals
                             </Button>
                             {bed.admission?.isVentilated && (
-                              <Button size="sm" variant="outline" onClick={() => openVentilatorDialog(bed)} className="flex-1">
+                              <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); openVentilatorDialog(bed); }} className="flex-1">
                                 <Wind className="w-3 h-3 mr-1" />
                                 Vent
                               </Button>
                             )}
-                            <Button size="sm" variant="outline" onClick={() => openDetailsDialog(bed)}>
+                            <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); openDetailsDialog(bed); }}>
                               <FileText className="w-3 h-3" />
                             </Button>
                           </div>

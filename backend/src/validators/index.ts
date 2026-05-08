@@ -184,14 +184,16 @@ export const createLabOrderSchema = z.object({
   clinicalInfo: z.string().max(1000).optional().nullable(),
 });
 
+// labResultSchema. Aligned with the actual handler in server.ts which
+// expects { orderId, resultData (free-form JSON), isCritical?, remarks? }.
+// The earlier shape (testId/result/unit/referenceRange) didn't match
+// any caller — every legacy and current frontend sends resultData as
+// the JSON payload, so Zod was rejecting valid submissions with 400.
 export const labResultSchema = z.object({
   orderId: idSchema,
-  testId: idSchema,
-  result: z.string().max(5000),
-  unit: z.string().max(50).optional(),
-  referenceRange: z.string().max(100).optional(),
-  isCritical: z.boolean().default(false),
-  notes: z.string().max(1000).optional(),
+  resultData: z.any().optional(),
+  isCritical: z.boolean().optional().default(false),
+  remarks: z.string().max(2000).optional(),
 });
 
 // Billing validators

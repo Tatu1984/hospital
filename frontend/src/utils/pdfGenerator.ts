@@ -1,11 +1,28 @@
 import jsPDF from 'jspdf';
-import 'jspdf-autotable';
+// jspdf-autotable v5+ no longer monkey-patches the jsPDF prototype as a
+// side effect of `import 'jspdf-autotable'`. The functional form is the
+// only supported API: `autoTable(doc, options)`. We import it once and
+// expose a tiny doc.autoTable(options) shim on each instance below so
+// the existing call sites (~10 of them) keep working without a sweep.
+import autoTable from 'jspdf-autotable';
 
-// Extend jsPDF type to include autoTable
 declare module 'jspdf' {
   interface jsPDF {
     autoTable: (options: any) => jsPDF;
   }
+}
+
+// Wrap a fresh jsPDF instance with the autoTable shim. Call this
+// instead of `new jsPDF()` directly anywhere in this file. Keeps the
+// existing `doc.autoTable(...)` call sites valid without rewriting
+// every report.
+function newPdf(orientation: 'p' | 'l' = 'p'): jsPDF {
+  const doc = new jsPDF(orientation);
+  (doc as any).autoTable = (options: any) => {
+    autoTable(doc, options);
+    return doc;
+  };
+  return doc;
 }
 
 interface HospitalInfo {
@@ -68,7 +85,7 @@ export function generateBillPDF(billData: {
   paidAmount?: number;
   balance?: number;
 }) {
-  const doc = new jsPDF();
+  const doc = newPdf();
 
   let yPos = addHeader(doc, 'BILL / INVOICE');
 
@@ -177,7 +194,7 @@ export function generateLabReportPDF(reportData: {
   technician?: string;
   pathologist?: string;
 }) {
-  const doc = new jsPDF();
+  const doc = newPdf();
 
   let yPos = addHeader(doc, 'LABORATORY REPORT');
 
@@ -280,7 +297,7 @@ export function generateDischargeSummaryPDF(data: {
   followUp?: string;
   instructions?: string;
 }) {
-  const doc = new jsPDF();
+  const doc = newPdf();
 
   let yPos = addHeader(doc, 'DISCHARGE SUMMARY');
 
