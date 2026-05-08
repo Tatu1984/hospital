@@ -6777,6 +6777,238 @@ app.post('/api/users/:id/reset-password', authenticateToken, async (req: any, re
 
 // Get audit logs
 // =====================================================================
+// Integrations hub — third-party API connections registered by admins.
+// Examples: SMS (MSG91 / Twilio), email (SendGrid), payment (Razorpay),
+// telemedicine (Zoom / Teams), accounting (AccuBook / Tally), DICOM/PACS
+// (Orthanc), lab analyzer middleware (Mirth Connect), WhatsApp Business,
+// or arbitrary "custom" REST endpoints. Stored encrypted-at-rest is a
+// future hardening; v1 stores credentials as JSON in the integrations
+// table with response masking.
+// =====================================================================
+
+// Mask the credentials JSON before returning. Replace each value with
+// either 'set' or 'unset'; never leak plaintext over the wire after
+// it's been written. The admin can re-enter credentials to update.
+function maskIntegrationCredentials(row: any): any {
+  if (!row) return row;
+  const masked = { ...row };
+  if (masked.credentials && typeof masked.credentials === 'object') {
+    masked.credentials = Object.fromEntries(
+      Object.entries(masked.credentials).map(([k, v]) => [k, v ? 'set' : 'unset']),
+    );
+  }
+  return masked;
+}
+
+app.get('/api/admin/integrations', authenticateToken, requirePermission('system:manage'), async (req: any, res: Response) => {
+  try {
+    const { category } = req.query;
+    const where: any = { tenantId: req.user.tenantId };
+    if (category) where.category = category;
+    const rows = await prisma.integration.findMany({
+      where,
+      orderBy: [{ category: 'asc' }, { name: 'asc' }],
+    });
+    res.json(rows.map(maskIntegrationCredentials));
+  } catch (error) {
+    console.error('list integrations error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/admin/integrations', authenticateToken, requirePermission('system:manage'), async (req: any, res: Response) => {
+  try {
+    const { name, category, provider, baseUrl, authType, credentials, headers, targetModules, enabled, notes } = req.body || {};
+    if (!name || !category || !provider) {
+      return res.status(400).json({ error: 'name, category, and provider are required' });
+    }
+    const created = await prisma.integration.create({
+      data: {
+        tenantId: req.user.tenantId,
+        name,
+        category,
+        provider,
+        baseUrl: baseUrl || null,
+        authType: authType || 'api_key',
+        credentials: credentials || {},
+        headers: headers || null,
+        targetModules: Array.isArray(targetModules) ? targetModules : [],
+        enabled: enabled !== false,
+        notes: notes || null,
+        createdBy: req.user.userId,
+        lastTestStatus: 'never',
+      },
+    });
+    auditLogger.securityEvent('INTEGRATION_CREATED', { id: created.id, category, provider, by: req.user.userId });
+    void writeAudit({
+      prisma, req,
+      userId: req.user.userId, tenantId: req.user.tenantId,
+      action: 'INTEGRATION_CREATED', resource: 'Integration', resourceId: created.id,
+    });
+    res.status(201).json(maskIntegrationCredentials(created));
+  } catch (error) {
+    console.error('create integration error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/admin/integrations/:id', authenticateToken, requirePermission('system:manage'), async (req: any, res: Response) => {
+  try {
+    const owned = await prisma.integration.findFirst({
+      where: { id: req.params.id, tenantId: req.user.tenantId },
+    });
+    if (!owned) return res.status(404).json({ error: 'Integration not found' });
+
+    const { name, category, provider, baseUrl, authType, credentials, headers, targetModules, enabled, notes } = req.body || {};
+    const data: any = {};
+    if (name !== undefined) data.name = name;
+    if (category !== undefined) data.category = category;
+    if (provider !== undefined) data.provider = provider;
+    if (baseUrl !== undefined) data.baseUrl = baseUrl;
+    if (authType !== undefined) data.authType = authType;
+    // Credentials only updated if explicitly provided. If admin sends
+    // a partial object, merge with existing so they don't have to re-enter
+    // every secret on every save.
+    if (credentials && typeof credentials === 'object') {
+      const existing = (owned.credentials as any) || {};
+      const merged: Record<string, any> = { ...existing };
+      for (const [k, v] of Object.entries(credentials)) {
+        // 'set' / 'unset' come from masked GET responses — ignore them
+        if (v === 'set' || v === 'unset') continue;
+        if (v === '' || v === null) delete merged[k];
+        else merged[k] = v;
+      }
+      data.credentials = merged;
+    }
+    if (headers !== undefined) data.headers = headers;
+    if (Array.isArray(targetModules)) data.targetModules = targetModules;
+    if (enabled !== undefined) data.enabled = enabled;
+    if (notes !== undefined) data.notes = notes;
+
+    const updated = await prisma.integration.update({ where: { id: req.params.id }, data });
+    auditLogger.securityEvent('INTEGRATION_UPDATED', { id: updated.id, by: req.user.userId });
+    void writeAudit({
+      prisma, req,
+      userId: req.user.userId, tenantId: req.user.tenantId,
+      action: 'INTEGRATION_UPDATED', resource: 'Integration', resourceId: updated.id,
+    });
+    res.json(maskIntegrationCredentials(updated));
+  } catch (error) {
+    console.error('update integration error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.delete('/api/admin/integrations/:id', authenticateToken, requirePermission('system:manage'), async (req: any, res: Response) => {
+  try {
+    const owned = await prisma.integration.findFirst({
+      where: { id: req.params.id, tenantId: req.user.tenantId },
+    });
+    if (!owned) return res.status(404).json({ error: 'Integration not found' });
+    await prisma.integration.delete({ where: { id: req.params.id } });
+    auditLogger.securityEvent('INTEGRATION_DELETED', { id: req.params.id, by: req.user.userId });
+    void writeAudit({
+      prisma, req,
+      userId: req.user.userId, tenantId: req.user.tenantId,
+      action: 'INTEGRATION_DELETED', resource: 'Integration', resourceId: req.params.id,
+    });
+    res.status(204).end();
+  } catch (error) {
+    console.error('delete integration error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Test an integration. Builds a request from the stored config, fires
+// it, captures status + first 200 chars of body. Records the result on
+// the integration row for visibility. Default test path is GET / (or
+// the configured testPath in headers JSON).
+app.post('/api/admin/integrations/:id/test', authenticateToken, requirePermission('system:manage'), async (req: any, res: Response) => {
+  try {
+    const integ = await prisma.integration.findFirst({
+      where: { id: req.params.id, tenantId: req.user.tenantId },
+    });
+    if (!integ) return res.status(404).json({ error: 'Integration not found' });
+    if (!integ.baseUrl) {
+      return res.status(400).json({ error: 'baseUrl not configured — cannot test' });
+    }
+
+    const creds: any = integ.credentials || {};
+    const extraHeaders: any = (integ.headers as any) || {};
+    const headers: Record<string, string> = { Accept: 'application/json', ...extraHeaders };
+
+    switch (integ.authType) {
+      case 'api_key':
+        if (creds.apiKey) headers['Authorization'] = `Bearer ${creds.apiKey}`;
+        if (creds.headerName && creds.headerValue) headers[creds.headerName] = creds.headerValue;
+        break;
+      case 'bearer':
+        if (creds.token) headers['Authorization'] = `Bearer ${creds.token}`;
+        break;
+      case 'basic':
+        if (creds.username && creds.password) {
+          headers['Authorization'] = `Basic ${Buffer.from(`${creds.username}:${creds.password}`).toString('base64')}`;
+        }
+        break;
+      // oauth2 + none: no header to add at this layer
+    }
+
+    const testPath = (req.body?.path as string) || (extraHeaders.testPath as string) || '/';
+    const url = integ.baseUrl.replace(/\/+$/, '') + (testPath.startsWith('/') ? testPath : `/${testPath}`);
+
+    let status: number | null = null;
+    let body = '';
+    let ok = false;
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 10_000);
+      const r = await fetch(url, { headers, signal: ctrl.signal as any });
+      clearTimeout(t);
+      status = r.status;
+      ok = r.ok;
+      const text = await r.text();
+      body = text.slice(0, 200);
+    } catch (e: any) {
+      body = e?.message || 'Network error';
+      ok = false;
+    }
+
+    const result = ok ? `${status} OK` : `${status ?? 'ERR'} — ${body}`;
+    await prisma.integration.update({
+      where: { id: integ.id },
+      data: {
+        lastTestedAt: new Date(),
+        lastTestStatus: ok ? 'ok' : 'failed',
+        lastTestResult: result.slice(0, 500),
+      },
+    });
+    auditLogger.securityEvent('INTEGRATION_TESTED', { id: integ.id, ok, status, by: req.user.userId });
+
+    res.json({ ok, status, result, url });
+  } catch (error) {
+    console.error('test integration error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Helper for other parts of the codebase to look up an active
+// integration by category + (optional) module — e.g. when sending an
+// SMS, the SMS service can call findActiveIntegration(tenantId, 'sms',
+// 'appointments') to get the right credentials at runtime.
+async function findActiveIntegration(tenantId: string, category: string, targetModule?: string) {
+  const rows = await prisma.integration.findMany({
+    where: { tenantId, category, enabled: true },
+  });
+  if (targetModule) {
+    const matching = rows.find((r) => (r.targetModules || []).includes(targetModule));
+    if (matching) return matching;
+  }
+  return rows[0] || null;
+}
+// Re-export so the type is preserved if other modules import this later.
+export { findActiveIntegration };
+
+// =====================================================================
 // Letterhead — per-tenant A4 background image used by every printed
 // PDF report. Stored in tenant.config.letterhead as a data URL (PNG
 // or JPG). Size limit 2 MB to keep config payload manageable.

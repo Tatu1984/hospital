@@ -132,6 +132,50 @@ model User {
   @@map("users")
 }
 
+// Third-party API integrations registered by tenant admins. Each row
+// represents a single connected service (SMS provider, payment gateway,
+// PACS server, lab analyzer middleware, custom REST endpoint, etc.).
+//
+// `category` is the broad bucket (sms, email, payment, telemed, accounting,
+// dicom, lab_analyzer, hl7, whatsapp, insurance, custom). `provider` is
+// the specific vendor name within that bucket (msg91, twilio, sendgrid,
+// razorpay, zoom, teams, orthanc, mirth, etc.) — kept as free text so
+// admins can wire arbitrary providers without a code change.
+//
+// `targetModules` is an array of HospitalPro module slugs that this
+// integration powers ('appointments', 'billing', 'pharmacy', etc.).
+// One integration can drive many modules (e.g. one SMS provider used
+// for both OTP and reminders).
+//
+// `credentials` JSON holds whatever the provider needs (apiKey, secret,
+// clientId, clientSecret, accountSid, etc.). Stored as plain JSON in
+// v1; for production we should swap in an encrypted column or a secrets
+// manager — tracked as a follow-up.
+model Integration {
+  id             String    @id @default(uuid())
+  tenantId       String
+  name           String
+  category       String
+  provider       String
+  baseUrl        String?
+  authType       String    @default("api_key") // api_key, basic, bearer, oauth2, none
+  credentials    Json?
+  headers        Json?
+  targetModules  String[]  @default([])
+  enabled        Boolean   @default(true)
+  lastTestedAt   DateTime?
+  lastTestStatus String? // ok, failed, never
+  lastTestResult String? // short error message or "200 OK"
+  notes          String?
+  createdBy      String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([tenantId])
+  @@index([category])
+  @@map("integrations")
+}
+
 // Roles + permission lists. ID-as-string lets system roles keep their
 // legacy names ('ADMIN', 'DOCTOR', 'NURSE', ...) so existing User.roleIds
 // references stay valid. Custom roles get a UUID. tenantId NULL = global

@@ -147,6 +147,13 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   // Tenant letterhead — A4 image used as background on printed PDFs.
   'GET /api/tenant/letterhead': ['dashboard:view'],
   'PUT /api/tenant/letterhead': ['system:manage'],
+  // Integrations hub — third-party API connections (SMS, email, payment,
+  // telemed, accounting, PACS, lab analyzers, custom REST). Admin only.
+  'GET /api/admin/integrations': ['system:manage'],
+  'POST /api/admin/integrations': ['system:manage'],
+  'PUT /api/admin/integrations/:id': ['system:manage'],
+  'DELETE /api/admin/integrations/:id': ['system:manage'],
+  'POST /api/admin/integrations/:id/test': ['system:manage'],
   // Per-user permission overrides — admin grants/revokes individual
   // permissions on top of role-implied permissions for one user.
   'PUT /api/users/:id/permission-overrides': ['users:manage'],

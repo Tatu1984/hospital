@@ -29,10 +29,11 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { Settings, Users, FileText, Activity, Plus, Edit, Trash2, Key, Building2, Mail, Phone, TestTube, ShieldCheck } from 'lucide-react';
+import { Settings, Users, FileText, Activity, Plus, Edit, Trash2, Key, Building2, Mail, Phone, TestTube, ShieldCheck, Plug } from 'lucide-react';
 import LabConfiguration from './LabConfiguration';
 import RoleManagementPanel from '../components/admin/RoleManagementPanel';
 import LetterheadUploader from '../components/admin/LetterheadUploader';
+import IntegrationsPanel from '../components/admin/IntegrationsPanel';
 import api from '../services/api';
 import UserFormModal from '../components/UserFormModal';
 
@@ -440,26 +441,30 @@ const SystemControl: React.FC = () => {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-6">
+        <TabsList className="grid w-full grid-cols-7">
           <TabsTrigger value="users">
             <Users className="mr-2 h-4 w-4" />
-            User Management
+            Users
           </TabsTrigger>
           <TabsTrigger value="roles">
             <ShieldCheck className="mr-2 h-4 w-4" />
-            Roles & Permissions
+            Roles
+          </TabsTrigger>
+          <TabsTrigger value="integrations">
+            <Plug className="mr-2 h-4 w-4" />
+            Integrations
           </TabsTrigger>
           <TabsTrigger value="settings">
             <Settings className="mr-2 h-4 w-4" />
-            System Settings
+            Settings
           </TabsTrigger>
           <TabsTrigger value="lab-config">
             <TestTube className="mr-2 h-4 w-4" />
-            Lab Configuration
+            Lab Config
           </TabsTrigger>
           <TabsTrigger value="audit">
             <Activity className="mr-2 h-4 w-4" />
-            Audit Logs
+            Audit
           </TabsTrigger>
           <TabsTrigger value="reports">
             <FileText className="mr-2 h-4 w-4" />
@@ -776,6 +781,14 @@ const SystemControl: React.FC = () => {
             disable/delete custom roles. */}
         <TabsContent value="roles" className="space-y-4">
           <RoleManagementPanel />
+        </TabsContent>
+
+        {/* Integrations Hub — third-party API connections (SMS, email,
+            payment, telemedicine, accounting, PACS, lab analyzers,
+            custom REST). Admin registers credentials + binds each to
+            modules; runtime code looks them up via findActiveIntegration. */}
+        <TabsContent value="integrations" className="space-y-4">
+          <IntegrationsPanel />
         </TabsContent>
 
         {/* Lab Configuration Tab — master-data screen for lab test catalog
