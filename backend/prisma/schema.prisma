@@ -158,6 +158,13 @@ model Integration {
   category       String
   provider       String
   baseUrl        String?
+  // The third-party service's user-facing web URL (separate from the
+  // API base URL above). e.g. for AccuBook the API might live at
+  // https://accubook.example.com/api while the dashboard is at
+  // https://accubook.example.com. HospitalPro module pages render an
+  // iframe of this URL + a "Launch in new tab" button so admins can
+  // jump straight into the third-party UI without leaving HospitalPro.
+  webUrl         String?
   authType       String    @default("api_key") // api_key, basic, bearer, oauth2, none
   credentials    Json?
   headers        Json?

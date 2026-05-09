@@ -6838,6 +6838,7 @@ app.get('/api/integrations/active', authenticateToken, async (req: any, res: Res
       category: r.category,
       provider: r.provider,
       baseUrl: r.baseUrl,
+      webUrl: r.webUrl,
       targetModules: r.targetModules,
       enabled: r.enabled,
       lastTestStatus: r.lastTestStatus,
@@ -6868,7 +6869,7 @@ app.get('/api/admin/integrations', authenticateToken, requirePermission('system:
 
 app.post('/api/admin/integrations', authenticateToken, requirePermission('system:manage'), async (req: any, res: Response) => {
   try {
-    const { name, category, provider, baseUrl, authType, credentials, headers, targetModules, enabled, notes } = req.body || {};
+    const { name, category, provider, baseUrl, webUrl, authType, credentials, headers, targetModules, enabled, notes } = req.body || {};
     if (!name || !category || !provider) {
       return res.status(400).json({ error: 'name, category, and provider are required' });
     }
@@ -6879,6 +6880,7 @@ app.post('/api/admin/integrations', authenticateToken, requirePermission('system
         category,
         provider,
         baseUrl: baseUrl || null,
+        webUrl: webUrl || null,
         authType: authType || 'api_key',
         credentials: credentials || {},
         headers: headers || null,
@@ -6909,12 +6911,13 @@ app.put('/api/admin/integrations/:id', authenticateToken, requirePermission('sys
     });
     if (!owned) return res.status(404).json({ error: 'Integration not found' });
 
-    const { name, category, provider, baseUrl, authType, credentials, headers, targetModules, enabled, notes } = req.body || {};
+    const { name, category, provider, baseUrl, webUrl, authType, credentials, headers, targetModules, enabled, notes } = req.body || {};
     const data: any = {};
     if (name !== undefined) data.name = name;
     if (category !== undefined) data.category = category;
     if (provider !== undefined) data.provider = provider;
     if (baseUrl !== undefined) data.baseUrl = baseUrl;
+    if (webUrl !== undefined) data.webUrl = webUrl;
     if (authType !== undefined) data.authType = authType;
     // Credentials only updated if explicitly provided. If admin sends
     // a partial object, merge with existing so they don't have to re-enter

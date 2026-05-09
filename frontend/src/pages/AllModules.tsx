@@ -521,9 +521,62 @@ export function Tally() {
         ]}
       >
         {(integ) => integ ? (
+          <>
+            {/* Embedded AccuBook UI. Only renders if webUrl is configured.
+                Many web apps block iframing via X-Frame-Options or CSP
+                frame-ancestors — if the iframe shows blank, the
+                "Launch in new tab" button always works. */}
+            {integ.webUrl ? (
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between">
+                  <div>
+                    <CardTitle className="text-base">AccuBook</CardTitle>
+                    <CardDescription className="truncate max-w-md">
+                      {integ.webUrl}
+                    </CardDescription>
+                  </div>
+                  <a
+                    href={integ.webUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-sm font-medium px-3 py-1.5 border rounded-md hover:bg-slate-50"
+                  >
+                    Launch in new tab ↗
+                  </a>
+                </CardHeader>
+                <CardContent>
+                  <iframe
+                    src={integ.webUrl}
+                    title="AccuBook"
+                    className="w-full border rounded"
+                    style={{ height: '70vh' }}
+                    // sandbox is intentionally permissive so the embedded
+                    // app behaves normally; AccuBook auth is its own layer.
+                    sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-top-navigation"
+                  />
+                  <p className="text-[11px] text-slate-500 italic mt-2">
+                    If the embed area is blank, AccuBook is blocking iframing via security
+                    headers (X-Frame-Options or CSP frame-ancestors). Use the "Launch in new tab"
+                    button — that always works.
+                  </p>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Web UI not configured</CardTitle>
+                  <CardDescription>
+                    Add a Web UI URL to the AccuBook integration in System Control → Integrations
+                    so this page can show the AccuBook dashboard. Until then, this page only stores
+                    credentials for backend sync.
+                  </CardDescription>
+                </CardHeader>
+              </Card>
+            )}
+
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Sync controls</CardTitle>
+              <CardTitle className="text-base">Backend sync controls (planned)</CardTitle>
               <CardDescription>
                 Push posted invoices to AccuBook as journal vouchers, or run a reconciliation report.
               </CardDescription>
@@ -558,6 +611,7 @@ export function Tally() {
               </p>
             </CardContent>
           </Card>
+          </>
         ) : null}
       </IntegrationStatusCard>
     </div>

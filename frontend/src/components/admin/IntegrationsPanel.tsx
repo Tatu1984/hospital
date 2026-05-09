@@ -52,6 +52,7 @@ interface Integration {
   category: string;
   provider: string;
   baseUrl: string | null;
+  webUrl: string | null;
   authType: string;
   credentials: Record<string, string> | null; // server returns 'set'/'unset'
   headers: Record<string, string> | null;
@@ -297,6 +298,7 @@ export default function IntegrationsPanel() {
       category: i.category,
       provider: i.provider,
       baseUrl: i.baseUrl || '',
+      webUrl: i.webUrl || '',
       authType: i.authType,
       targetModules: i.targetModules,
       enabled: i.enabled,
@@ -549,13 +551,24 @@ export default function IntegrationsPanel() {
                 placeholder="msg91, twilio, sendgrid, custom..."
               />
             </div>
-            <div className="col-span-2">
-              <Label className="text-xs text-slate-500">Base URL</Label>
+            <div>
+              <Label className="text-xs text-slate-500">API base URL</Label>
               <Input
                 value={form.baseUrl || ''}
                 onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
                 placeholder="https://api.example.com/v1"
               />
+            </div>
+            <div>
+              <Label className="text-xs text-slate-500">Web UI URL <span className="text-slate-400">(optional)</span></Label>
+              <Input
+                value={form.webUrl || ''}
+                onChange={(e) => setForm({ ...form, webUrl: e.target.value })}
+                placeholder="https://accubook.example.com"
+              />
+              <p className="text-[10px] text-slate-400 mt-0.5">
+                User-facing URL of the third-party UI. Module pages render this in an iframe + Launch button.
+              </p>
             </div>
             <div>
               <Label className="text-xs text-slate-500">Auth type</Label>

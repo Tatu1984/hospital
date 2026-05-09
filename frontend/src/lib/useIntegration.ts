@@ -17,6 +17,8 @@ export interface ActiveIntegration {
   category: string;
   provider: string;
   baseUrl: string | null;
+  /** User-facing web UI URL — used by module pages to embed an iframe + "Launch in new tab" button */
+  webUrl: string | null;
   targetModules: string[];
   enabled: boolean;
   lastTestStatus: 'ok' | 'failed' | 'never' | null;
