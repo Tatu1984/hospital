@@ -6319,6 +6319,93 @@ app.get('/api/master/wards', authenticateToken, async (req: any, res: Response) 
   }
 });
 
+// Seed the 10 standard ward categories (Pvt Cabin, 2/3/4-share, Men's,
+// Women's, Nursery, ITU, HDU, ICCU) plus a default number of beds for each
+// using the WARD_CATEGORIES constants. Idempotent — re-running skips any
+// ward whose canonical type already exists for this tenant.
+app.post('/api/master/seed-standard-wards', authenticateToken, async (req: any, res: Response) => {
+  if (!req.user?.roleIds?.includes('ADMIN')) {
+    return res.status(403).json({ error: 'admin only' });
+  }
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { WARD_CATEGORIES } = require('./shared/wardCategories');
+    const summary: Array<{ type: string; status: 'created' | 'skipped'; beds?: number }> = [];
+
+    for (const cat of WARD_CATEGORIES as Array<{ type: string; label: string; defaultTariff: number; defaultBeds: number }>) {
+      const existing = await prisma.ward.findFirst({
+        where: { tenantId: req.user.tenantId, type: cat.type },
+      });
+      if (existing) {
+        summary.push({ type: cat.type, status: 'skipped' });
+        continue;
+      }
+      const ward = await prisma.ward.create({
+        data: {
+          tenantId: req.user.tenantId,
+          branchId: req.user.branchId,
+          name: cat.label,
+          type: cat.type,
+          floor: '',
+          totalBeds: cat.defaultBeds,
+          tariffPerDay: cat.defaultTariff,
+          isActive: true,
+        },
+      });
+      const prefix = cat.type.replace(/_/g, '-');
+      const bedRows = Array.from({ length: cat.defaultBeds }, (_, i) => ({
+        branchId: req.user.branchId,
+        wardId: ward.id,
+        bedNumber: `${prefix}-${String(i + 1).padStart(2, '0')}`,
+        category: cat.type,
+        status: 'vacant',
+      }));
+      await prisma.bed.createMany({ data: bedRows, skipDuplicates: true });
+      summary.push({ type: cat.type, status: 'created', beds: bedRows.length });
+    }
+
+    res.json({ ok: true, summary });
+  } catch (error: any) {
+    console.error('Seed standard wards error:', error);
+    res.status(500).json({ error: 'Internal server error', message: error?.message });
+  }
+});
+
+// Master data - beds. Returns every bed in the branch with its ward joined,
+// shaped to fit the generic MasterItem table the admin UI uses.
+app.get('/api/master/beds', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const beds = await prisma.bed.findMany({
+      where: { branchId: req.user.branchId },
+      orderBy: [{ category: 'asc' }, { bedNumber: 'asc' }],
+    });
+    const wardIds = Array.from(new Set(beds.map((b: any) => b.wardId).filter(Boolean)));
+    const wards = wardIds.length
+      ? await prisma.ward.findMany({ where: { id: { in: wardIds as string[] } } })
+      : [];
+    const wardById = new Map(wards.map((w: any) => [w.id, w]));
+    res.json(beds.map((b: any) => {
+      const w: any = b.wardId ? wardById.get(b.wardId) : null;
+      return {
+        id: b.id,
+        code: b.bedNumber,
+        name: b.bedNumber,
+        bedNumber: b.bedNumber,
+        category: b.category,
+        wardId: b.wardId || null,
+        wardName: w?.name || null,
+        wardType: w?.type || null,
+        floor: b.floor || w?.floor || '',
+        bedStatus: b.status,
+        status: 'active',
+      };
+    }));
+  } catch (error) {
+    console.error('Get master beds error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Master data - packages
 app.get('/api/master/packages', authenticateToken, async (req: any, res: Response) => {
   try {
@@ -6416,8 +6503,10 @@ app.post('/api/master/:type', authenticateToken, async (req: any, res: Response)
       case 'wards':
         result = await prisma.ward.create({
           data: {
+            tenantId: req.user.tenantId,
+            branchId: req.user.branchId,
             name: data.name,
-            type: data.type || 'General',
+            type: data.type || 'SHARE_4',
             floor: data.floor || '',
             totalBeds: data.totalBeds || 0,
             tariffPerDay: data.bedCharge || 0,
@@ -6425,6 +6514,31 @@ app.post('/api/master/:type', authenticateToken, async (req: any, res: Response)
           },
         });
         break;
+
+      case 'beds': {
+        if (!data.bedNumber) {
+          return res.status(400).json({ error: 'bedNumber is required' });
+        }
+        // Derive category from the ward if not supplied — keeps beds and
+        // their parent ward in sync without forcing the operator to type
+        // the category twice.
+        let category = data.category;
+        if (!category && data.wardId) {
+          const w = await prisma.ward.findUnique({ where: { id: data.wardId } });
+          category = w?.type || 'general';
+        }
+        result = await prisma.bed.create({
+          data: {
+            branchId: req.user.branchId,
+            wardId: data.wardId || null,
+            bedNumber: data.bedNumber,
+            category: category || 'general',
+            status: data.bedStatus || 'vacant',
+            floor: data.floor || null,
+          },
+        });
+        break;
+      }
 
       case 'packages':
         result = await prisma.packageMaster.create({
@@ -6536,6 +6650,19 @@ app.put('/api/master/:type/:id', authenticateToken, async (req: any, res: Respon
         });
         break;
 
+      case 'beds':
+        result = await prisma.bed.update({
+          where: { id },
+          data: {
+            bedNumber: data.bedNumber,
+            wardId: data.wardId || null,
+            category: data.category,
+            status: data.bedStatus,
+            floor: data.floor || null,
+          },
+        });
+        break;
+
       case 'packages':
         result = await prisma.packageMaster.update({
           where: { id },
@@ -6582,7 +6709,29 @@ app.delete('/api/master/:type/:id', authenticateToken, async (req: any, res: Res
         await prisma.department.delete({ where: { id } });
         break;
       case 'wards':
+        // Refuse to delete a ward that still has beds linked to it —
+        // orphan beds would silently disappear from the IPD view.
+        {
+          const linkedBeds = await prisma.bed.count({ where: { wardId: id } });
+          if (linkedBeds > 0) {
+            return res.status(409).json({
+              error: 'Ward has beds — delete or reassign them first',
+              linkedBeds,
+            });
+          }
+        }
         await prisma.ward.delete({ where: { id } });
+        break;
+      case 'beds':
+        // Refuse to delete an occupied bed — its admission would be left
+        // pointing at a nonexistent bedId.
+        {
+          const bed = await prisma.bed.findUnique({ where: { id } });
+          if (bed && bed.status === 'occupied') {
+            return res.status(409).json({ error: 'Bed is occupied — discharge or transfer the patient first' });
+          }
+        }
+        await prisma.bed.delete({ where: { id } });
         break;
       case 'packages':
         await prisma.packageMaster.delete({ where: { id } });

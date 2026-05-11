@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Plus, Edit, Trash2, Barcode, Wifi } from 'lucide-react';
 import api from '../services/api';
 import { useScanner } from '../hooks/useScanner';
+import { WARD_CATEGORIES, labelFor } from '../lib/wardCategories';
 
 interface MasterItem {
   id: string;
@@ -34,8 +35,18 @@ export default function MasterData() {
   // Generic form data
   const [formData, setFormData] = useState<any>({});
 
+  // Side-loaded wards list — the beds tab needs it for the ward dropdown.
+  // We keep it on this component (not the global form state) so it isn't
+  // wiped between tab switches.
+  const [wardsForBedDropdown, setWardsForBedDropdown] = useState<Array<{ id: string; name: string; type: string }>>([]);
+
   useEffect(() => {
     fetchItems(activeTab);
+    // When the operator opens the Beds tab we need wards for the dropdown;
+    // also refresh after coming from Wards in case they just added one.
+    if (activeTab === 'beds' || activeTab === 'wards') {
+      api.get('/api/wards').then((r) => setWardsForBedDropdown(r.data || [])).catch(() => undefined);
+    }
   }, [activeTab]);
 
   // When the drug form is open and the operator scans a tag, drop the value
@@ -314,28 +325,88 @@ export default function MasterData() {
           <>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Ward Code *</Label>
-                <Input value={formData.code || ''} onChange={(e) => setFormData({ ...formData, code: e.target.value })} placeholder="WARD001" />
+                <Label>Ward Name *</Label>
+                <Input value={formData.name || ''} onChange={(e) => setFormData({ ...formData, name: e.target.value })} placeholder="2-share Room A" />
               </div>
               <div className="space-y-2">
-                <Label>Ward Name *</Label>
-                <Input value={formData.name || ''} onChange={(e) => setFormData({ ...formData, name: e.target.value })} placeholder="General Ward" />
+                <Label>Category *</Label>
+                <Select value={formData.type || ''} onValueChange={(v) => setFormData({ ...formData, type: v })}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Pick a ward category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {WARD_CATEGORIES.map((c) => (
+                      <SelectItem key={c.type} value={c.type}>{c.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-2">
                 <Label>Total Beds</Label>
-                <Input type="number" value={formData.totalBeds || 0} onChange={(e) => setFormData({ ...formData, totalBeds: parseInt(e.target.value) })} />
+                <Input type="number" value={formData.totalBeds || 0} onChange={(e) => setFormData({ ...formData, totalBeds: parseInt(e.target.value) || 0 })} />
               </div>
               <div className="space-y-2">
                 <Label>Bed Charge (Rs./day)</Label>
-                <Input type="number" step="0.01" value={formData.bedCharge || 0} onChange={(e) => setFormData({ ...formData, bedCharge: parseFloat(e.target.value) })} />
+                <Input type="number" step="0.01" value={formData.bedCharge || 0} onChange={(e) => setFormData({ ...formData, bedCharge: parseFloat(e.target.value) || 0 })} />
               </div>
               <div className="space-y-2">
                 <Label>Floor</Label>
-                <Input value={formData.floor || ''} onChange={(e) => setFormData({ ...formData, floor: e.target.value })} />
+                <Input value={formData.floor || ''} onChange={(e) => setFormData({ ...formData, floor: e.target.value })} placeholder="3" />
+              </div>
+            </div>
+          </>
+        );
+
+      case 'beds':
+        return (
+          <>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Bed Number *</Label>
+                <Input value={formData.bedNumber || ''} onChange={(e) => setFormData({ ...formData, bedNumber: e.target.value })} placeholder="PVT-CABIN-01" />
               </div>
               <div className="space-y-2">
-                <Label>Wing</Label>
-                <Input value={formData.wing || ''} onChange={(e) => setFormData({ ...formData, wing: e.target.value })} />
+                <Label>Ward *</Label>
+                <Select
+                  value={formData.wardId || ''}
+                  onValueChange={(v) => {
+                    // Auto-fill category + floor from the chosen ward so the
+                    // operator doesn't have to type them again.
+                    const w = wardsForBedDropdown.find((x) => x.id === v);
+                    setFormData({
+                      ...formData,
+                      wardId: v,
+                      category: w?.type || formData.category,
+                    });
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Pick a ward" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {wardsForBedDropdown.map((w) => (
+                      <SelectItem key={w.id} value={w.id}>{w.name} ({labelFor(w.type)})</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Status</Label>
+                <Select value={formData.bedStatus || 'vacant'} onValueChange={(v) => setFormData({ ...formData, bedStatus: v })}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="vacant">Vacant</SelectItem>
+                    <SelectItem value="occupied">Occupied</SelectItem>
+                    <SelectItem value="cleaning">Cleaning</SelectItem>
+                    <SelectItem value="maintenance">Maintenance</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Floor</Label>
+                <Input value={formData.floor || ''} onChange={(e) => setFormData({ ...formData, floor: e.target.value })} placeholder="3" />
               </div>
             </div>
           </>
@@ -397,9 +468,29 @@ export default function MasterData() {
       'procedures': 'Procedures',
       'departments': 'Departments',
       'wards': 'Wards/Rooms',
+      'beds': 'Beds',
       'packages': 'Service Packages'
     };
     return labels[tab] || tab;
+  };
+
+  // Admin-only convenience: create the 10 standard ward types + default
+  // beds in one click. Idempotent — re-runs skip wards that already exist.
+  const handleSeedStandardWards = async () => {
+    if (!confirm('Create the 10 standard ward types (Pvt Cabin, 2/3/4-share, Men/Women, Nursery, ITU, HDU, ICCU) and their default beds? Existing wards are kept untouched.')) return;
+    setLoading(true);
+    try {
+      const res = await api.post('/api/master/seed-standard-wards');
+      await fetchItems(activeTab);
+      const created = (res.data?.summary || []).filter((x: any) => x.status === 'created').length;
+      const skipped = (res.data?.summary || []).filter((x: any) => x.status === 'skipped').length;
+      alert(`Seed complete. Created: ${created}. Skipped (already present): ${skipped}.`);
+    } catch (error: any) {
+      console.error('Seed standard wards error:', error);
+      alert(error?.response?.data?.error || 'Failed to seed standard wards');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -412,17 +503,18 @@ export default function MasterData() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-7">
+        <TabsList className="grid w-full grid-cols-8">
           <TabsTrigger value="drugs">Drugs</TabsTrigger>
           <TabsTrigger value="lab-tests">Lab Tests</TabsTrigger>
           <TabsTrigger value="radiology-tests">Radiology</TabsTrigger>
           <TabsTrigger value="procedures">Procedures</TabsTrigger>
           <TabsTrigger value="departments">Departments</TabsTrigger>
           <TabsTrigger value="wards">Wards/Rooms</TabsTrigger>
+          <TabsTrigger value="beds">Beds</TabsTrigger>
           <TabsTrigger value="packages">Packages</TabsTrigger>
         </TabsList>
 
-        {['drugs', 'lab-tests', 'radiology-tests', 'procedures', 'departments', 'wards', 'packages'].map(tab => (
+        {['drugs', 'lab-tests', 'radiology-tests', 'procedures', 'departments', 'wards', 'beds', 'packages'].map(tab => (
           <TabsContent key={tab} value={tab}>
             <Card>
               <CardHeader>
@@ -431,6 +523,12 @@ export default function MasterData() {
                     <CardTitle>{getTabLabel(tab)} Master</CardTitle>
                     <CardDescription>Manage {getTabLabel(tab).toLowerCase()} master data</CardDescription>
                   </div>
+                  <div className="flex gap-2">
+                    {tab === 'wards' && (
+                      <Button variant="outline" onClick={handleSeedStandardWards} disabled={loading}>
+                        Seed standard wards
+                      </Button>
+                    )}
                   <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
                     <DialogTrigger asChild>
                       <Button onClick={() => setFormData({})}>
@@ -456,6 +554,7 @@ export default function MasterData() {
                       </DialogFooter>
                     </DialogContent>
                   </Dialog>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent>
@@ -492,9 +591,18 @@ export default function MasterData() {
                       )}
                       {tab === 'wards' && (
                         <>
+                          <TableHead>Category</TableHead>
                           <TableHead>Beds</TableHead>
                           <TableHead>Charge/Day</TableHead>
-                          <TableHead>Floor/Wing</TableHead>
+                          <TableHead>Floor</TableHead>
+                        </>
+                      )}
+                      {tab === 'beds' && (
+                        <>
+                          <TableHead>Ward</TableHead>
+                          <TableHead>Category</TableHead>
+                          <TableHead>Floor</TableHead>
+                          <TableHead>Bed Status</TableHead>
                         </>
                       )}
                       {tab === 'packages' && (
@@ -547,9 +655,22 @@ export default function MasterData() {
                           )}
                           {tab === 'wards' && (
                             <>
+                              <TableCell>{labelFor(item.type)}</TableCell>
                               <TableCell>{item.totalBeds}</TableCell>
                               <TableCell>Rs. {item.bedCharge?.toFixed(2)}</TableCell>
-                              <TableCell>{item.floor} - {item.wing}</TableCell>
+                              <TableCell>{item.floor || '—'}</TableCell>
+                            </>
+                          )}
+                          {tab === 'beds' && (
+                            <>
+                              <TableCell>{item.wardName || '—'}</TableCell>
+                              <TableCell>{labelFor(item.wardType || item.category)}</TableCell>
+                              <TableCell>{item.floor || '—'}</TableCell>
+                              <TableCell>
+                                <Badge variant={item.bedStatus === 'vacant' ? 'secondary' : 'default'}>
+                                  {item.bedStatus}
+                                </Badge>
+                              </TableCell>
                             </>
                           )}
                           {tab === 'packages' && (

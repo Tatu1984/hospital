@@ -5,13 +5,13 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Plus, Bed, LogOut, Search, ArrowLeftRight } from 'lucide-react';
 import api from '../services/api';
 import { useToast } from '../components/Toast';
 import { toArray } from '../utils/list';
+import { WARD_CATEGORIES, IPD_WARD_TYPES, CRITICAL_CARE_TYPES, labelFor } from '../lib/wardCategories';
 
 interface Admission {
   id: string;
@@ -33,9 +33,16 @@ interface Bed {
   category?: string;
   status: string;
   wardId?: string | null;
-  ward?: { id: string; name: string } | null;
+  ward?: { id: string; name: string; type?: string } | null;
   branchId?: string;
   floor?: string | null;
+}
+
+// Joined view of a bed + the admission currently occupying it (if any).
+// Drives the card grid below — one card per bed, no separate admission row.
+interface BedCardData {
+  bed: Bed;
+  admission: Admission | null;
 }
 
 interface Patient {
@@ -55,6 +62,8 @@ export default function Inpatient() {
   const [isAdmitDialogOpen, setIsAdmitDialogOpen] = useState(false);
   const [isDischargeDialogOpen, setIsDischargeDialogOpen] = useState(false);
   const [isTransferDialogOpen, setIsTransferDialogOpen] = useState(false);
+  const [isBedDetailsOpen, setIsBedDetailsOpen] = useState(false);
+  const [selectedBed, setSelectedBed] = useState<BedCardData | null>(null);
   const [transferTargetBedId, setTransferTargetBedId] = useState<string>('');
   const [selectedAdmission, setSelectedAdmission] = useState<Admission | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -218,12 +227,6 @@ export default function Inpatient() {
     setIsDischargeDialogOpen(true);
   };
 
-  const filteredAdmissions = admissions.filter(adm =>
-    adm.patientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    adm.patientMRN.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    adm.ward.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
   // Backend bed.status defaults to 'vacant'; legacy seeds may use 'available'.
   // Normalize so the filter catches both.
   const isVacant = (s: string) => ['vacant', 'available'].includes((s || '').toLowerCase());
@@ -237,6 +240,59 @@ export default function Inpatient() {
     occupied: occupiedBeds.length,
     available: availableBeds.length,
     activeAdmissions: activeAdmissions.length
+  };
+
+  // Build the bed-card view: for each bed, attach the active admission
+  // currently occupying it (matched by bedId). Beds without an admission
+  // show as vacant/cleaning/maintenance; beds with one show patient info.
+  //
+  // ITU / HDU / ICCU live on the ICU page so we filter them out here —
+  // surfacing them in two places would let staff assign the same bed
+  // from both screens and produce conflicting writes.
+  const admissionByBedId = new Map<string, Admission>();
+  for (const adm of activeAdmissions) {
+    if (adm.bedId) admissionByBedId.set(adm.bedId, adm);
+  }
+  const ipdBeds: BedCardData[] = beds
+    .filter((b) => {
+      const cat = b.ward?.type || b.category;
+      return !cat || !CRITICAL_CARE_TYPES.includes(cat);
+    })
+    .map((bed) => ({
+      bed,
+      admission: bed.id ? admissionByBedId.get(bed.id) || null : null,
+    }));
+
+  // Apply the search filter — match on patient name/MRN, bed number, or
+  // ward name so an operator can find a card by any of those.
+  const search = searchTerm.trim().toLowerCase();
+  const filteredCards = !search
+    ? ipdBeds
+    : ipdBeds.filter(({ bed, admission }) => {
+        return (
+          bed.bedNumber.toLowerCase().includes(search) ||
+          (bed.ward?.name || '').toLowerCase().includes(search) ||
+          (admission?.patientName || '').toLowerCase().includes(search) ||
+          (admission?.patientMRN || '').toLowerCase().includes(search)
+        );
+      });
+
+  const cardsForCategory = (catType: string | null): BedCardData[] => {
+    if (!catType) return filteredCards;
+    return filteredCards.filter((c) => (c.bed.ward?.type || c.bed.category) === catType);
+  };
+
+  const bedStatusBadge = (status: string) => {
+    const s = (status || '').toLowerCase();
+    if (s === 'occupied') return <Badge>Occupied</Badge>;
+    if (s === 'cleaning') return <Badge variant="secondary" className="bg-yellow-100 text-yellow-800">Cleaning</Badge>;
+    if (s === 'maintenance') return <Badge variant="secondary" className="bg-red-100 text-red-800">Maintenance</Badge>;
+    return <Badge variant="secondary" className="bg-green-100 text-green-800">Vacant</Badge>;
+  };
+
+  const openBedDetails = (data: BedCardData) => {
+    setSelectedBed(data);
+    setIsBedDetailsOpen(true);
   };
 
   return (
@@ -363,11 +419,11 @@ export default function Inpatient() {
       <Card>
         <CardHeader>
           <div className="flex justify-between items-center">
-            <CardTitle>Current Admissions</CardTitle>
+            <CardTitle>Ward Bed Status</CardTitle>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
               <Input
-                placeholder="Search patients, ward..."
+                placeholder="Patient, MRN, bed, ward…"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-10 w-80"
@@ -376,108 +432,198 @@ export default function Inpatient() {
           </div>
         </CardHeader>
         <CardContent>
-          <Tabs defaultValue="active">
-            <TabsList>
-              <TabsTrigger value="active">Active ({activeAdmissions.length})</TabsTrigger>
-              <TabsTrigger value="all">All Admissions</TabsTrigger>
-            </TabsList>
+          {ipdBeds.length === 0 ? (
+            <div className="text-center py-12 text-slate-500">
+              No beds configured yet. Go to <span className="font-medium">Master Data → Beds</span> to add beds,
+              or use <span className="font-medium">Master Data → Wards/Rooms → Seed standard wards</span> to
+              create the 10 default ward types in one click.
+            </div>
+          ) : (
+            <Tabs defaultValue="all">
+              <TabsList className="flex-wrap h-auto">
+                <TabsTrigger value="all">All ({filteredCards.length})</TabsTrigger>
+                {WARD_CATEGORIES
+                  .filter((c) => IPD_WARD_TYPES.includes(c.type))
+                  .map((c) => {
+                    const n = cardsForCategory(c.type).length;
+                    return (
+                      <TabsTrigger key={c.type} value={c.type}>
+                        {c.label} ({n})
+                      </TabsTrigger>
+                    );
+                  })}
+              </TabsList>
 
-            <TabsContent value="active">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Patient</TableHead>
-                    <TableHead>MRN</TableHead>
-                    <TableHead>Ward / Bed</TableHead>
-                    <TableHead>Admission Date</TableHead>
-                    <TableHead>Diagnosis</TableHead>
-                    <TableHead>Doctor</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredAdmissions.filter(a => a.status === 'active').length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={8} className="text-center py-8 text-slate-500">
-                        No active admissions
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    filteredAdmissions.filter(a => a.status === 'active').map((admission) => (
-                      <TableRow key={admission.id}>
-                        <TableCell className="font-medium">{admission.patientName}</TableCell>
-                        <TableCell>{admission.patientMRN}</TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Bed className="w-4 h-4" />
-                            {admission.ward} / {admission.bedNumber}
-                          </div>
-                        </TableCell>
-                        <TableCell>{admission.admissionDate}</TableCell>
-                        <TableCell className="text-sm">{admission.diagnosis}</TableCell>
-                        <TableCell>{admission.admittingDoctor}</TableCell>
-                        <TableCell>
-                          <Badge variant="default">Active</Badge>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex gap-2">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => openTransferDialog(admission)}
-                              title="Move patient to a different ward / bed"
+              {[null, ...IPD_WARD_TYPES].map((cat) => {
+                const tabValue = cat || 'all';
+                const cards = cardsForCategory(cat);
+                return (
+                  <TabsContent key={tabValue} value={tabValue}>
+                    {cards.length === 0 ? (
+                      <div className="text-center py-10 text-slate-500">
+                        No beds in this category. Add one from Master Data → Beds.
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                        {cards.map(({ bed, admission }) => {
+                          const status = (bed.status || '').toLowerCase();
+                          const occupied = status === 'occupied';
+                          return (
+                            <Card
+                              key={bed.id}
+                              onClick={() => openBedDetails({ bed, admission })}
+                              className={`cursor-pointer transition-shadow hover:shadow-md ${occupied ? 'border-blue-200 bg-blue-50' : ''}`}
                             >
-                              <ArrowLeftRight className="w-4 h-4 mr-1" />
-                              Transfer
-                            </Button>
-                            <Button
-                              size="sm"
-                              onClick={() => openDischargeDialog(admission)}
-                            >
-                              <LogOut className="w-4 h-4 mr-1" />
-                              Discharge
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </TabsContent>
-
-            <TabsContent value="all">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Patient</TableHead>
-                    <TableHead>MRN</TableHead>
-                    <TableHead>Ward / Bed</TableHead>
-                    <TableHead>Admission Date</TableHead>
-                    <TableHead>Status</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredAdmissions.map((admission) => (
-                    <TableRow key={admission.id}>
-                      <TableCell className="font-medium">{admission.patientName}</TableCell>
-                      <TableCell>{admission.patientMRN}</TableCell>
-                      <TableCell>{admission.ward} / {admission.bedNumber}</TableCell>
-                      <TableCell>{admission.admissionDate}</TableCell>
-                      <TableCell>
-                        <Badge variant={admission.status === 'active' ? 'default' : 'secondary'}>
-                          {admission.status}
-                        </Badge>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TabsContent>
-          </Tabs>
+                              <CardHeader className="pb-2">
+                                <div className="flex items-start justify-between gap-2">
+                                  <div>
+                                    <CardTitle className="text-base flex items-center gap-1">
+                                      <Bed className="w-4 h-4" />
+                                      {bed.bedNumber}
+                                    </CardTitle>
+                                    <div className="text-xs text-slate-500 mt-0.5">
+                                      {bed.ward?.name || 'Unassigned ward'}
+                                      {bed.floor ? ` · Floor ${bed.floor}` : ''}
+                                    </div>
+                                    <div className="text-[10px] uppercase tracking-wide text-slate-400 mt-0.5">
+                                      {labelFor(bed.ward?.type || bed.category)}
+                                    </div>
+                                  </div>
+                                  {bedStatusBadge(bed.status)}
+                                </div>
+                              </CardHeader>
+                              <CardContent className="pt-0">
+                                {occupied && admission ? (
+                                  <div className="space-y-1">
+                                    <div className="font-medium text-sm">{admission.patientName}</div>
+                                    <div className="text-xs text-slate-500">
+                                      {admission.patientMRN}
+                                    </div>
+                                    {admission.diagnosis && (
+                                      <div className="text-xs text-slate-600 line-clamp-2 mt-1">
+                                        {admission.diagnosis}
+                                      </div>
+                                    )}
+                                    <div className="text-[10px] text-slate-400 mt-1">
+                                      Admitted: {admission.admissionDate}
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="text-xs text-slate-500 italic">
+                                    {status === 'cleaning' ? 'Awaiting cleaning' :
+                                     status === 'maintenance' ? 'Out of service' :
+                                     'Ready for admission'}
+                                  </div>
+                                )}
+                              </CardContent>
+                            </Card>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </TabsContent>
+                );
+              })}
+            </Tabs>
+          )}
         </CardContent>
       </Card>
+
+      {/* Bed details popup — mirrors the ICU patient-details popup. Shows
+          bed metadata, plus patient + admission info when occupied, and
+          the Transfer / Discharge actions. */}
+      <Dialog open={isBedDetailsOpen} onOpenChange={setIsBedDetailsOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Bed Details</DialogTitle>
+            <DialogDescription>
+              {selectedBed?.bed.bedNumber} · {selectedBed?.bed.ward?.name || 'Unassigned ward'}
+            </DialogDescription>
+          </DialogHeader>
+          {selectedBed && (
+            <div className="space-y-4 py-2">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-sm text-slate-500">Bed</Label>
+                  <div className="font-medium">{selectedBed.bed.bedNumber}</div>
+                </div>
+                <div>
+                  <Label className="text-sm text-slate-500">Ward</Label>
+                  <div className="font-medium">{selectedBed.bed.ward?.name || '—'}</div>
+                </div>
+                <div>
+                  <Label className="text-sm text-slate-500">Category</Label>
+                  <div className="font-medium">{labelFor(selectedBed.bed.ward?.type || selectedBed.bed.category)}</div>
+                </div>
+                <div>
+                  <Label className="text-sm text-slate-500">Floor</Label>
+                  <div className="font-medium">{selectedBed.bed.floor || '—'}</div>
+                </div>
+                <div>
+                  <Label className="text-sm text-slate-500">Status</Label>
+                  <div>{bedStatusBadge(selectedBed.bed.status)}</div>
+                </div>
+              </div>
+
+              {selectedBed.admission ? (
+                <div className="border-t pt-4 space-y-3">
+                  <div>
+                    <Label className="text-sm text-slate-500">Patient</Label>
+                    <div className="font-medium">{selectedBed.admission.patientName}</div>
+                    <div className="text-xs text-slate-500">MRN: {selectedBed.admission.patientMRN}</div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-sm text-slate-500">Admission Date</Label>
+                      <div className="font-medium">{selectedBed.admission.admissionDate}</div>
+                    </div>
+                    <div>
+                      <Label className="text-sm text-slate-500">Attending Doctor</Label>
+                      <div className="font-medium">{selectedBed.admission.admittingDoctor}</div>
+                    </div>
+                  </div>
+                  {selectedBed.admission.diagnosis && (
+                    <div>
+                      <Label className="text-sm text-slate-500">Diagnosis</Label>
+                      <div className="font-medium">{selectedBed.admission.diagnosis}</div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="border-t pt-4 text-sm text-slate-500 italic">
+                  No patient assigned to this bed.
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            {selectedBed?.admission && (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setIsBedDetailsOpen(false);
+                    openTransferDialog(selectedBed.admission!);
+                  }}
+                >
+                  <ArrowLeftRight className="w-4 h-4 mr-1" />
+                  Transfer
+                </Button>
+                <Button
+                  onClick={() => {
+                    setIsBedDetailsOpen(false);
+                    openDischargeDialog(selectedBed.admission!);
+                  }}
+                >
+                  <LogOut className="w-4 h-4 mr-1" />
+                  Discharge
+                </Button>
+              </>
+            )}
+            <Button variant="outline" onClick={() => setIsBedDetailsOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Discharge Dialog */}
       <Dialog open={isDischargeDialogOpen} onOpenChange={setIsDischargeDialogOpen}>

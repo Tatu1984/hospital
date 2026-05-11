@@ -64,6 +64,17 @@ interface VentilatorFormData {
   notes: string;
 }
 
+// Critical-care unit variants the ICU page covers. ICCU/ITU/HDU live here
+// (not on the IPD page) because they share the same vitals + ventilator
+// workflow. The label is what's shown to staff; the code is what's stored
+// in ICUBed.icuUnit.
+const CRITICAL_CARE_UNITS: Array<{ code: string; label: string }> = [
+  { code: 'ICU',  label: 'ICU' },
+  { code: 'ITU',  label: 'ITU' },
+  { code: 'HDU',  label: 'HDU' },
+  { code: 'ICCU', label: 'ICCU' },
+];
+
 export default function ICU() {
   const [icuBeds, setICUBeds] = useState<ICUBed[]>([]);
   const [selectedBed, setSelectedBed] = useState<ICUBed | null>(null);
@@ -71,6 +82,9 @@ export default function ICU() {
   const [isVentilatorDialogOpen, setIsVentilatorDialogOpen] = useState(false);
   const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  // Unit filter. 'ALL' shows beds across every critical-care unit;
+  // a code restricts to that unit only.
+  const [unitFilter, setUnitFilter] = useState<string>('ALL');
 
   const [vitalsFormData, setVitalsFormData] = useState<VitalsFormData>({
     bedId: '',
@@ -200,17 +214,31 @@ export default function ICU() {
     }
   };
 
-  const occupiedBeds = icuBeds.filter(b => b.status === 'OCCUPIED');
+  // Apply the unit filter to everything below: stats counts, the grid,
+  // and the tabs. Filtering at this single point keeps every downstream
+  // count consistent with what the operator sees on screen.
+  const filteredByUnit = unitFilter === 'ALL'
+    ? icuBeds
+    : icuBeds.filter(b => (b.icuUnit || '').toUpperCase() === unitFilter);
+
+  const occupiedBeds = filteredByUnit.filter(b => b.status === 'OCCUPIED');
   const ventilatedPatients = occupiedBeds.filter(b => b.admission?.isVentilated);
-  const availableBeds = icuBeds.filter(b => b.status === 'AVAILABLE');
+  const availableBeds = filteredByUnit.filter(b => b.status === 'AVAILABLE');
 
   const stats = {
-    totalBeds: icuBeds.length,
+    totalBeds: filteredByUnit.length,
     occupied: occupiedBeds.length,
     available: availableBeds.length,
     ventilated: ventilatedPatients.length,
-    occupancyRate: icuBeds.length > 0 ? Math.round((occupiedBeds.length / icuBeds.length) * 100) : 0
+    occupancyRate: filteredByUnit.length > 0 ? Math.round((occupiedBeds.length / filteredByUnit.length) * 100) : 0
   };
+
+  // Per-unit counts so the unit selector can show what's available.
+  const unitCounts: Record<string, number> = {};
+  for (const b of icuBeds) {
+    const u = (b.icuUnit || 'ICU').toUpperCase();
+    unitCounts[u] = (unitCounts[u] || 0) + 1;
+  }
 
   const getVitalStatus = (vital: string, type: string): 'normal' | 'warning' | 'critical' => {
     if (!vital) return 'normal';
@@ -317,8 +345,28 @@ export default function ICU() {
       {/* ICU Beds Overview */}
       <Card>
         <CardHeader>
-          <CardTitle>ICU Bed Status</CardTitle>
-          <CardDescription>Real-time patient monitoring and bed occupancy</CardDescription>
+          <div className="flex justify-between items-start gap-4 flex-wrap">
+            <div>
+              <CardTitle>ICU Bed Status</CardTitle>
+              <CardDescription>Real-time patient monitoring across ICU / ITU / HDU / ICCU</CardDescription>
+            </div>
+            <div className="flex items-center gap-2">
+              <Label className="text-xs text-slate-500">Unit</Label>
+              <Select value={unitFilter} onValueChange={setUnitFilter}>
+                <SelectTrigger className="w-44">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">All units ({icuBeds.length})</SelectItem>
+                  {CRITICAL_CARE_UNITS.map((u) => (
+                    <SelectItem key={u.code} value={u.code}>
+                      {u.label} ({unitCounts[u.code] || 0})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           <Tabs defaultValue="all">
@@ -330,7 +378,7 @@ export default function ICU() {
 
             <TabsContent value="all">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {icuBeds.map((bed) => (
+                {filteredByUnit.map((bed) => (
                   // Whole card is clickable — opens the Details dialog. The
                   // inner Vitals / Vent / Details buttons stop event
                   // propagation so they still trigger their own dialogs.
