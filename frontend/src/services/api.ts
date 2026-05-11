@@ -16,23 +16,33 @@ if (import.meta.env.PROD && !import.meta.env.VITE_API_URL) {
   );
 }
 
-// Token storage. Access token lives in sessionStorage (cleared on tab close);
-// refresh token now lives in an httpOnly cookie set by the backend so JS
-// (and therefore an XSS payload) can't read it. Old localStorage values are
-// cleaned up on `clear()` to migrate existing sessions cleanly.
+// Access token lives in a module-local variable only — never in
+// localStorage or sessionStorage. An XSS payload cannot read it from
+// `document` storage; the worst it could do is call our authenticated APIs
+// for the lifetime of the running page (mitigated by access-token TTL and
+// CSP). The refresh token sits in an httpOnly cookie that JS can't read,
+// so on hard reload we mint a new access via /api/auth/refresh.
+let accessTokenInMemory: string | null = null;
+
 export const tokenStore = {
-  getAccess: () => sessionStorage.getItem('token') || localStorage.getItem('token'),
+  getAccess: () => accessTokenInMemory,
   set: (access: string) => {
-    sessionStorage.setItem('token', access);
-    localStorage.setItem('token', access); // legacy readers still find it
+    accessTokenInMemory = access;
   },
   clear: () => {
-    sessionStorage.removeItem('token');
-    localStorage.removeItem('token');
-    // Clean up legacy refresh-token storage if a previous build wrote it.
-    localStorage.removeItem('refreshToken');
-    localStorage.removeItem('user');
-    localStorage.removeItem('permissions');
+    accessTokenInMemory = null;
+    // Best-effort cleanup of any prior build's storage so an upgraded user
+    // doesn't keep a stale token sitting in localStorage forever. Safe to
+    // remove after one release window.
+    try {
+      localStorage.removeItem('token');
+      sessionStorage.removeItem('token');
+      localStorage.removeItem('refreshToken');
+      localStorage.removeItem('user');
+      localStorage.removeItem('permissions');
+    } catch {
+      /* ignore — storage may be unavailable in some sandboxed contexts */
+    }
   },
 };
 
@@ -57,6 +67,16 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   if (!config.headers['X-Request-ID']) {
     config.headers['X-Request-ID'] = newRequestId();
   }
+  // Cache-buster on every request. Two reasons:
+  //  1. A previously-failed CORS preflight gets cached by the browser for
+  //     several minutes by default and can survive "Clear site data" in some
+  //     Chrome profiles. A unique query string forces a fresh preflight per
+  //     request URL, so a stale negative cache from a misconfigured CORS_ORIGIN
+  //     can never lock the user out for more than one click.
+  //  2. Defeats overly-aggressive intermediate caching (corporate proxies,
+  //     antivirus inspection) that occasionally caches API JSON responses by
+  //     URL.
+  config.params = { ...(config.params || {}), _t: Date.now() };
   return config;
 });
 

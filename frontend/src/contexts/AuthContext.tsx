@@ -34,37 +34,48 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [permissions, setPermissions] = useState<string[]>([]);
 
   useEffect(() => {
-    // Re-hydrate session from storage. Access token may live in sessionStorage
-    // (cleared on tab close) or fall back to localStorage; refresh token is
-    // always in localStorage so a refresh can recover the session on reload.
-    const storedToken = tokenStore.getAccess();
-    const storedUser = localStorage.getItem('user');
-    const storedPermissions = localStorage.getItem('permissions');
+    // Re-hydrate session. The access token is memory-only and is therefore
+    // gone after a hard reload; the refresh cookie is httpOnly and JS can't
+    // read it. So on every fresh page load we attempt /auth/refresh — on
+    // success the backend hands back a new access token AND we re-fetch the
+    // canonical user via /auth/me. On failure the user simply lands logged out.
+    //
+    // user/permissions cached in localStorage are non-sensitive UI hints (role
+    // labels, sidebar entries) used to render the shell before the network
+    // round-trip lands. They don't grant access — the backend re-checks every
+    // permission per request.
+    let cancelled = false;
+    (async () => {
+      try {
+        const refresh = await authAPI.refresh();
+        const newToken = refresh.data?.token;
+        if (!newToken) {
+          setLoading(false);
+          return;
+        }
+        if (cancelled) return;
+        tokenStore.set(newToken);
+        setToken(newToken);
 
-    if (storedToken && storedUser) {
-      setToken(storedToken);
-      const parsedUser = JSON.parse(storedUser);
-      setUser(parsedUser);
-      setPermissions(storedPermissions ? JSON.parse(storedPermissions) : parsedUser.permissions || []);
-
-      // Validate the token in the background. If /api/auth/me succeeds we
-      // also refresh the cached user/permissions so the UI follows backend
-      // role changes without requiring a re-login. Failures are silent — the
-      // axios 401 interceptor will handle expiry by refreshing or logging out.
-      authAPI.me()
-        .then((res) => {
-          const fresh = res.data;
-          setUser(fresh);
-          setPermissions(fresh.permissions || []);
-          localStorage.setItem('user', JSON.stringify(fresh));
-          localStorage.setItem('permissions', JSON.stringify(fresh.permissions || []));
-        })
-        .catch(() => undefined);
-      // Letterhead is fetched on every hydrate so PDFs always have a
-      // fresh background image; cache survives in localStorage too.
-      void import('../lib/letterheadStore').then((m) => m.loadLetterhead());
-    }
-    setLoading(false);
+        const me = await authAPI.me();
+        if (cancelled) return;
+        const fresh = me.data;
+        setUser(fresh);
+        setPermissions(fresh.permissions || []);
+        localStorage.setItem('user', JSON.stringify(fresh));
+        localStorage.setItem('permissions', JSON.stringify(fresh.permissions || []));
+        void import('../lib/letterheadStore').then((m) => m.loadLetterhead());
+      } catch {
+        // No valid refresh cookie — leave the user logged out and let the
+        // route guards send them to /login on protected pages.
+        tokenStore.clear();
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const login = async (username: string, password: string) => {
