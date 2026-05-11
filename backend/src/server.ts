@@ -292,6 +292,12 @@ app.use(
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Request-ID'],
+    // Tell browsers never to cache the preflight result. Without this a user
+    // who hits a misconfigured CORS once (wrong CORS_ORIGIN) keeps seeing
+    // the failure from local cache for up to 5 minutes after the env is
+    // fixed — and on some browsers/profiles the cached negative survives
+    // "Clear site data" entirely.
+    maxAge: 0,
   })
 );
 
