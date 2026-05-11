@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,122 +8,182 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Calendar, Plus, Clock } from 'lucide-react';
+import api from '../services/api';
 
 interface Appointment {
   id: string;
-  patientName: string;
-  doctorName: string;
-  department: string;
-  date: string;
-  time: string;
-  status: 'Scheduled' | 'Confirmed' | 'Completed' | 'Cancelled' | 'No-Show';
-  type: 'In-Person' | 'Teleconsultation';
+  patientId: string;
+  doctorId: string;
+  patient?: { id: string; name: string; mrn?: string; contact?: string };
+  doctor?: { id: string; name: string };
+  appointmentDate: string; // ISO string from API; YYYY-MM-DD when posted
+  appointmentTime: string;
+  department?: string;
+  type: string;
+  status: string;
+  reason?: string;
 }
 
+interface PatientLite { id: string; name: string; mrn?: string; contact?: string; }
+interface DoctorLite { id: string; name: string; department?: string; }
+
+const DEPARTMENTS = ['Cardiology', 'Orthopedics', 'Neurology', 'Pediatrics', 'Dermatology', 'ENT', 'General Medicine'];
+const APPT_TYPES = ['In-Person', 'Teleconsultation'];
+
+// Backend stores status as lowercase ('scheduled'|'confirmed'|'cancelled'|'completed'|'checked-in'|'no-show').
+// UI displays capitalized.
+const displayStatus = (s: string) => s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+const isFinal = (s: string) => s === 'cancelled' || s === 'completed';
+
+const toDateInput = (iso: string): string => {
+  if (!iso) return '';
+  // Accept either 'YYYY-MM-DD' or full ISO datetime
+  return iso.length >= 10 ? iso.slice(0, 10) : iso;
+};
+
 export default function Appointment() {
-  const [appointments, setAppointments] = useState<Appointment[]>([
-    {
-      id: '1',
-      patientName: 'John Doe',
-      doctorName: 'Dr. Sarah Smith',
-      department: 'Cardiology',
-      date: '2025-12-06',
-      time: '10:00 AM',
-      status: 'Confirmed',
-      type: 'In-Person'
-    },
-    {
-      id: '2',
-      patientName: 'Jane Wilson',
-      doctorName: 'Dr. Michael Johnson',
-      department: 'Orthopedics',
-      date: '2025-12-06',
-      time: '11:30 AM',
-      status: 'Scheduled',
-      type: 'Teleconsultation'
-    }
-  ]);
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [patients, setPatients] = useState<PatientLite[]>([]);
+  const [doctors, setDoctors] = useState<DoctorLite[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isRescheduleDialogOpen, setIsRescheduleDialogOpen] = useState(false);
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
-  const [formData, setFormData] = useState({
-    patientName: '',
-    patientPhone: '',
-    doctorName: '',
+
+  const emptyForm = {
+    patientId: '',
+    doctorId: '',
     department: '',
     date: '',
     time: '',
-    type: 'In-Person' as const,
+    type: 'In-Person',
     reason: '',
-    priority: 'Normal'
-  });
+    priority: 'Normal',
+  };
+  const [formData, setFormData] = useState(emptyForm);
 
-  const handleSubmit = () => {
-    const newAppointment: Appointment = {
-      id: String(appointments.length + 1),
-      patientName: formData.patientName,
-      doctorName: formData.doctorName,
-      department: formData.department,
-      date: formData.date,
-      time: formData.time,
-      status: 'Scheduled',
-      type: formData.type
-    };
-
-    setAppointments([...appointments, newAppointment]);
-    setIsDialogOpen(false);
-    setFormData({
-      patientName: '', patientPhone: '', doctorName: '', department: '',
-      date: '', time: '', type: 'In-Person', reason: '', priority: 'Normal'
-    });
+  const fetchAll = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [aptRes, patRes, docRes] = await Promise.all([
+        api.get('/api/appointments'),
+        api.get('/api/patients').catch(() => ({ data: [] })),
+        api.get('/api/doctors').catch(() => ({ data: [] })),
+      ]);
+      const aptList = Array.isArray(aptRes.data) ? aptRes.data : (aptRes.data?.data || []);
+      setAppointments(aptList);
+      setPatients(Array.isArray(patRes.data) ? patRes.data : (patRes.data?.data || []));
+      setDoctors(Array.isArray(docRes.data) ? docRes.data : (docRes.data?.data || []));
+    } catch (e: any) {
+      setError(e?.response?.data?.error || e?.message || 'Failed to load appointments');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleConfirmAppointment = (appointment: Appointment) => {
-    setAppointments(appointments.map(apt =>
-      apt.id === appointment.id ? { ...apt, status: 'Confirmed' } : apt
-    ));
+  useEffect(() => {
+    fetchAll();
+  }, []);
+
+  const handleSubmit = async () => {
+    if (!formData.patientId || !formData.doctorId || !formData.date || !formData.time) {
+      alert('Patient, doctor, date and time are required.');
+      return;
+    }
+    try {
+      await api.post('/api/appointments', {
+        patientId: formData.patientId,
+        doctorId: formData.doctorId,
+        appointmentDate: formData.date,
+        appointmentTime: formData.time,
+        type: formData.type,
+        reason: formData.reason,
+        department: formData.department,
+      });
+      setIsDialogOpen(false);
+      setFormData(emptyForm);
+      await fetchAll();
+    } catch (e: any) {
+      alert(e?.response?.data?.error || 'Failed to create appointment');
+    }
+  };
+
+  const handleConfirmAppointment = async (appointment: Appointment) => {
+    try {
+      await api.put(`/api/appointments/${appointment.id}`, { status: 'confirmed' });
+      await fetchAll();
+    } catch (e: any) {
+      alert(e?.response?.data?.error || 'Failed to confirm appointment');
+    }
   };
 
   const handleReschedule = (appointment: Appointment) => {
     setSelectedAppointment(appointment);
     setFormData({
-      ...formData,
-      date: appointment.date,
-      time: appointment.time
+      ...emptyForm,
+      date: toDateInput(appointment.appointmentDate),
+      time: appointment.appointmentTime,
     });
     setIsRescheduleDialogOpen(true);
   };
 
-  const handleRescheduleSubmit = () => {
+  const handleRescheduleSubmit = async () => {
     if (!selectedAppointment) return;
-    setAppointments(appointments.map(apt =>
-      apt.id === selectedAppointment.id
-        ? { ...apt, date: formData.date, time: formData.time, status: 'Scheduled' }
-        : apt
-    ));
-    setIsRescheduleDialogOpen(false);
-    setSelectedAppointment(null);
-  };
-
-  const handleCancelAppointment = (appointment: Appointment) => {
-    if (confirm(`Are you sure you want to cancel the appointment for ${appointment.patientName}?`)) {
-      setAppointments(appointments.map(apt =>
-        apt.id === appointment.id ? { ...apt, status: 'Cancelled' } : apt
-      ));
+    if (!formData.date || !formData.time) {
+      alert('New date and time are required.');
+      return;
+    }
+    try {
+      await api.put(`/api/appointments/${selectedAppointment.id}`, {
+        appointmentDate: formData.date,
+        appointmentTime: formData.time,
+        status: 'scheduled',
+      });
+      setIsRescheduleDialogOpen(false);
+      setSelectedAppointment(null);
+      await fetchAll();
+    } catch (e: any) {
+      alert(e?.response?.data?.error || 'Failed to reschedule appointment');
     }
   };
 
-  const getStatusColor = (status: Appointment['status']) => {
-    const colors = {
-      'Scheduled': 'secondary',
-      'Confirmed': 'default',
-      'Completed': 'default',
-      'Cancelled': 'destructive',
-      'No-Show': 'destructive'
-    };
-    return colors[status] as any;
+  const handleCancelAppointment = async (appointment: Appointment) => {
+    const who = appointment.patient?.name || 'this patient';
+    if (!confirm(`Are you sure you want to cancel the appointment for ${who}?`)) return;
+    try {
+      await api.post(`/api/appointments/${appointment.id}/cancel`);
+      await fetchAll();
+    } catch (e: any) {
+      alert(e?.response?.data?.error || 'Failed to cancel appointment');
+    }
   };
+
+  const getStatusColor = (status: string): any => {
+    const colors: Record<string, string> = {
+      scheduled: 'secondary',
+      confirmed: 'default',
+      'checked-in': 'default',
+      completed: 'default',
+      cancelled: 'destructive',
+      'no-show': 'destructive',
+    };
+    return colors[status] || 'secondary';
+  };
+
+  // Stats computed from the loaded list — replace previously hardcoded numbers.
+  const stats = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    const todays = appointments.filter(a => toDateInput(a.appointmentDate) === today);
+    return {
+      today: todays.length,
+      confirmed: todays.filter(a => a.status === 'confirmed').length,
+      pending: todays.filter(a => a.status === 'scheduled').length,
+      noShows: todays.filter(a => a.status === 'no-show').length,
+    };
+  }, [appointments]);
 
   return (
     <div className="p-6 space-y-6 bg-white min-h-full">
@@ -148,41 +208,44 @@ export default function Appointment() {
             </DialogHeader>
             <div className="grid grid-cols-2 gap-4 py-4">
               <div className="space-y-2">
-                <Label htmlFor="patientName">Patient Name *</Label>
-                <Input id="patientName" value={formData.patientName} onChange={(e) => setFormData(prev => ({ ...prev, patientName: e.target.value }))} required />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="patientPhone">Patient Phone *</Label>
-                <Input id="patientPhone" value={formData.patientPhone} onChange={(e) => setFormData(prev => ({ ...prev, patientPhone: e.target.value }))} required />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="department">Department *</Label>
-                <Select value={formData.department} onValueChange={(value) => setFormData(prev => ({ ...prev, department: value }))}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select department" />
-                  </SelectTrigger>
+                <Label htmlFor="patient">Patient *</Label>
+                <Select value={formData.patientId} onValueChange={(value) => setFormData(prev => ({ ...prev, patientId: value }))}>
+                  <SelectTrigger id="patient"><SelectValue placeholder={patients.length ? 'Select patient' : 'No patients available'} /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Cardiology">Cardiology</SelectItem>
-                    <SelectItem value="Orthopedics">Orthopedics</SelectItem>
-                    <SelectItem value="Neurology">Neurology</SelectItem>
-                    <SelectItem value="Pediatrics">Pediatrics</SelectItem>
-                    <SelectItem value="Dermatology">Dermatology</SelectItem>
-                    <SelectItem value="ENT">ENT</SelectItem>
-                    <SelectItem value="General Medicine">General Medicine</SelectItem>
+                    {patients.map(p => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name}{p.mrn ? ` — ${p.mrn}` : ''}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="doctorName">Doctor *</Label>
-                <Select value={formData.doctorName} onValueChange={(value) => setFormData(prev => ({ ...prev, doctorName: value }))}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select doctor" />
-                  </SelectTrigger>
+                <Label htmlFor="doctor">Doctor *</Label>
+                <Select value={formData.doctorId} onValueChange={(value) => setFormData(prev => ({ ...prev, doctorId: value }))}>
+                  <SelectTrigger id="doctor"><SelectValue placeholder={doctors.length ? 'Select doctor' : 'No doctors available'} /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Dr. Sarah Smith">Dr. Sarah Smith</SelectItem>
-                    <SelectItem value="Dr. Michael Johnson">Dr. Michael Johnson</SelectItem>
-                    <SelectItem value="Dr. Emily Davis">Dr. Emily Davis</SelectItem>
-                    <SelectItem value="Dr. Robert Brown">Dr. Robert Brown</SelectItem>
+                    {doctors.map(d => (
+                      <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="department">Department</Label>
+                <Select value={formData.department} onValueChange={(value) => setFormData(prev => ({ ...prev, department: value }))}>
+                  <SelectTrigger id="department"><SelectValue placeholder="Select department" /></SelectTrigger>
+                  <SelectContent>
+                    {DEPARTMENTS.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="type">Appointment Type *</Label>
+                <Select value={formData.type} onValueChange={(value) => setFormData(prev => ({ ...prev, type: value }))}>
+                  <SelectTrigger id="type"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {APPT_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -193,31 +256,6 @@ export default function Appointment() {
               <div className="space-y-2">
                 <Label htmlFor="time">Appointment Time *</Label>
                 <Input id="time" type="time" value={formData.time} onChange={(e) => setFormData(prev => ({ ...prev, time: e.target.value }))} required />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="type">Appointment Type *</Label>
-                <Select value={formData.type} onValueChange={(value: any) => setFormData(prev => ({ ...prev, type: value }))}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="In-Person">In-Person</SelectItem>
-                    <SelectItem value="Teleconsultation">Teleconsultation</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="priority">Priority</Label>
-                <Select value={formData.priority} onValueChange={(value) => setFormData(prev => ({ ...prev, priority: value }))}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Normal">Normal</SelectItem>
-                    <SelectItem value="Urgent">Urgent</SelectItem>
-                    <SelectItem value="Emergency">Emergency</SelectItem>
-                  </SelectContent>
-                </Select>
               </div>
               <div className="col-span-2 space-y-2">
                 <Label htmlFor="reason">Reason for Visit</Label>
@@ -234,36 +272,20 @@ export default function Appointment() {
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">Today's Appointments</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">24</div>
-          </CardContent>
+          <CardHeader className="pb-3"><CardTitle className="text-sm font-medium">Today's Appointments</CardTitle></CardHeader>
+          <CardContent><div className="text-2xl font-bold">{stats.today}</div></CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">Confirmed</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-green-600">18</div>
-          </CardContent>
+          <CardHeader className="pb-3"><CardTitle className="text-sm font-medium">Confirmed</CardTitle></CardHeader>
+          <CardContent><div className="text-2xl font-bold text-green-600">{stats.confirmed}</div></CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">Pending</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-yellow-600">6</div>
-          </CardContent>
+          <CardHeader className="pb-3"><CardTitle className="text-sm font-medium">Pending</CardTitle></CardHeader>
+          <CardContent><div className="text-2xl font-bold text-yellow-600">{stats.pending}</div></CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">No-Shows</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-red-600">2</div>
-          </CardContent>
+          <CardHeader className="pb-3"><CardTitle className="text-sm font-medium">No-Shows</CardTitle></CardHeader>
+          <CardContent><div className="text-2xl font-bold text-red-600">{stats.noShows}</div></CardContent>
         </Card>
       </div>
 
@@ -273,6 +295,11 @@ export default function Appointment() {
           <CardDescription>View and manage all appointments</CardDescription>
         </CardHeader>
         <CardContent>
+          {error && (
+            <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">
+              {error}
+            </div>
+          )}
           <Table>
             <TableHeader>
               <TableRow>
@@ -286,38 +313,45 @@ export default function Appointment() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {appointments.map((appointment) => (
-                <TableRow key={appointment.id}>
-                  <TableCell className="font-medium">{appointment.patientName}</TableCell>
-                  <TableCell>{appointment.doctorName}</TableCell>
-                  <TableCell>{appointment.department}</TableCell>
+              {loading && appointments.length === 0 ? (
+                <TableRow><TableCell colSpan={7} className="text-center text-sm text-slate-500 py-8">Loading…</TableCell></TableRow>
+              ) : appointments.length === 0 ? (
+                <TableRow><TableCell colSpan={7} className="text-center text-sm text-slate-500 py-8">No appointments yet. Click "Schedule Appointment" to create one.</TableCell></TableRow>
+              ) : appointments.map((appointment) => (
+                <TableRow key={appointment.id} data-testid={`apt-row-${appointment.id}`}>
+                  <TableCell className="font-medium">{appointment.patient?.name || '—'}</TableCell>
+                  <TableCell>{appointment.doctor?.name || '—'}</TableCell>
+                  <TableCell>{appointment.department || '—'}</TableCell>
                   <TableCell>
                     <div className="flex flex-col">
-                      <span className="flex items-center gap-1">
+                      <span className="flex items-center gap-1" data-testid={`apt-date-${appointment.id}`}>
                         <Calendar className="w-4 h-4" />
-                        {appointment.date}
+                        {toDateInput(appointment.appointmentDate)}
                       </span>
-                      <span className="flex items-center gap-1 text-sm text-gray-500">
+                      <span className="flex items-center gap-1 text-sm text-gray-500" data-testid={`apt-time-${appointment.id}`}>
                         <Clock className="w-4 h-4" />
-                        {appointment.time}
+                        {appointment.appointmentTime}
                       </span>
                     </div>
                   </TableCell>
                   <TableCell>{appointment.type}</TableCell>
                   <TableCell>
-                    <Badge variant={getStatusColor(appointment.status)}>
-                      {appointment.status}
+                    <Badge variant={getStatusColor(appointment.status)} data-testid={`apt-status-${appointment.id}`}>
+                      {displayStatus(appointment.status)}
                     </Badge>
                   </TableCell>
                   <TableCell>
                     <div className="flex gap-2">
-                      <Button variant="outline" size="sm" onClick={() => handleConfirmAppointment(appointment)} disabled={appointment.status === 'Confirmed' || appointment.status === 'Cancelled' || appointment.status === 'Completed'}>
+                      <Button variant="outline" size="sm" onClick={() => handleConfirmAppointment(appointment)}
+                        disabled={appointment.status === 'confirmed' || isFinal(appointment.status)}>
                         Confirm
                       </Button>
-                      <Button variant="outline" size="sm" onClick={() => handleReschedule(appointment)} disabled={appointment.status === 'Cancelled' || appointment.status === 'Completed'}>
+                      <Button variant="outline" size="sm" onClick={() => handleReschedule(appointment)}
+                        disabled={isFinal(appointment.status)}>
                         Reschedule
                       </Button>
-                      <Button variant="destructive" size="sm" onClick={() => handleCancelAppointment(appointment)} disabled={appointment.status === 'Cancelled' || appointment.status === 'Completed'}>
+                      <Button variant="destructive" size="sm" onClick={() => handleCancelAppointment(appointment)}
+                        disabled={isFinal(appointment.status)}>
                         Cancel
                       </Button>
                     </div>
@@ -329,13 +363,12 @@ export default function Appointment() {
         </CardContent>
       </Card>
 
-      {/* Reschedule Dialog */}
       <Dialog open={isRescheduleDialogOpen} onOpenChange={setIsRescheduleDialogOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Reschedule Appointment</DialogTitle>
             <DialogDescription>
-              {selectedAppointment && `Reschedule appointment for ${selectedAppointment.patientName}`}
+              {selectedAppointment && `Reschedule appointment for ${selectedAppointment.patient?.name || 'patient'}`}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
