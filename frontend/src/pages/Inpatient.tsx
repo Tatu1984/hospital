@@ -18,10 +18,14 @@ interface Admission {
   patientId: string;
   patientName: string;
   patientMRN: string;
+  patientAge?: number | null;
+  patientGender?: string | null;
   bedId: string | null;
   bedNumber: string;
   ward: string;
+  bedCategory?: string | null;
   admissionDate: string;
+  admissionDateRaw?: string;
   status: string;
   diagnosis: string;
   admittingDoctor: string;
@@ -64,6 +68,10 @@ export default function Inpatient() {
   const [isTransferDialogOpen, setIsTransferDialogOpen] = useState(false);
   const [isBedDetailsOpen, setIsBedDetailsOpen] = useState(false);
   const [selectedBed, setSelectedBed] = useState<BedCardData | null>(null);
+  // Admissions list dialog — opened by clicking the "Active Admissions"
+  // stats card. Shows each active admission's patient + doctor's diagnosis
+  // and offers an inline "Assign bed" action for unassigned ones.
+  const [isActiveAdmissionsOpen, setIsActiveAdmissionsOpen] = useState(false);
   const [transferTargetBedId, setTransferTargetBedId] = useState<string>('');
   const [selectedAdmission, setSelectedAdmission] = useState<Admission | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -92,19 +100,34 @@ export default function Inpatient() {
     try {
       const response = await api.get('/api/admissions');
 
-      const transformedAdmissions = response.data.map((adm: any) => ({
-        id: adm.id,
-        patientId: adm.patientId,
-        patientName: adm.patient?.name || '',
-        patientMRN: adm.patient?.mrn || '',
-        bedId: adm.bedId,
-        bedNumber: adm.bed?.bedNumber || 'Unassigned',
-        ward: adm.bed?.ward?.name || 'N/A',
-        admissionDate: new Date(adm.admissionDate).toLocaleDateString(),
-        status: adm.status,
-        diagnosis: adm.diagnosis || '',
-        admittingDoctor: 'Dr. ' + (adm.admittingDoctorId?.substring(0, 8) || 'Unknown')
-      }));
+      const transformedAdmissions = response.data.map((adm: any) => {
+        // Age from dob — only show if dob is present, else leave null. The
+        // backend joins patient.dob and patient.gender on the response.
+        let patientAge: number | null = null;
+        if (adm.patient?.dob) {
+          const dob = new Date(adm.patient.dob);
+          const diff = Date.now() - dob.getTime();
+          patientAge = Math.floor(diff / (1000 * 60 * 60 * 24 * 365.25));
+        }
+        return {
+          id: adm.id,
+          patientId: adm.patientId,
+          patientName: adm.patient?.name || '',
+          patientMRN: adm.patient?.mrn || '',
+          patientAge,
+          patientGender: adm.patient?.gender || null,
+          bedId: adm.bedId,
+          bedNumber: adm.bed?.bedNumber || 'Unassigned',
+          ward: adm.bed?.ward?.name || adm.bed?.category || 'N/A',
+          bedCategory: adm.bed?.category || null,
+          admissionDate: new Date(adm.admissionDate).toLocaleDateString(),
+          admissionDateRaw: adm.admissionDate,
+          status: adm.status,
+          diagnosis: adm.diagnosis || '',
+          // Backend now returns admittingDoctor.name; fall back to id prefix.
+          admittingDoctor: adm.admittingDoctor?.name || adm.doctorName || ('Dr. ' + (adm.admittingDoctorId?.substring(0, 8) || 'Unknown')),
+        };
+      });
 
       setAdmissions(transformedAdmissions);
     } catch (error) {
@@ -429,12 +452,17 @@ export default function Inpatient() {
             <div className="text-2xl font-bold text-green-600">{stats.available}</div>
           </CardContent>
         </Card>
-        <Card>
+        <Card
+          onClick={() => setIsActiveAdmissionsOpen(true)}
+          className="cursor-pointer transition-shadow hover:shadow-md hover:border-blue-300"
+          title="Click to see all active admissions and assign beds"
+        >
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium">Active Admissions</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-blue-600">{stats.activeAdmissions}</div>
+            <div className="text-[10px] text-slate-500 mt-1">Click to view list</div>
           </CardContent>
         </Card>
       </div>
@@ -560,6 +588,90 @@ export default function Inpatient() {
           )}
         </CardContent>
       </Card>
+
+      {/* Active admissions list dialog. Opened by clicking the stats card.
+          Shows every active admission with patient + doctor's diagnosis;
+          unassigned admissions get an inline "Assign bed" button that
+          opens the transfer-bed dialog pre-targeted at that admission. */}
+      <Dialog open={isActiveAdmissionsOpen} onOpenChange={setIsActiveAdmissionsOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Active Admissions ({activeAdmissions.length})</DialogTitle>
+            <DialogDescription>
+              All patients currently admitted. Unassigned admissions need a bed —
+              click "Assign bed" to allocate one.
+            </DialogDescription>
+          </DialogHeader>
+          {activeAdmissions.length === 0 ? (
+            <div className="py-8 text-center text-slate-500">No active admissions.</div>
+          ) : (
+            <div className="space-y-3 py-2">
+              {activeAdmissions.map((adm) => {
+                const unassigned = !adm.bedId || adm.bedNumber === 'Unassigned';
+                return (
+                  <div
+                    key={adm.id}
+                    className={`border rounded-lg p-4 ${unassigned ? 'border-amber-200 bg-amber-50' : 'border-slate-200 bg-white'}`}
+                  >
+                    <div className="flex justify-between items-start gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-slate-900">{adm.patientName || '—'}</div>
+                        <div className="text-xs text-slate-500">
+                          MRN: {adm.patientMRN || '—'}
+                          {adm.patientAge != null && ` · ${adm.patientAge}y`}
+                          {adm.patientGender && ` · ${adm.patientGender}`}
+                        </div>
+                        <div className="text-xs text-slate-500 mt-0.5">
+                          Admitted: {adm.admissionDate} · By: {adm.admittingDoctor}
+                        </div>
+                        {adm.diagnosis && (
+                          <div className="mt-2">
+                            <Label className="text-[10px] uppercase tracking-wide text-slate-500">
+                              Doctor's diagnosis / advice
+                            </Label>
+                            <div className="text-sm text-slate-700 whitespace-pre-wrap">
+                              {adm.diagnosis}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-right flex-shrink-0 space-y-2">
+                        {unassigned ? (
+                          <Badge variant="secondary" className="bg-amber-200 text-amber-900">
+                            No bed assigned
+                          </Badge>
+                        ) : (
+                          <div>
+                            <Badge>Assigned</Badge>
+                            <div className="text-xs text-slate-500 mt-1">
+                              {adm.ward} · {adm.bedNumber}
+                            </div>
+                          </div>
+                        )}
+                        <div>
+                          <Button
+                            size="sm"
+                            variant={unassigned ? 'default' : 'outline'}
+                            onClick={() => {
+                              setIsActiveAdmissionsOpen(false);
+                              openTransferDialog(adm);
+                            }}
+                          >
+                            {unassigned ? 'Assign bed' : 'Change bed'}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsActiveAdmissionsOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Bed details popup — mirrors the ICU patient-details popup. Shows
           bed metadata, plus patient + admission info when occupied, and
