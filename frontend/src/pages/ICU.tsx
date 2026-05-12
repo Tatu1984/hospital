@@ -881,109 +881,189 @@ export default function ICU() {
               top; each result shows what's changed vs the prior. */}
       <Dialog open={isDetailsDialogOpen} onOpenChange={setIsDetailsDialogOpen}>
         <DialogContent className="max-w-6xl max-h-[92vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-3 flex-wrap">
-              <span>Patient Details</span>
-              {bedDetails?.bed && (
-                <span className="text-sm font-normal text-slate-500">
-                  {bedDetails.bed.bedNumber} · {bedDetails.bed.icuUnit}
-                </span>
-              )}
-              {bedDetails?.admission?.isVentilated && (
-                <Badge className="bg-orange-600">
-                  <Wind className="w-3 h-3 mr-1" />
-                  Ventilated
-                </Badge>
-              )}
-            </DialogTitle>
-            {bedDetails?.patient && (
-              <DialogDescription>
-                <span className="font-medium text-slate-700">{bedDetails.patient.name}</span>
-                {' · '}MRN {bedDetails.patient.mrn}
-                {bedDetails.patient.age != null && ` · ${bedDetails.patient.age}y`}
-                {bedDetails.patient.gender && ` · ${bedDetails.patient.gender}`}
-                {bedDetails.admission?.admittingDoctor && ` · Under ${bedDetails.admission.admittingDoctor}`}
-              </DialogDescription>
-            )}
-          </DialogHeader>
+          {(() => {
+            // Pick whichever source has the patient — details endpoint
+            // when it works, otherwise the list-endpoint row that's
+            // already on screen. Avoids "the dialog says empty but the
+            // card behind it shows a patient" inconsistency.
+            const titlePatient = bedDetails?.patient || selectedBed?.patient;
+            const titleAdmission = bedDetails?.admission || selectedBed?.admission;
+            const titleBedNumber = bedDetails?.bed?.bedNumber || selectedBed?.bedNumber;
+            const titleIcuUnit = bedDetails?.bed?.icuUnit || selectedBed?.icuUnit;
+            return (
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-3 flex-wrap">
+                  <span>Patient Details</span>
+                  {titleBedNumber && (
+                    <span className="text-sm font-normal text-slate-500">
+                      {titleBedNumber} · {titleIcuUnit}
+                    </span>
+                  )}
+                  {titleAdmission?.isVentilated && (
+                    <Badge className="bg-orange-600">
+                      <Wind className="w-3 h-3 mr-1" />
+                      Ventilated
+                    </Badge>
+                  )}
+                </DialogTitle>
+                {titlePatient && (
+                  <DialogDescription>
+                    <span className="font-medium text-slate-700">{titlePatient.name}</span>
+                    {' · '}MRN {titlePatient.mrn}
+                    {titlePatient.age != null && ` · ${titlePatient.age}y`}
+                    {titlePatient.gender && ` · ${titlePatient.gender}`}
+                    {bedDetails?.admission?.admittingDoctor && ` · Under ${bedDetails.admission.admittingDoctor}`}
+                  </DialogDescription>
+                )}
+              </DialogHeader>
+            );
+          })()}
 
           {detailsLoading && !bedDetails ? (
             <div className="py-12 text-center text-slate-500">Loading patient details…</div>
-          ) : !bedDetails?.patient ? (
-            <div className="py-10 text-center space-y-3">
-              <div className="text-slate-600">This bed is currently vacant.</div>
-              <div className="text-xs text-slate-500">
-                Move an existing admitted patient onto this bed — typically when a
-                general-ward patient needs to step up to {selectedBed?.icuUnit || 'critical care'}.
-              </div>
-              <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
-                <Button onClick={openAssignPatientPicker}>
-                  <Bed className="w-4 h-4 mr-1" />
-                  Assign a patient to this bed
-                </Button>
-                {/* If the underlying status got stuck at "occupied" via
-                    Master Data edits, give the operator a one-click way
-                    to reset it. The backend rejects the call if a real
-                    patient is linked, so this is safe to expose. */}
-                {bedDetails?.bed?.status && bedDetails.bed.status.toLowerCase() === 'occupied' && (
-                  <Button variant="outline" onClick={async () => {
-                    if (!selectedBed?.id) return;
-                    if (!confirm('Reset this bed to vacant? This clears any stuck "occupied" flag from manual edits. Patient assignments are unaffected (none is linked).')) return;
-                    try {
-                      await api.post(`/api/icu/beds/${selectedBed.id}/reset`);
-                      await fetchICUBeds();
-                      const res = await api.get(`/api/icu/beds/${selectedBed.id}/details`);
-                      setBedDetails(res.data);
-                    } catch (err: any) {
-                      alert(err?.response?.data?.error || 'Could not reset bed.');
-                    }
-                  }}>
-                    Reset bed status to vacant
-                  </Button>
-                )}
-              </div>
-            </div>
-          ) : (
+          ) : (() => {
+            // The list endpoint and the details endpoint can disagree (the
+            // list joins admission+patient inline, the details endpoint
+            // queries the row from scratch). If the card shows a patient
+            // but the details fetch comes back empty, trust the card —
+            // we already have authoritative data on the screen, no point
+            // showing "vacant" and confusing the operator.
+            const hasPatientFromList = !!selectedBed?.patient;
+            const hasPatientFromDetails = !!bedDetails?.patient;
+            const truly_vacant = !hasPatientFromList && !hasPatientFromDetails;
+            if (truly_vacant) {
+              return (
+                <div className="py-10 text-center space-y-3">
+                  <div className="text-slate-600">This bed is currently vacant.</div>
+                  <div className="text-xs text-slate-500">
+                    Move an existing admitted patient onto this bed — typically when a
+                    general-ward patient needs to step up to {selectedBed?.icuUnit || 'critical care'}.
+                  </div>
+                  <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+                    <Button onClick={openAssignPatientPicker}>
+                      <Bed className="w-4 h-4 mr-1" />
+                      Assign a patient to this bed
+                    </Button>
+                    {bedDetails?.bed?.status && bedDetails.bed.status.toLowerCase() === 'occupied' && (
+                      <Button variant="outline" onClick={async () => {
+                        if (!selectedBed?.id) return;
+                        if (!confirm('Reset this bed to vacant? This clears any stuck "occupied" flag from manual edits.')) return;
+                        try {
+                          await api.post(`/api/icu/beds/${selectedBed.id}/reset`);
+                          await fetchICUBeds();
+                          const res = await api.get(`/api/icu/beds/${selectedBed.id}/details`);
+                          setBedDetails(res.data);
+                        } catch (err: any) {
+                          alert(err?.response?.data?.error || 'Could not reset bed.');
+                        }
+                      }}>
+                        Reset bed status to vacant
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              );
+            }
+            // Build a unified "effective details" view from whichever
+            // source has data. Prefer the rich /details payload when it
+            // has the patient; fall back to the list row otherwise so
+            // the dialog never hides data we already have.
+            const eff: ICUDetails = hasPatientFromDetails ? bedDetails! : {
+              bed: {
+                id: selectedBed!.id,
+                bedNumber: selectedBed!.bedNumber,
+                icuUnit: selectedBed!.icuUnit,
+                status: selectedBed!.status,
+                ventilatorId: null,
+              },
+              patient: selectedBed!.patient ? {
+                id: selectedBed!.patient.id,
+                name: selectedBed!.patient.name,
+                mrn: selectedBed!.patient.mrn,
+                age: (selectedBed!.patient.age as any) ?? null,
+                gender: selectedBed!.patient.gender,
+                phone: null,
+                address: null,
+              } : null,
+              admission: selectedBed!.admission ? {
+                id: selectedBed!.admission.id,
+                admissionDate: selectedBed!.admission.admissionDate,
+                diagnosis: selectedBed!.admission.diagnosis || null,
+                admittingDoctor: null,
+                isVentilated: !!selectedBed!.admission.isVentilated,
+              } : null,
+              vitals: selectedBed!.latestVitals ? [{
+                id: 'list-snapshot',
+                recordedAt: selectedBed!.latestVitals.timestamp,
+                heartRate: parseInt(selectedBed!.latestVitals.hr) || null,
+                systolicBP: null,
+                diastolicBP: null,
+                bp: selectedBed!.latestVitals.bp,
+                temperature: parseFloat(selectedBed!.latestVitals.temp) || null,
+                spo2: parseInt(selectedBed!.latestVitals.spo2) || null,
+                respiratoryRate: parseInt(selectedBed!.latestVitals.rr) || null,
+                gcs: null,
+                ventilatorMode: null,
+                fio2: null,
+                peep: null,
+              }] : [],
+              orders: [],
+              prescriptions: [],
+            };
+            return (
             <Tabs defaultValue="overview" className="w-full">
               <TabsList>
                 <TabsTrigger value="overview">Overview</TabsTrigger>
-                <TabsTrigger value="trend">Vitals Trend ({bedDetails.vitals.length})</TabsTrigger>
-                <TabsTrigger value="reports">Reports ({bedDetails.orders.length})</TabsTrigger>
-                <TabsTrigger value="meds">Medications ({bedDetails.prescriptions.length})</TabsTrigger>
+                <TabsTrigger value="trend">Vitals Trend ({eff.vitals.length})</TabsTrigger>
+                <TabsTrigger value="reports">Reports ({eff.orders.length})</TabsTrigger>
+                <TabsTrigger value="meds">Medications ({eff.prescriptions.length})</TabsTrigger>
               </TabsList>
 
               <TabsContent value="overview">
-                <ICUOverviewPane details={bedDetails} getVitalStatus={getVitalStatus} getVitalColor={getVitalColor} />
+                <ICUOverviewPane details={eff} getVitalStatus={getVitalStatus} getVitalColor={getVitalColor} />
               </TabsContent>
 
               <TabsContent value="trend">
-                <ICUTrendPane vitals={bedDetails.vitals} />
+                <ICUTrendPane vitals={eff.vitals} />
               </TabsContent>
 
               <TabsContent value="reports">
-                <ICUReportsPane orders={bedDetails.orders} />
+                <ICUReportsPane orders={eff.orders} />
               </TabsContent>
 
               <TabsContent value="meds">
-                <ICUMedsPane prescriptions={bedDetails.prescriptions} />
+                <ICUMedsPane prescriptions={eff.prescriptions} />
               </TabsContent>
             </Tabs>
-          )}
+            );
+          })()}
 
           <DialogFooter>
-            {bedDetails?.admission?.id ? (
-              <Button variant="outline" onClick={openTransferPicker}>
-                <Bed className="w-4 h-4 mr-1" />
-                Transfer / step-down to another bed
-              </Button>
-            ) : (
-              !detailsLoading && !bedDetails?.patient && (
-                <Button onClick={openAssignPatientPicker}>
-                  <Bed className="w-4 h-4 mr-1" />
-                  Assign a patient
-                </Button>
-              )
-            )}
+            {(() => {
+              // Use whichever source has the admission. The list endpoint
+              // joins admission inline; if the dedicated details endpoint
+              // hasn't responded yet (or is broken), fall back to it so
+              // the footer doesn't lock out the operator.
+              const effAdmissionId = bedDetails?.admission?.id || selectedBed?.admission?.id;
+              const effHasPatient = !!(bedDetails?.patient || selectedBed?.patient);
+              if (effAdmissionId) {
+                return (
+                  <Button variant="outline" onClick={openTransferPicker}>
+                    <Bed className="w-4 h-4 mr-1" />
+                    Transfer / step-down to another bed
+                  </Button>
+                );
+              }
+              if (!detailsLoading && !effHasPatient) {
+                return (
+                  <Button onClick={openAssignPatientPicker}>
+                    <Bed className="w-4 h-4 mr-1" />
+                    Assign a patient
+                  </Button>
+                );
+              }
+              return null;
+            })()}
             <Button variant="outline" onClick={() => setIsDetailsDialogOpen(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
