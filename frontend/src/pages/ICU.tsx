@@ -916,10 +916,32 @@ export default function ICU() {
                 Move an existing admitted patient onto this bed — typically when a
                 general-ward patient needs to step up to {selectedBed?.icuUnit || 'critical care'}.
               </div>
-              <Button onClick={openAssignPatientPicker} className="mt-2">
-                <Bed className="w-4 h-4 mr-1" />
-                Assign a patient to this bed
-              </Button>
+              <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+                <Button onClick={openAssignPatientPicker}>
+                  <Bed className="w-4 h-4 mr-1" />
+                  Assign a patient to this bed
+                </Button>
+                {/* If the underlying status got stuck at "occupied" via
+                    Master Data edits, give the operator a one-click way
+                    to reset it. The backend rejects the call if a real
+                    patient is linked, so this is safe to expose. */}
+                {bedDetails?.bed?.status && bedDetails.bed.status.toLowerCase() === 'occupied' && (
+                  <Button variant="outline" onClick={async () => {
+                    if (!selectedBed?.id) return;
+                    if (!confirm('Reset this bed to vacant? This clears any stuck "occupied" flag from manual edits. Patient assignments are unaffected (none is linked).')) return;
+                    try {
+                      await api.post(`/api/icu/beds/${selectedBed.id}/reset`);
+                      await fetchICUBeds();
+                      const res = await api.get(`/api/icu/beds/${selectedBed.id}/details`);
+                      setBedDetails(res.data);
+                    } catch (err: any) {
+                      alert(err?.response?.data?.error || 'Could not reset bed.');
+                    }
+                  }}>
+                    Reset bed status to vacant
+                  </Button>
+                )}
+              </div>
             </div>
           ) : (
             <Tabs defaultValue="overview" className="w-full">

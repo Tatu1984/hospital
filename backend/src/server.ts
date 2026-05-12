@@ -3699,15 +3699,18 @@ app.get('/api/icu/beds', authenticateToken, async (req: any, res: Response) => {
       // (ICUBed.ventilatorId set) or the latest vitals record names a
       // ventilator mode. Either signal is enough to surface the Vent badge.
       const isVentilated = !!b.ventilatorId || !!(b.vitalsRecords[0]?.ventilatorMode);
-      // Translate lowercase DB statuses to the uppercase tokens the
-      // frontend has always expected ('OCCUPIED' / 'AVAILABLE'). Anything
-      // that doesn't match falls through to upper-case so we can still
-      // see and act on 'MAINTENANCE' / 'CLEANING'.
+      // Effective status is derived from whether a patient is actually
+      // linked — NOT from the raw `status` flag, which an operator can
+      // edit independently via Master Data and leave inconsistent (e.g.
+      // "occupied" set manually without a currentPatient FK). Cleaning
+      // and maintenance are still respected because they have meaning
+      // beyond "is someone here".
       const rawStatus = (b.status || '').toLowerCase();
-      const status =
-        rawStatus === 'occupied' ? 'OCCUPIED'
-        : (rawStatus === 'vacant' || rawStatus === 'available') ? 'AVAILABLE'
-        : (b.status || '').toUpperCase();
+      const status = b.currentPatient
+        ? 'OCCUPIED'
+        : (rawStatus === 'maintenance' || rawStatus === 'cleaning')
+          ? rawStatus.toUpperCase()
+          : 'AVAILABLE';
       return {
         ...b,
         status,
@@ -3883,6 +3886,33 @@ app.get('/api/icu/beds/:id/details', authenticateToken, async (req: any, res: Re
     });
   } catch (error) {
     console.error('Get ICU bed details error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Force-clear an ICU bed back to a vacant state. Used to fix the
+// inconsistency where an admin sets `status='occupied'` via Master Data
+// → Beds without linking a patient, leaving the grid lying. Safe:
+// refuses to run if the bed actually has a patient linked (use transfer
+// or discharge to free that case).
+app.post('/api/icu/beds/:id/reset', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const bed = await prisma.iCUBed.findFirst({
+      where: { id: req.params.id, tenantId: req.user.tenantId },
+    });
+    if (!bed) return res.status(404).json({ error: 'ICU bed not found' });
+    if (bed.currentPatient || bed.admissionId) {
+      return res.status(409).json({
+        error: 'Bed has a linked patient or admission — discharge or transfer instead.',
+      });
+    }
+    await prisma.iCUBed.update({
+      where: { id: bed.id },
+      data: { status: 'vacant', admissionId: null, currentPatient: null, ventilatorId: null },
+    });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Reset ICU bed error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -7070,6 +7100,17 @@ app.put('/api/master/:type/:id', authenticateToken, async (req: any, res: Respon
           const inICU = await prisma.iCUBed.findUnique({ where: { id } });
           if (!inICU) {
             return res.status(404).json({ error: 'Bed not found in either Bed or ICUBed' });
+          }
+          // Don't let an admin manually flip status to 'occupied' from
+          // here — that creates a phantom-occupied bed with no patient
+          // linked. Occupancy must come from a real patient assignment
+          // via the transfer-bed endpoint. Cleaning / maintenance are
+          // legitimate manual states.
+          const requestedStatus = (data.bedStatus || '').toLowerCase();
+          if (requestedStatus === 'occupied' && !inICU.currentPatient) {
+            return res.status(400).json({
+              error: 'Cannot mark a bed occupied without assigning a patient. Use the ICU page to assign one.',
+            });
           }
           result = await prisma.iCUBed.update({
             where: { id },
