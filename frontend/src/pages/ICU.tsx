@@ -275,26 +275,43 @@ export default function ICU() {
     if (!selectedBed?.id || !assignTargetAdmissionId) return;
     setLoading(true);
     try {
-      await api.post(`/api/admissions/${assignTargetAdmissionId}/transfer-bed`, {
+      const transferRes = await api.post(`/api/admissions/${assignTargetAdmissionId}/transfer-bed`, {
         bedId: selectedBed.id,
       });
-      await fetchICUBeds();
+      // Log the server's view of the world so an operator (or me, via
+      // their console output) can confirm the move actually landed.
+      // eslint-disable-next-line no-console
+      console.log('[icu] transfer-bed response:', transferRes.data);
       setIsAssignPatientOpen(false);
-      // Refresh the details so the dialog re-renders with the new patient.
-      if (selectedBed?.id) {
-        setDetailsLoading(true);
-        try {
-          const res = await api.get(`/api/icu/beds/${selectedBed.id}/details`);
-          setBedDetails(res.data);
-        } finally {
-          setDetailsLoading(false);
-        }
+      // Reset bedDetails so the dialog shows the loading state during
+      // refetch — avoids any stale-state flash where the empty panel
+      // briefly renders before the new data arrives.
+      setBedDetails(null);
+      setDetailsLoading(true);
+      // Hammer it: refresh the ICU bed grid AND the details panel.
+      const [, detailsRes] = await Promise.all([
+        fetchICUBeds(),
+        api.get(`/api/icu/beds/${selectedBed.id}/details`).then((res) => res.data),
+      ]);
+      // eslint-disable-next-line no-console
+      console.log('[icu] bed details after assign:', detailsRes);
+      if (!detailsRes?.patient) {
+        // Surface the bad state to the operator instead of silently
+        // showing "no patient" again. They can then share the response
+        // with support.
+        alert(
+          'Transfer call succeeded but the bed still shows no patient. ' +
+          'Please share the console output ([icu] bed details) — there is ' +
+          'a data inconsistency we need to investigate.'
+        );
       }
+      setBedDetails(detailsRes);
     } catch (err: any) {
       console.error('Assign patient error:', err);
       alert(err?.response?.data?.error || 'Could not assign patient.');
     } finally {
       setLoading(false);
+      setDetailsLoading(false);
     }
   };
 
