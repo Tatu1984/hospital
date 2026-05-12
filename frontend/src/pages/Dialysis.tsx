@@ -27,9 +27,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Activity, Plus, Pencil, Trash2, Cog } from 'lucide-react';
+import { Activity, Plus, Pencil, Trash2, Cog, CalendarDays } from 'lucide-react';
 import api from '../services/api';
 import { StatusBadge, fmtDate } from '../components/modules/ResourceListPage';
+import { DIALYSIS_SLOTS, slotLabel } from '../lib/dialysisSlots';
+import { useToast } from '../components/Toast';
 
 interface DialysisMachine {
   id: string;
@@ -65,7 +67,7 @@ interface DialysisSession {
 interface PatientLite { id: string; mrn: string; name: string; }
 
 export default function Dialysis() {
-  const [tab, setTab] = useState<'sessions' | 'machines'>('sessions');
+  const [tab, setTab] = useState<'register' | 'sessions' | 'machines'>('register');
   const [machines, setMachines] = useState<DialysisMachine[]>([]);
   const [sessions, setSessions] = useState<DialysisSession[]>([]);
   const [patients, setPatients] = useState<PatientLite[]>([]);
@@ -118,9 +120,18 @@ export default function Dialysis() {
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
         <TabsList>
+          <TabsTrigger value="register">Register (slots)</TabsTrigger>
           <TabsTrigger value="sessions">Sessions ({sessions.length})</TabsTrigger>
           <TabsTrigger value="machines">Machines ({machines.length})</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="register" className="space-y-4 mt-4">
+          <DialysisRegisterPanel
+            machines={machines}
+            patients={patients}
+            onChanged={load}
+          />
+        </TabsContent>
 
         <TabsContent value="sessions" className="space-y-4 mt-4">
           <SessionsPanel
@@ -457,6 +468,301 @@ function FormSelect({ label, value, onChange, options, placeholder }: { label: s
           {options.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
         </SelectContent>
       </Select>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Dialysis booking register. 4 fixed slots × N beds, with a date picker.
+// Each slot row shows the patient/machine/bed assignments for that slot.
+// Empty cells offer a "+ Book" button to create a session.
+// ---------------------------------------------------------------------------
+
+interface DialysisBed {
+  id: string;
+  bedNumber: string;
+  status: string;
+  floor?: string | null;
+}
+
+interface SlotRow {
+  id: string;
+  patientId: string;
+  machineId?: string | null;
+  bedId?: string | null;
+  slot: string;
+  status: string;
+  notes?: string | null;
+  patient?: { id: string; name: string; mrn: string } | null;
+  machine?: { id: string; machineName: string; machineCode: string; status: string } | null;
+}
+
+function todayYMD(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function DialysisRegisterPanel({
+  machines,
+  patients,
+  onChanged,
+}: {
+  machines: DialysisMachine[];
+  patients: PatientLite[];
+  onChanged: () => void | Promise<void>;
+}) {
+  const toast = useToast();
+  const [date, setDate] = useState<string>(todayYMD());
+  const [beds, setBeds] = useState<DialysisBed[]>([]);
+  const [sessions, setSessions] = useState<SlotRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  // New-booking dialog state.
+  const [bookingOpen, setBookingOpen] = useState(false);
+  const [bookingSlot, setBookingSlot] = useState<string>('SLOT_1');
+  const [bookingPatient, setBookingPatient] = useState<string>('');
+  const [bookingMachine, setBookingMachine] = useState<string>('');
+  const [bookingBed, setBookingBed] = useState<string>('');
+  const [bookingNotes, setBookingNotes] = useState<string>('');
+
+  async function load() {
+    setLoading(true);
+    try {
+      const [b, s] = await Promise.all([
+        api.get('/api/dialysis/beds').catch(() => ({ data: [] })),
+        api.get('/api/dialysis/sessions', { params: { date } }).catch(() => ({ data: [] })),
+      ]);
+      setBeds(Array.isArray(b.data) ? b.data : []);
+      setSessions(Array.isArray(s.data) ? s.data : []);
+    } finally {
+      setLoading(false);
+    }
+  }
+  useEffect(() => { void load(); }, [date]);
+
+  const machineCount = machines.filter((m) => m.status !== 'retired').length;
+  const bedCount = beds.length;
+  const ratioOk = bedCount === 0 || machineCount >= Math.ceil(bedCount * 1.5);
+
+  function openBookingFor(slot: string) {
+    setBookingSlot(slot);
+    setBookingPatient('');
+    setBookingMachine('');
+    setBookingBed('');
+    setBookingNotes('');
+    setBookingOpen(true);
+  }
+
+  async function submitBooking() {
+    if (!bookingPatient || !bookingMachine) {
+      toast.warning('Patient and machine are required');
+      return;
+    }
+    try {
+      await api.post('/api/dialysis/sessions', {
+        patientId: bookingPatient,
+        machineId: bookingMachine,
+        bedId: bookingBed || null,
+        sessionDate: date,
+        slot: bookingSlot,
+        notes: bookingNotes || null,
+      });
+      setBookingOpen(false);
+      await load();
+      await onChanged();
+      toast.success('Session booked', `Patient added to ${slotLabel(bookingSlot)}.`);
+    } catch (err: any) {
+      toast.error('Could not book', err?.response?.data?.error || err?.message || 'Try again.');
+    }
+  }
+
+  async function cancelSession(id: string) {
+    if (!confirm('Cancel this session? The slot will free up immediately.')) return;
+    try {
+      await api.delete(`/api/dialysis/sessions/${id}`);
+      await load();
+      await onChanged();
+      toast.success('Session cancelled');
+    } catch (err: any) {
+      toast.error('Could not cancel', err?.response?.data?.error || err?.message || 'Try again.');
+    }
+  }
+
+  const sessionsBySlot: Record<string, SlotRow[]> = {};
+  for (const s of sessions) {
+    if (!s.slot) continue; // older clinical sessions without a slot
+    if (!sessionsBySlot[s.slot]) sessionsBySlot[s.slot] = [];
+    sessionsBySlot[s.slot].push(s);
+  }
+
+  return (
+    <div className="space-y-3">
+      <Card>
+        <CardContent className="p-4 flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-2">
+            <CalendarDays className="w-4 h-4 text-slate-500" />
+            <Label className="text-xs text-slate-500">Date</Label>
+            <Input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="w-44"
+            />
+          </div>
+          <div className="text-xs text-slate-500">
+            <span className="font-medium">{bedCount}</span> bed{bedCount === 1 ? '' : 's'} ·{' '}
+            <span className="font-medium">{machineCount}</span> machine{machineCount === 1 ? '' : 's'}
+          </div>
+          {!ratioOk && (
+            <Badge variant="secondary" className="bg-amber-100 text-amber-900">
+              Recommend ≥ {Math.ceil(bedCount * 1.5)} machines for {bedCount} beds
+            </Badge>
+          )}
+          {bedCount === 0 && (
+            <Badge variant="secondary" className="bg-rose-100 text-rose-900">
+              No dialysis beds — add some via Master Data → Beds (category Dialysis)
+            </Badge>
+          )}
+        </CardContent>
+      </Card>
+
+      {DIALYSIS_SLOTS.map((s) => {
+        const rows = sessionsBySlot[s.code] || [];
+        return (
+          <Card key={s.code}>
+            <CardHeader className="pb-2 flex flex-row items-center justify-between">
+              <div>
+                <CardTitle className="text-base flex items-center gap-2">
+                  {s.label}
+                  <Badge variant="secondary" className="font-normal">
+                    {rows.length} / {bedCount || '∞'}
+                  </Badge>
+                </CardTitle>
+              </div>
+              <Button
+                size="sm"
+                onClick={() => openBookingFor(s.code)}
+                disabled={loading || machineCount === 0}
+              >
+                <Plus className="w-3 h-3 mr-1" />
+                Book
+              </Button>
+            </CardHeader>
+            <CardContent className="pt-0">
+              {rows.length === 0 ? (
+                <div className="text-sm text-slate-500 italic py-3">No bookings for this slot.</div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Patient</TableHead>
+                      <TableHead>MRN</TableHead>
+                      <TableHead>Machine</TableHead>
+                      <TableHead>Bed</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {rows.map((row) => {
+                      const bed = beds.find((b) => b.id === row.bedId);
+                      return (
+                        <TableRow key={row.id}>
+                          <TableCell className="font-medium">{row.patient?.name || '—'}</TableCell>
+                          <TableCell>{row.patient?.mrn || '—'}</TableCell>
+                          <TableCell>
+                            {row.machine?.machineName || '—'}
+                            {row.machine?.machineCode && (
+                              <span className="text-xs text-slate-500"> · {row.machine.machineCode}</span>
+                            )}
+                          </TableCell>
+                          <TableCell>{bed?.bedNumber || (row.bedId ? row.bedId : '—')}</TableCell>
+                          <TableCell><StatusBadge value={row.status} /></TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => cancelSession(row.id)}
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        );
+      })}
+
+      <Dialog open={bookingOpen} onOpenChange={setBookingOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Book dialysis slot</DialogTitle>
+            <div className="text-sm text-slate-500">
+              {fmtDate(date)} · {slotLabel(bookingSlot)}
+            </div>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-3 py-2">
+            <div className="space-y-1 col-span-2">
+              <Label className="text-xs">Patient *</Label>
+              <Select value={bookingPatient} onValueChange={setBookingPatient}>
+                <SelectTrigger><SelectValue placeholder="Pick a patient" /></SelectTrigger>
+                <SelectContent>
+                  {patients.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name} · {p.mrn}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Machine *</Label>
+              <Select value={bookingMachine} onValueChange={setBookingMachine}>
+                <SelectTrigger><SelectValue placeholder="Pick a machine" /></SelectTrigger>
+                <SelectContent>
+                  {machines
+                    .filter((m) => m.status !== 'retired')
+                    .map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        {m.machineName} · {m.machineCode} · {m.status}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Bed (optional)</Label>
+              <Select value={bookingBed} onValueChange={setBookingBed}>
+                <SelectTrigger><SelectValue placeholder="No specific bed" /></SelectTrigger>
+                <SelectContent>
+                  {beds.map((b) => (
+                    <SelectItem key={b.id} value={b.id}>{b.bedNumber}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1 col-span-2">
+              <Label className="text-xs">Notes</Label>
+              <Input
+                value={bookingNotes}
+                onChange={(e) => setBookingNotes(e.target.value)}
+                placeholder="Anything the team should know"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBookingOpen(false)}>Cancel</Button>
+            <Button onClick={submitBooking}>Book session</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

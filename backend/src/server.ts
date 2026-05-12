@@ -3759,20 +3759,32 @@ app.get('/api/dialysis/beds', authenticateToken, async (req: any, res: Response)
 // by slot so the frontend can paint the 4-slot grid in one call.
 app.get('/api/dialysis/sessions', authenticateToken, async (req: any, res: Response) => {
   try {
-    const dateParam = (req.query.date as string) || new Date().toISOString().slice(0, 10);
-    const scheduledDate = new Date(`${dateParam}T00:00:00.000Z`);
-    if (Number.isNaN(scheduledDate.getTime())) {
-      return res.status(400).json({ error: 'Invalid date — use YYYY-MM-DD' });
+    // Two callers:
+    //   - Existing clinical Sessions table: no `date` param, wants the
+    //     full array of sessions for the tenant (filter client-side).
+    //   - New booking-register UI: passes `date=YYYY-MM-DD` and wants
+    //     just that day. Same endpoint, backward-compatible response
+    //     shape (array). The register UI filters by date itself.
+    const where: any = { tenantId: req.user.tenantId };
+    const dateParam = req.query.date as string | undefined;
+    if (dateParam) {
+      const scheduledDate = new Date(`${dateParam}T00:00:00.000Z`);
+      if (Number.isNaN(scheduledDate.getTime())) {
+        return res.status(400).json({ error: 'Invalid date — use YYYY-MM-DD' });
+      }
+      where.scheduledDate = scheduledDate;
     }
     const sessions = await prisma.dialysisSession.findMany({
-      where: { tenantId: req.user.tenantId, scheduledDate },
+      where,
       include: {
         patient: { select: { id: true, name: true, mrn: true } },
         machine: { select: { id: true, machineName: true, machineCode: true, status: true } },
       },
-      orderBy: [{ slot: 'asc' }, { createdAt: 'asc' }],
+      orderBy: dateParam
+        ? [{ slot: 'asc' }, { createdAt: 'asc' }]
+        : [{ scheduledDate: 'desc' }, { createdAt: 'desc' }],
     });
-    res.json({ date: dateParam, sessions });
+    res.json(sessions);
   } catch (error) {
     console.error('Get dialysis sessions error:', error);
     res.status(500).json({ error: 'Internal server error' });
