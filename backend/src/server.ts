@@ -6329,39 +6329,90 @@ app.post('/api/master/seed-standard-wards', authenticateToken, async (req: any, 
   }
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { WARD_CATEGORIES } = require('./shared/wardCategories');
-    const summary: Array<{ type: string; status: 'created' | 'skipped'; beds?: number }> = [];
+    const { WARD_CATEGORIES, CRITICAL_CARE_TYPES } = require('./shared/wardCategories');
+    const summary: Array<{
+      type: string;
+      ward: 'created' | 'kept';
+      bedsCreated: number;
+      bedsMigrated?: number;
+      table: 'ICUBed' | 'Bed';
+    }> = [];
 
     for (const cat of WARD_CATEGORIES as Array<{ type: string; label: string; defaultTariff: number; defaultBeds: number }>) {
-      const existing = await prisma.ward.findFirst({
+      // Ward is idempotent at the row level — find or create.
+      let ward = await prisma.ward.findFirst({
         where: { tenantId: req.user.tenantId, type: cat.type },
       });
-      if (existing) {
-        summary.push({ type: cat.type, status: 'skipped' });
-        continue;
+      let wardStatus: 'created' | 'kept' = 'kept';
+      if (!ward) {
+        ward = await prisma.ward.create({
+          data: {
+            tenantId: req.user.tenantId,
+            branchId: req.user.branchId,
+            name: cat.label,
+            type: cat.type,
+            floor: '',
+            totalBeds: cat.defaultBeds,
+            tariffPerDay: cat.defaultTariff,
+            isActive: true,
+          },
+        });
+        wardStatus = 'created';
       }
-      const ward = await prisma.ward.create({
-        data: {
-          tenantId: req.user.tenantId,
-          branchId: req.user.branchId,
-          name: cat.label,
-          type: cat.type,
-          floor: '',
-          totalBeds: cat.defaultBeds,
-          tariffPerDay: cat.defaultTariff,
-          isActive: true,
-        },
-      });
       const prefix = cat.type.replace(/_/g, '-');
-      const bedRows = Array.from({ length: cat.defaultBeds }, (_, i) => ({
-        branchId: req.user.branchId,
-        wardId: ward.id,
-        bedNumber: `${prefix}-${String(i + 1).padStart(2, '0')}`,
-        category: cat.type,
-        status: 'vacant',
-      }));
-      await prisma.bed.createMany({ data: bedRows, skipDuplicates: true });
-      summary.push({ type: cat.type, status: 'created', beds: bedRows.length });
+      // Critical-care categories (ITU, HDU, ICCU) belong in the dedicated
+      // ICUBed table — that's what the ICU page reads. Generic Bed rows for
+      // these categories are unreachable: IPD filters critical care out and
+      // ICU only queries ICUBed.
+      const isCriticalCare = (CRITICAL_CARE_TYPES as string[]).includes(cat.type);
+      const targetTable: 'ICUBed' | 'Bed' = isCriticalCare ? 'ICUBed' : 'Bed';
+      let bedsCreated = 0;
+      let bedsMigrated = 0;
+
+      if (isCriticalCare) {
+        // Clean up rows from earlier seed runs that landed in the wrong table.
+        // Safe to delete vacant Bed rows — they were never reachable to occupy.
+        const stale = await prisma.bed.findMany({
+          where: { branchId: req.user.branchId, category: cat.type, status: 'vacant' },
+          select: { id: true },
+        });
+        if (stale.length > 0) {
+          await prisma.bed.deleteMany({ where: { id: { in: stale.map((b: any) => b.id) } } });
+          bedsMigrated = stale.length;
+        }
+        const existing = await prisma.iCUBed.count({
+          where: { tenantId: req.user.tenantId, icuUnit: cat.type },
+        });
+        const toAdd = Math.max(0, cat.defaultBeds - existing);
+        if (toAdd > 0) {
+          const icuBedRows = Array.from({ length: toAdd }, (_, i) => ({
+            tenantId: req.user.tenantId,
+            bedNumber: `${prefix}-${String(existing + i + 1).padStart(2, '0')}`,
+            icuUnit: cat.type,
+            status: 'vacant',
+          }));
+          await prisma.iCUBed.createMany({ data: icuBedRows, skipDuplicates: true });
+          bedsCreated = toAdd;
+        }
+      } else {
+        const existing = await prisma.bed.count({
+          where: { branchId: req.user.branchId, wardId: ward.id },
+        });
+        const toAdd = Math.max(0, cat.defaultBeds - existing);
+        if (toAdd > 0) {
+          const bedRows = Array.from({ length: toAdd }, (_, i) => ({
+            branchId: req.user.branchId,
+            wardId: ward.id,
+            bedNumber: `${prefix}-${String(existing + i + 1).padStart(2, '0')}`,
+            category: cat.type,
+            status: 'vacant',
+          }));
+          await prisma.bed.createMany({ data: bedRows, skipDuplicates: true });
+          bedsCreated = toAdd;
+        }
+      }
+
+      summary.push({ type: cat.type, ward: wardStatus, bedsCreated, bedsMigrated, table: targetTable });
     }
 
     res.json({ ok: true, summary });
@@ -6371,23 +6422,47 @@ app.post('/api/master/seed-standard-wards', authenticateToken, async (req: any, 
   }
 });
 
-// Master data - beds. Returns every bed in the branch with its ward joined,
-// shaped to fit the generic MasterItem table the admin UI uses.
+// Master data - beds. Returns every bed in the branch — both the generic
+// Bed rows (general wards, private cabins, share rooms) AND the ICUBed
+// rows (ITU/HDU/ICCU/ICU) — so the admin can see and manage all bed
+// inventory in one place. The two tables stay distinct in the database
+// because they carry different fields (ICUBed has ventilator + vitals
+// links), but the admin UI unifies them.
 app.get('/api/master/beds', authenticateToken, async (req: any, res: Response) => {
   try {
-    const beds = await prisma.bed.findMany({
-      where: { branchId: req.user.branchId },
-      orderBy: [{ category: 'asc' }, { bedNumber: 'asc' }],
-    });
+    const [beds, icuBeds] = await Promise.all([
+      prisma.bed.findMany({
+        where: { branchId: req.user.branchId },
+        orderBy: [{ category: 'asc' }, { bedNumber: 'asc' }],
+      }),
+      prisma.iCUBed.findMany({
+        where: { tenantId: req.user.tenantId },
+        orderBy: [{ icuUnit: 'asc' }, { bedNumber: 'asc' }],
+      }),
+    ]);
     const wardIds = Array.from(new Set(beds.map((b: any) => b.wardId).filter(Boolean)));
     const wards = wardIds.length
       ? await prisma.ward.findMany({ where: { id: { in: wardIds as string[] } } })
       : [];
     const wardById = new Map(wards.map((w: any) => [w.id, w]));
-    res.json(beds.map((b: any) => {
+    // ICUBed rows aren't FK-linked to Ward; resolve their parent ward by
+    // matching ward.type == icuUnit. Pull the missing ward records in.
+    const wardByType = new Map<string, any>();
+    for (const w of wards) wardByType.set(w.type, w);
+    const icuUnits = Array.from(new Set(icuBeds.map((b: any) => b.icuUnit).filter(Boolean)));
+    const missingTypes = icuUnits.filter((t) => !wardByType.has(t));
+    if (missingTypes.length > 0) {
+      const moreWards = await prisma.ward.findMany({
+        where: { tenantId: req.user.tenantId, type: { in: missingTypes } },
+      });
+      for (const w of moreWards) wardByType.set(w.type, w);
+    }
+
+    const fromBeds = beds.map((b: any) => {
       const w: any = b.wardId ? wardById.get(b.wardId) : null;
       return {
         id: b.id,
+        source: 'bed' as const,
         code: b.bedNumber,
         name: b.bedNumber,
         bedNumber: b.bedNumber,
@@ -6399,7 +6474,25 @@ app.get('/api/master/beds', authenticateToken, async (req: any, res: Response) =
         bedStatus: b.status,
         status: 'active',
       };
-    }));
+    });
+    const fromICUBeds = icuBeds.map((b: any) => {
+      const w: any = wardByType.get(b.icuUnit) || null;
+      return {
+        id: b.id,
+        source: 'icubed' as const,
+        code: b.bedNumber,
+        name: b.bedNumber,
+        bedNumber: b.bedNumber,
+        category: b.icuUnit,
+        wardId: w?.id || null,
+        wardName: w?.name || b.icuUnit,
+        wardType: b.icuUnit,
+        floor: w?.floor || '',
+        bedStatus: b.status,
+        status: 'active',
+      };
+    });
+    res.json([...fromBeds, ...fromICUBeds]);
   } catch (error) {
     console.error('Get master beds error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -6519,24 +6612,36 @@ app.post('/api/master/:type', authenticateToken, async (req: any, res: Response)
         if (!data.bedNumber) {
           return res.status(400).json({ error: 'bedNumber is required' });
         }
-        // Derive category from the ward if not supplied — keeps beds and
-        // their parent ward in sync without forcing the operator to type
-        // the category twice.
         let category = data.category;
         if (!category && data.wardId) {
           const w = await prisma.ward.findUnique({ where: { id: data.wardId } });
           category = w?.type || 'general';
         }
-        result = await prisma.bed.create({
-          data: {
-            branchId: req.user.branchId,
-            wardId: data.wardId || null,
-            bedNumber: data.bedNumber,
-            category: category || 'general',
-            status: data.bedStatus || 'vacant',
-            floor: data.floor || null,
-          },
-        });
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { CRITICAL_CARE_TYPES } = require('./shared/wardCategories');
+        const isCriticalCare = (CRITICAL_CARE_TYPES as string[]).includes(category);
+        if (isCriticalCare) {
+          // Critical-care beds live in ICUBed so the ICU page can see them.
+          result = await prisma.iCUBed.create({
+            data: {
+              tenantId: req.user.tenantId,
+              bedNumber: data.bedNumber,
+              icuUnit: category,
+              status: data.bedStatus || 'vacant',
+            },
+          });
+        } else {
+          result = await prisma.bed.create({
+            data: {
+              branchId: req.user.branchId,
+              wardId: data.wardId || null,
+              bedNumber: data.bedNumber,
+              category: category || 'general',
+              status: data.bedStatus || 'vacant',
+              floor: data.floor || null,
+            },
+          });
+        }
         break;
       }
 
@@ -6650,18 +6755,37 @@ app.put('/api/master/:type/:id', authenticateToken, async (req: any, res: Respon
         });
         break;
 
-      case 'beds':
-        result = await prisma.bed.update({
-          where: { id },
-          data: {
-            bedNumber: data.bedNumber,
-            wardId: data.wardId || null,
-            category: data.category,
-            status: data.bedStatus,
-            floor: data.floor || null,
-          },
-        });
+      case 'beds': {
+        // The id could belong to either Bed or ICUBed since the master list
+        // is unified. Look it up in both, route to whichever matches.
+        const inBed = await prisma.bed.findUnique({ where: { id } });
+        if (inBed) {
+          result = await prisma.bed.update({
+            where: { id },
+            data: {
+              bedNumber: data.bedNumber,
+              wardId: data.wardId || null,
+              category: data.category,
+              status: data.bedStatus,
+              floor: data.floor || null,
+            },
+          });
+        } else {
+          const inICU = await prisma.iCUBed.findUnique({ where: { id } });
+          if (!inICU) {
+            return res.status(404).json({ error: 'Bed not found in either Bed or ICUBed' });
+          }
+          result = await prisma.iCUBed.update({
+            where: { id },
+            data: {
+              bedNumber: data.bedNumber,
+              icuUnit: data.category || inICU.icuUnit,
+              status: data.bedStatus,
+            },
+          });
+        }
         break;
+      }
 
       case 'packages':
         result = await prisma.packageMaster.update({
@@ -6722,17 +6846,27 @@ app.delete('/api/master/:type/:id', authenticateToken, async (req: any, res: Res
         }
         await prisma.ward.delete({ where: { id } });
         break;
-      case 'beds':
-        // Refuse to delete an occupied bed — its admission would be left
-        // pointing at a nonexistent bedId.
-        {
-          const bed = await prisma.bed.findUnique({ where: { id } });
-          if (bed && bed.status === 'occupied') {
+      case 'beds': {
+        // Delete from whichever table holds it. Refuse if currently occupied —
+        // the admission would otherwise point at a dead bedId.
+        const inBed = await prisma.bed.findUnique({ where: { id } });
+        if (inBed) {
+          if (inBed.status === 'occupied') {
             return res.status(409).json({ error: 'Bed is occupied — discharge or transfer the patient first' });
           }
+          await prisma.bed.delete({ where: { id } });
+        } else {
+          const inICU = await prisma.iCUBed.findUnique({ where: { id } });
+          if (!inICU) {
+            return res.status(404).json({ error: 'Bed not found in either Bed or ICUBed' });
+          }
+          if (inICU.status === 'occupied') {
+            return res.status(409).json({ error: 'Bed is occupied — discharge or transfer the patient first' });
+          }
+          await prisma.iCUBed.delete({ where: { id } });
         }
-        await prisma.bed.delete({ where: { id } });
         break;
+      }
       case 'packages':
         await prisma.packageMaster.delete({ where: { id } });
         break;
