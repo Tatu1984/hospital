@@ -4026,7 +4026,16 @@ app.post('/api/dialysis/sessions', authenticateToken, async (req: any, res: Resp
     res.status(201).json({ created, skipped, totalRequested: repeatCount });
   } catch (error: any) {
     console.error('Create dialysis session error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    // Surface the actual cause so the operator can diagnose without
+    // digging through Vercel logs. Prisma errors carry a `code` and
+    // a useful `message`; anything else falls back to error.message
+    // or a generic string.
+    res.status(500).json({
+      error: error?.code === 'P2003'
+        ? 'A referenced record (patient/machine/bed) does not exist.'
+        : error?.meta?.message || error?.message || 'Internal server error',
+      code: error?.code || undefined,
+    });
   }
 });
 
