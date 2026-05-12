@@ -16,7 +16,7 @@ export const WARD_CATEGORIES: WardCategory[] = [
   { type: 'PVT_CABIN',    label: 'Private Cabin',      group: 'special',  defaultTariff: 4500, defaultBeds: 8,  description: 'Single-occupancy private room with attached bath.' },
   { type: 'SHARE_2',      label: '2-share',            group: 'general',  defaultTariff: 2500, defaultBeds: 12, description: 'Twin-share room.' },
   { type: 'SHARE_3',      label: '3-share',            group: 'general',  defaultTariff: 1800, defaultBeds: 12, description: '3-bed share room.' },
-  { type: 'SHARE_4',      label: '4-share',            group: 'general',  defaultTariff: 1200, defaultBeds: 16, description: '4-bed share room.' },
+  { type: 'SHARE_4',      label: 'General Ward',       group: 'general',  defaultTariff: 1200, defaultBeds: 16, description: 'General ward — open 4-bed share room.' },
   { type: 'WARD_MEN',     label: "Men's Ward",         group: 'general',  defaultTariff: 800,  defaultBeds: 20, description: 'Open ward for male patients.' },
   { type: 'WARD_WOMEN',   label: "Women's Ward",       group: 'general',  defaultTariff: 800,  defaultBeds: 20, description: 'Open ward for female patients.' },
   { type: 'NURSERY',      label: 'Nursery',            group: 'special',  defaultTariff: 1500, defaultBeds: 10, description: 'Neonatal nursery (well-baby care).' },

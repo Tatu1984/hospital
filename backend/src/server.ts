@@ -6358,6 +6358,15 @@ app.post('/api/master/seed-standard-wards', authenticateToken, async (req: any, 
           },
         });
         wardStatus = 'created';
+      } else if (ward.name !== cat.label) {
+        // Sync the display name to the canonical label so prior seeds
+        // with outdated names (e.g. "4-share" → "General Ward") get
+        // renamed automatically on re-seed. Tariff and bed-count remain
+        // untouched — admins may have edited those.
+        ward = await prisma.ward.update({
+          where: { id: ward.id },
+          data: { name: cat.label },
+        });
       }
       const prefix = cat.type.replace(/_/g, '-');
       // Critical-care categories (ITU, HDU, ICCU) belong in the dedicated
