@@ -927,32 +927,69 @@ function DialysisRegisterPanel({
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Machine *</Label>
-              <Select value={bookingMachine} onValueChange={setBookingMachine}>
-                <SelectTrigger><SelectValue placeholder="Pick a machine" /></SelectTrigger>
-                <SelectContent>
-                  {machines
-                    .filter((m) => m.status !== 'retired')
-                    .map((m) => (
-                      <SelectItem key={m.id} value={m.id}>
-                        {m.machineName} · {m.machineCode} · {m.status}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Bed (optional)</Label>
-              <Select value={bookingBed} onValueChange={setBookingBed}>
-                <SelectTrigger><SelectValue placeholder="No specific bed" /></SelectTrigger>
-                <SelectContent>
-                  {beds.map((b) => (
-                    <SelectItem key={b.id} value={b.id}>{b.bedNumber}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {/* Exclude any machine/bed already booked for the chosen
+                slot on this date. The register tab already loaded the
+                sessions for today's date; if the operator changes the
+                date inside the dialog (recurrence), the conflict-check
+                still happens server-side on submit. */}
+            {(() => {
+              const busyMachineIds = new Set<string>();
+              const busyBedIds = new Set<string>();
+              for (const s of sessions) {
+                if (s.slot !== bookingSlot) continue;
+                if (s.machineId) busyMachineIds.add(s.machineId);
+                if (s.bedId) busyBedIds.add(s.bedId);
+              }
+              const freeMachines = machines.filter(
+                (m) => m.status !== 'retired' && !busyMachineIds.has(m.id),
+              );
+              const freeBeds = beds.filter((b) => !busyBedIds.has(b.id));
+              return (
+                <>
+                  <div className="space-y-1">
+                    <Label className="text-xs">
+                      Machine *
+                      <span className="ml-1 text-slate-400 font-normal">
+                        ({freeMachines.length} of {machines.length} free)
+                      </span>
+                    </Label>
+                    <Select value={bookingMachine} onValueChange={setBookingMachine}>
+                      <SelectTrigger>
+                        <SelectValue placeholder={freeMachines.length ? 'Pick a free machine' : 'All machines booked for this slot'} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {freeMachines.map((m) => (
+                          <SelectItem key={m.id} value={m.id}>
+                            {m.machineName} · {m.machineCode} · {m.status}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {freeMachines.length === 0 && (
+                      <div className="text-[11px] text-rose-700">
+                        No machines free for {slotLabel(bookingSlot)}. Either cancel an existing booking or pick a different slot.
+                      </div>
+                    )}
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">
+                      Bed (optional)
+                      <span className="ml-1 text-slate-400 font-normal">
+                        ({freeBeds.length} of {beds.length} free)
+                      </span>
+                    </Label>
+                    <Select value={bookingBed} onValueChange={setBookingBed}>
+                      <SelectTrigger><SelectValue placeholder="No specific bed" /></SelectTrigger>
+                      <SelectContent>
+                        {freeBeds.map((b) => (
+                          <SelectItem key={b.id} value={b.id}>{b.bedNumber}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </>
+              );
+            })()}
             <div className="space-y-1 col-span-2">
               <Label className="text-xs">Notes</Label>
               <Input
