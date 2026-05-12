@@ -72,6 +72,10 @@ export default function Inpatient() {
   // stats card. Shows each active admission's patient + doctor's diagnosis
   // and offers an inline "Assign bed" action for unassigned ones.
   const [isActiveAdmissionsOpen, setIsActiveAdmissionsOpen] = useState(false);
+  // Filter state for the transfer/assign-bed dialog so the picker grid
+  // doesn't drown the user when there are 100+ beds.
+  const [transferBedSearch, setTransferBedSearch] = useState('');
+  const [transferWardFilter, setTransferWardFilter] = useState<string>('all');
   const [transferTargetBedId, setTransferTargetBedId] = useState<string>('');
   const [selectedAdmission, setSelectedAdmission] = useState<Admission | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -217,6 +221,8 @@ export default function Inpatient() {
   const openTransferDialog = (admission: Admission) => {
     setSelectedAdmission(admission);
     setTransferTargetBedId('');
+    setTransferBedSearch('');
+    setTransferWardFilter('all');
     setIsTransferDialogOpen(true);
   };
 
@@ -822,53 +828,192 @@ export default function Inpatient() {
         </DialogContent>
       </Dialog>
 
-      {/* Transfer-bed dialog: re-allocate a patient between wards / beds.
-          Lists every vacant bed across all wards (ICU, regular, etc.) so
-          an ICU patient can be moved to general and vice-versa. */}
+      {/* Bed-picker dialog. Used for both initial assignment ("Assign bed")
+          and transfer ("Change bed"). Shows ALL beds (not just vacant) so
+          the user can see the full inventory; vacant beds are clickable,
+          occupied beds appear muted with the current patient's name so it
+          is obvious why they can't be picked. Search + ward filter shrink
+          the visible set when the hospital has hundreds of beds. */}
       <Dialog open={isTransferDialogOpen} onOpenChange={setIsTransferDialogOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Transfer Patient to Another Bed</DialogTitle>
+            <DialogTitle>
+              {selectedAdmission?.bedId && selectedAdmission.bedNumber !== 'Unassigned'
+                ? 'Change Bed'
+                : 'Assign a Bed'}
+            </DialogTitle>
             <DialogDescription>
               {selectedAdmission ? (
                 <>
-                  {selectedAdmission.patientName} ({selectedAdmission.patientMRN}) — currently in
-                  {' '}<span className="font-medium">{selectedAdmission.ward || 'unassigned ward'}</span>
-                  {selectedAdmission.bedNumber && selectedAdmission.bedNumber !== 'Unassigned'
-                    ? ` · bed ${selectedAdmission.bedNumber}` : ''}
+                  <span className="font-medium">{selectedAdmission.patientName}</span>
+                  {' '}({selectedAdmission.patientMRN})
+                  {selectedAdmission.bedId && selectedAdmission.bedNumber !== 'Unassigned' && (
+                    <> — currently in <span className="font-medium">{selectedAdmission.ward}</span>
+                    {' '}· bed <span className="font-medium">{selectedAdmission.bedNumber}</span></>
+                  )}
+                  {(!selectedAdmission.bedId || selectedAdmission.bedNumber === 'Unassigned') && (
+                    <> — no bed assigned yet</>
+                  )}
                 </>
-              ) : 'Select a destination bed.'}
+              ) : null}
             </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="space-y-2">
-              <Label>Destination bed</Label>
-              <Select value={transferTargetBedId} onValueChange={setTransferTargetBedId}>
-                <SelectTrigger>
-                  <SelectValue placeholder={availableBeds.length ? 'Pick a vacant bed' : 'No vacant beds available'} />
-                </SelectTrigger>
-                <SelectContent>
-                  {availableBeds
-                    .filter((b) => b.id !== selectedAdmission?.bedId)
-                    .map((bed) => (
-                      <SelectItem key={bed.id} value={bed.id}>
-                        {(bed.ward?.name || 'Ward')} — {bed.bedNumber}
-                        {bed.category ? ` · ${bed.category}` : ''}
+          {(() => {
+            // Build the bed-picker view: every bed (excluding the patient's
+            // current bed) along with whether it's vacant and, if not, who
+            // is currently occupying it.
+            const occupantByBedId = new Map<string, string>();
+            for (const adm of activeAdmissions) {
+              if (adm.bedId) occupantByBedId.set(adm.bedId, adm.patientName);
+            }
+            const allBeds = beds.filter((b) => b.id !== selectedAdmission?.bedId);
+
+            // Per-category counts for the filter buttons. Each entry shows
+            // how many TOTAL beds exist and how many are vacant.
+            const categories = Array.from(new Set(allBeds.map((b) => b.ward?.type || b.category || 'OTHER')));
+            const countsByCategory: Record<string, { total: number; vacant: number }> = {};
+            for (const b of allBeds) {
+              const cat = (b.ward?.type || b.category || 'OTHER');
+              if (!countsByCategory[cat]) countsByCategory[cat] = { total: 0, vacant: 0 };
+              countsByCategory[cat].total += 1;
+              if (isVacant(b.status)) countsByCategory[cat].vacant += 1;
+            }
+
+            const search = transferBedSearch.trim().toLowerCase();
+            const matchesSearch = (b: Bed) =>
+              !search ||
+              b.bedNumber.toLowerCase().includes(search) ||
+              (b.ward?.name || '').toLowerCase().includes(search) ||
+              (b.category || '').toLowerCase().includes(search);
+
+            const visibleBeds = allBeds
+              .filter((b) => transferWardFilter === 'all' || (b.ward?.type || b.category) === transferWardFilter)
+              .filter(matchesSearch);
+
+            // Group by ward so cards render in clear sections.
+            const groups: Record<string, { wardName: string; wardType: string; beds: Bed[] }> = {};
+            for (const b of visibleBeds) {
+              const key = b.ward?.id || b.category || 'OTHER';
+              const wardName = b.ward?.name || b.category || 'Uncategorized';
+              const wardType = b.ward?.type || b.category || 'OTHER';
+              if (!groups[key]) groups[key] = { wardName, wardType, beds: [] };
+              groups[key].beds.push(b);
+            }
+            const groupList = Object.values(groups).sort((a, b) =>
+              a.wardName.localeCompare(b.wardName),
+            );
+
+            return (
+              <div className="space-y-4 py-2">
+                {/* Search + ward filter */}
+                <div className="flex flex-wrap gap-2 items-center">
+                  <div className="relative flex-1 min-w-[200px]">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <Input
+                      placeholder="Search by bed number, ward…"
+                      value={transferBedSearch}
+                      onChange={(e) => setTransferBedSearch(e.target.value)}
+                      className="pl-10"
+                    />
+                  </div>
+                  <Select value={transferWardFilter} onValueChange={setTransferWardFilter}>
+                    <SelectTrigger className="w-56">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">
+                        All wards ({allBeds.length})
                       </SelectItem>
+                      {categories
+                        .sort((a, b) => a.localeCompare(b))
+                        .map((cat) => {
+                          const c = countsByCategory[cat];
+                          return (
+                            <SelectItem key={cat} value={cat}>
+                              {labelFor(cat)} ({c.vacant} vacant / {c.total})
+                            </SelectItem>
+                          );
+                        })}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Legend */}
+                <div className="flex gap-4 text-xs text-slate-500">
+                  <span className="flex items-center gap-1">
+                    <span className="inline-block w-3 h-3 rounded border-2 border-green-500 bg-green-50"></span>
+                    Vacant
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="inline-block w-3 h-3 rounded border-2 border-blue-600 bg-blue-600"></span>
+                    Selected
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="inline-block w-3 h-3 rounded border bg-slate-100"></span>
+                    Occupied (not selectable)
+                  </span>
+                </div>
+
+                {/* Grouped bed grid */}
+                {groupList.length === 0 ? (
+                  <div className="text-center py-10 text-slate-500 border rounded-lg">
+                    No beds match your filter. Try clearing the search or picking "All wards".
+                  </div>
+                ) : (
+                  <div className="space-y-4 max-h-[50vh] overflow-y-auto pr-1">
+                    {groupList.map((g) => (
+                      <div key={g.wardName}>
+                        <div className="text-xs uppercase tracking-wide text-slate-500 font-medium mb-2">
+                          {g.wardName} · {labelFor(g.wardType)}{' '}
+                          <span className="text-slate-400 font-normal">
+                            ({g.beds.filter((b) => isVacant(b.status)).length} vacant / {g.beds.length})
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                          {g.beds.map((bed) => {
+                            const vacant = isVacant(bed.status);
+                            const occupant = occupantByBedId.get(bed.id);
+                            const selected = transferTargetBedId === bed.id;
+                            return (
+                              <button
+                                key={bed.id}
+                                type="button"
+                                disabled={!vacant}
+                                onClick={() => vacant && setTransferTargetBedId(bed.id)}
+                                className={[
+                                  'text-left rounded-md border-2 p-2 transition',
+                                  selected
+                                    ? 'border-blue-600 bg-blue-600 text-white'
+                                    : vacant
+                                      ? 'border-green-500 bg-green-50 hover:bg-green-100 cursor-pointer'
+                                      : 'border-slate-200 bg-slate-50 text-slate-400 cursor-not-allowed',
+                                ].join(' ')}
+                                title={vacant ? 'Click to select this bed' : `Occupied${occupant ? ` by ${occupant}` : ''}`}
+                              >
+                                <div className="flex items-center gap-1 font-medium text-sm">
+                                  <Bed className="w-3.5 h-3.5" />
+                                  {bed.bedNumber}
+                                </div>
+                                <div className={`text-[10px] mt-0.5 ${selected ? 'text-blue-50' : 'text-slate-500'}`}>
+                                  {vacant ? 'Vacant' : (occupant ? `Occupied · ${occupant}` : `Status: ${bed.status}`)}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
                     ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-slate-500">
-                The current bed will be marked vacant and the destination bed marked occupied.
-              </p>
-            </div>
-          </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsTransferDialogOpen(false)} disabled={loading}>
               Cancel
             </Button>
             <Button onClick={handleTransferBed} disabled={loading || !transferTargetBedId}>
-              {loading ? 'Transferring…' : 'Transfer'}
+              {loading ? 'Assigning…' : (selectedAdmission?.bedId && selectedAdmission.bedNumber !== 'Unassigned' ? 'Transfer' : 'Assign bed')}
             </Button>
           </DialogFooter>
         </DialogContent>
