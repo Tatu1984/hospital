@@ -426,15 +426,20 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   'GET /api/cssd/instruments': ['cssd:view'],
   'POST /api/cssd/instruments': ['cssd:create'],
 
-  // Dialysis (machines + sessions)
+  // Dialysis (machines + sessions + booking-register)
   'GET /api/dialysis/machines': ['dialysis:view'],
   'POST /api/dialysis/machines': ['dialysis:manage'],
   'PUT /api/dialysis/machines/:id': ['dialysis:manage'],
   'DELETE /api/dialysis/machines/:id': ['dialysis:manage'],
+  'GET /api/dialysis/beds': ['dialysis:view'],
   'GET /api/dialysis/sessions': ['dialysis:view'],
   'POST /api/dialysis/sessions': ['dialysis:create'],
   'PUT /api/dialysis/sessions/:id': ['dialysis:update'],
+  'PATCH /api/dialysis/sessions/:id': ['dialysis:update'],
   'DELETE /api/dialysis/sessions/:id': ['dialysis:manage'],
+  // Admin-only one-click provision of the unit (10 beds + 15 machines).
+  // The handler also enforces admin role server-side as a belt-and-braces.
+  'POST /api/dialysis/seed': ['dialysis:manage'],
 
   // Mortuary
   'GET /api/mortuary': ['mortuary:view'],
