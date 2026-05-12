@@ -80,39 +80,240 @@ clinicalModulesRouter.delete('/dialysis/machines/:id', auth, async (req: AuthedR
 });
 
 // Sessions: list / create / update / delete + status flips.
+//
+// IMPORTANT — these routes mount FIRST under /api (before server.ts's
+// own /api/dialysis/sessions handlers), so Express picks them up. The
+// booking-register UI sends `sessionDate` + `slot` + `repeatWeeks`,
+// while the clinical Sessions tab sends `scheduledDate` and the full
+// clinical payload (pre/post weights etc.). The implementations below
+// support BOTH shapes.
 clinicalModulesRouter.get('/dialysis/sessions', auth, async (req: AuthedReq, res: Response) => {
   try {
-    const { date, patientId, status } = req.query;
+    const { date, from, to, patientId, status } = req.query;
     const where: any = { tenantId: req.user!.tenantId };
     if (patientId) where.patientId = patientId;
     if (status) where.status = status;
-    if (date) {
-      const d = new Date(date as string); d.setHours(0, 0, 0, 0);
-      const next = new Date(d); next.setDate(next.getDate() + 1);
-      where.scheduledDate = { gte: d, lt: next };
+    if (from || to) {
+      // Range query (used by the weekly CSV export).
+      const range: any = {};
+      if (from) {
+        const d = new Date(`${from}T00:00:00.000Z`);
+        if (!Number.isNaN(d.getTime())) range.gte = d;
+      }
+      if (to) {
+        const d = new Date(`${to}T00:00:00.000Z`);
+        if (!Number.isNaN(d.getTime())) range.lte = d;
+      }
+      where.scheduledDate = range;
+    } else if (date) {
+      const d = new Date(`${date}T00:00:00.000Z`);
+      if (!Number.isNaN(d.getTime())) where.scheduledDate = d;
     }
     const items = await prisma.dialysisSession.findMany({
       where,
-      include: { machine: { select: { machineName: true, machineCode: true } } },
-      orderBy: [{ scheduledDate: 'desc' }, { scheduledTime: 'asc' }],
-      take: 200,
+      include: {
+        machine: { select: { id: true, machineName: true, machineCode: true, status: true } },
+        patient: {
+          select: {
+            id: true, name: true, mrn: true,
+            admissions: {
+              orderBy: { admissionDate: 'desc' },
+              take: 1,
+              select: { admittingDoctor: { select: { id: true, name: true } } },
+            },
+          },
+        },
+      },
+      orderBy: (date || from || to)
+        ? [{ slot: 'asc' }, { createdAt: 'asc' }]
+        : [{ scheduledDate: 'desc' }, { scheduledTime: 'asc' }],
+      take: 1000,
     });
-    res.json(items);
-  } catch (e) {
+    // Flatten the latest admitting doctor onto each row so the register
+    // UI doesn't need to know about the admissions relation.
+    const enriched = items.map((s: any) => ({
+      ...s,
+      patientDoctor: s.patient?.admissions?.[0]?.admittingDoctor?.name || null,
+    }));
+    res.json(enriched);
+  } catch (e: any) {
     console.error('list dialysis sessions', e);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: e?.message || 'Internal server error' });
   }
 });
 
+// Bulletproof create — handles BOTH the clinical Sessions form (sends
+// `scheduledDate` + clinical fields) AND the booking-register UI (sends
+// `sessionDate` + `slot` + optional `bedId` + `repeatWeeks`).
+const DIALYSIS_BUILD = 'dialysis-v4-clinical-modules-2026-05-12';
 clinicalModulesRouter.post('/dialysis/sessions', auth, async (req: AuthedReq, res: Response) => {
+  const fail = (status: number, error: string, extra?: any) =>
+    res.status(status).json({ error, build: DIALYSIS_BUILD, ...(extra || {}) });
   try {
-    const data = { ...req.body, tenantId: req.user!.tenantId };
-    if (data.scheduledDate) data.scheduledDate = new Date(data.scheduledDate);
-    const created = await prisma.dialysisSession.create({ data });
-    res.status(201).json(created);
-  } catch (e) {
+    res.setHeader('X-Server-Build', DIALYSIS_BUILD);
+    const body = req.body || {};
+    const {
+      patientId, machineId, bedId,
+      // Accept either name for the date.
+      sessionDate, scheduledDate: scheduledDateBody,
+      slot, notes, repeatWeeks,
+    } = body;
+    const dateInput = sessionDate || scheduledDateBody;
+
+    if (!patientId) return fail(400, 'patientId is required');
+    if (!dateInput) return fail(400, 'sessionDate (YYYY-MM-DD) is required');
+
+    const startDate = new Date(`${dateInput}T00:00:00.000Z`);
+    if (Number.isNaN(startDate.getTime())) return fail(400, 'Invalid sessionDate — use YYYY-MM-DD');
+
+    const isBookingShape = !!slot; // booking-register call
+    const validSlots = ['SLOT_1', 'SLOT_2', 'SLOT_3', 'SLOT_4'];
+    if (isBookingShape && !validSlots.includes(slot)) {
+      return fail(400, 'slot must be SLOT_1/SLOT_2/SLOT_3/SLOT_4');
+    }
+    if (isBookingShape && !machineId) return fail(400, 'machineId is required for booking');
+
+    const repeatCount = Math.max(
+      1,
+      Math.min(52, Number.isFinite(Number(repeatWeeks)) ? Math.floor(Number(repeatWeeks)) : 1),
+    );
+
+    // Tenant-scoped pre-checks; each wrapped so the actual error surfaces.
+    try {
+      const patient = await prisma.patient.findFirst({ where: { id: patientId, tenantId: req.user!.tenantId } });
+      if (!patient) return fail(404, 'Patient not found in this tenant');
+    } catch (e: any) {
+      return fail(500, `Patient lookup failed: ${e?.message || e}`, { code: e?.code });
+    }
+    if (machineId) {
+      try {
+        const machine = await prisma.dialysisMachine.findFirst({
+          where: { id: machineId, tenantId: req.user!.tenantId, status: { not: 'retired' } },
+        });
+        if (!machine) return fail(404, 'Machine not found or retired');
+      } catch (e: any) {
+        return fail(500, `Machine lookup failed: ${e?.message || e}`, { code: e?.code });
+      }
+    }
+    if (bedId) {
+      try {
+        const bed = await prisma.bed.findFirst({
+          where: { id: bedId, category: 'DIALYSIS' },
+        });
+        if (!bed) return fail(404, 'Bed not found or not a dialysis bed');
+      } catch (e: any) {
+        return fail(500, `Bed lookup failed: ${e?.message || e}`, { code: e?.code });
+      }
+    }
+
+    // Clinical-style call (no slot, no repeat): one-shot create with the
+    // full payload spread, only known scalar conversions applied. This
+    // preserves the existing Sessions tab behaviour.
+    if (!isBookingShape) {
+      try {
+        const data: any = { ...body, tenantId: req.user!.tenantId };
+        delete data.sessionDate;
+        delete data.repeatWeeks;
+        if (data.scheduledDate) data.scheduledDate = new Date(data.scheduledDate);
+        if (data.startedAt) data.startedAt = new Date(data.startedAt);
+        if (data.endedAt) data.endedAt = new Date(data.endedAt);
+        const created = await prisma.dialysisSession.create({ data });
+        return res.status(201).json(created);
+      } catch (e: any) {
+        return fail(500, e?.meta?.message || e?.message || 'Could not create session', { code: e?.code });
+      }
+    }
+
+    // Booking-register path: build dates for each week, pre-check
+    // conflicts, then create one row per week with the slot pinned.
+    const targetDates: Date[] = [];
+    for (let i = 0; i < repeatCount; i++) {
+      const d = new Date(startDate.getTime());
+      d.setUTCDate(d.getUTCDate() + i * 7);
+      targetDates.push(d);
+    }
+
+    let existingConflicts: any[] = [];
+    try {
+      existingConflicts = await prisma.dialysisSession.findMany({
+        where: {
+          tenantId: req.user!.tenantId,
+          slot,
+          scheduledDate: { in: targetDates },
+          OR: [
+            { machineId },
+            ...(bedId ? [{ bedId } as any] : []),
+          ],
+        },
+        select: { scheduledDate: true, machineId: true, bedId: true },
+      });
+    } catch (e: any) {
+      const msg = String(e?.message || e || '');
+      if (msg.includes('column') && (msg.includes('slot') || msg.includes('bedId'))) {
+        return fail(503, 'Dialysis booking columns missing — run migrate deploy', {
+          code: e?.code, detail: msg.slice(0, 240),
+        });
+      }
+      return fail(500, `Conflict pre-check failed: ${msg.slice(0, 240)}`, { code: e?.code });
+    }
+
+    const conflictByDate: Record<string, { machine: boolean; bed: boolean }> = {};
+    for (const c of existingConflicts) {
+      const key = (c.scheduledDate as Date).toISOString().slice(0, 10);
+      if (!conflictByDate[key]) conflictByDate[key] = { machine: false, bed: false };
+      if (c.machineId === machineId) conflictByDate[key].machine = true;
+      if (bedId && c.bedId === bedId) conflictByDate[key].bed = true;
+    }
+
+    const created: any[] = [];
+    const skipped: Array<{ date: string; reason: string }> = [];
+
+    for (const d of targetDates) {
+      const yyyyMmDd = d.toISOString().slice(0, 10);
+      const conflict = conflictByDate[yyyyMmDd];
+      if (conflict?.machine) { skipped.push({ date: yyyyMmDd, reason: 'Machine already booked for that slot' }); continue; }
+      if (conflict?.bed)     { skipped.push({ date: yyyyMmDd, reason: 'Bed already booked for that slot' }); continue; }
+      try {
+        const session = await prisma.dialysisSession.create({
+          data: {
+            tenantId: req.user!.tenantId,
+            patientId,
+            machineId,
+            bedId: bedId || null,
+            scheduledDate: d,
+            slot,
+            notes: notes || null,
+            status: 'scheduled',
+          },
+          include: {
+            machine: { select: { id: true, machineName: true, machineCode: true, status: true } },
+          },
+        });
+        created.push(session);
+      } catch (err: any) {
+        const msg = err?.meta?.message || err?.message || String(err);
+        console.error(`[dialysis] create failed for ${yyyyMmDd}:`, err);
+        if (err?.code === 'P2002') {
+          skipped.push({ date: yyyyMmDd, reason: 'Slot already taken (race)' });
+        } else {
+          skipped.push({ date: yyyyMmDd, reason: `${msg.slice(0, 180)}${err?.code ? ` (${err.code})` : ''}` });
+        }
+      }
+    }
+
+    if (repeatCount === 1) {
+      if (created.length === 0) {
+        return res.status(409).json({
+          error: skipped[0]?.reason || 'Could not create session',
+          build: DIALYSIS_BUILD,
+        });
+      }
+      return res.status(201).json(created[0]);
+    }
+    return res.status(201).json({ created, skipped, totalRequested: repeatCount, build: DIALYSIS_BUILD });
+  } catch (e: any) {
     console.error('create dialysis session', e);
-    res.status(500).json({ error: 'Internal server error' });
+    return fail(500, e?.meta?.message || e?.message || String(e) || 'Unknown error', { code: e?.code });
   }
 });
 
