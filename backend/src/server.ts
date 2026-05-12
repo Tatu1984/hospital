@@ -3322,33 +3322,87 @@ app.get('/api/beds', authenticateToken, async (req: any, res: Response) => {
     if (category) where.category = category;
     if (wardId) where.wardId = wardId;
 
-    // Bed has wardId but the schema's relation isn't a foreign key on Bed
-    // (Ward isn't relation-linked in this Prisma schema). Manually join the
-    // ward record so the frontend can render 'Ward Name — Bed Number'.
-    const beds = await prisma.bed.findMany({
-      where,
-      orderBy: [{ category: 'asc' }, { bedNumber: 'asc' }],
-    });
+    // Pull from BOTH tables so the bed picker (transfer / assign) can offer
+    // ICU/ITU/HDU/ICCU destinations alongside regular wards. ICUBed rows
+    // are shaped to look like Bed rows so frontend code that iterates the
+    // response doesn't need to special-case them. The page-level grids
+    // already filter critical-care out for the IPD view via the shared
+    // CRITICAL_CARE_TYPES constant.
+    const [beds, icuBeds] = await Promise.all([
+      prisma.bed.findMany({
+        where,
+        orderBy: [{ category: 'asc' }, { bedNumber: 'asc' }],
+      }),
+      // ICUBed has no branchId or category filter; honor the same status
+      // filter if the caller passed one.
+      prisma.iCUBed.findMany({
+        where: {
+          tenantId: req.user.tenantId,
+          ...(status ? { status: String(status) } : {}),
+        },
+        orderBy: [{ icuUnit: 'asc' }, { bedNumber: 'asc' }],
+      }),
+    ]);
     const wardIds = Array.from(new Set(beds.map((b: any) => b.wardId).filter(Boolean)));
     const wards = wardIds.length
       ? await prisma.ward.findMany({ where: { id: { in: wardIds as string[] } } })
       : [];
     const wardById = new Map(wards.map((w: any) => [w.id, w]));
+    // For ICU beds, look up the matching Ward by tenant + type so the row
+    // can show "ICU · ICU-01" with floor / tariff info.
+    const icuUnits = Array.from(new Set(icuBeds.map((b: any) => b.icuUnit).filter(Boolean)));
+    const wardByType = new Map<string, any>();
+    for (const w of wards) wardByType.set(w.type, w);
+    const missingTypes = icuUnits.filter((t) => !wardByType.has(t));
+    if (missingTypes.length > 0) {
+      const moreWards = await prisma.ward.findMany({
+        where: { tenantId: req.user.tenantId, type: { in: missingTypes } },
+      });
+      for (const w of moreWards) wardByType.set(w.type, w);
+    }
+
     const enriched = beds.map((b: any) => ({
       ...b,
       ward: b.wardId ? (wardById.get(b.wardId) || null) : null,
     }));
+    const enrichedICU = icuBeds
+      .filter((b: any) => !category || b.icuUnit === category)
+      .map((b: any) => {
+        const w: any = wardByType.get(b.icuUnit) || null;
+        return {
+          id: b.id,
+          // Shape this like a Bed row so the frontend can iterate uniformly.
+          branchId: req.user.branchId,
+          wardId: w?.id || null,
+          bedNumber: b.bedNumber,
+          category: b.icuUnit,
+          status: b.status,
+          floor: w?.floor || null,
+          ward: w
+            ? { id: w.id, name: w.name, type: w.type, floor: w.floor }
+            : { id: null, name: b.icuUnit, type: b.icuUnit, floor: null },
+          // Marker so callers that need to special-case (e.g. show the
+          // critical-care tariff) can detect ICU beds.
+          __source: 'icubed' as const,
+        };
+      });
 
-    res.json(enriched);
+    res.json([...enriched, ...enrichedICU]);
   } catch (error) {
     console.error('Get beds error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Bed transfer — move an admission from one bed to another. Frees the old
-// bed, occupies the new one, updates the admission's bedId. Cross-ward
-// transfer (ICU ↔ general) is allowed.
+// Bed transfer — move an admission from one bed to another. The
+// destination may be either a regular Bed or an ICUBed; the endpoint
+// detects which table the id belongs to and routes accordingly. Cross-
+// table transfer (general → ICU and vice-versa) is fully supported.
+//
+// Data-model note: Admission.bedId is a FK to Bed.id only. When a patient
+// is in an ICUBed, we set Admission.bedId = NULL and track the placement
+// via ICUBed.admissionId + ICUBed.currentPatient. The IPD admissions
+// dialog reads both relations so the patient never appears "unassigned".
 app.post('/api/admissions/:id/transfer-bed', authenticateToken, async (req: any, res: Response) => {
   const { bedId } = req.body || {};
   if (!bedId || typeof bedId !== 'string') {
@@ -3360,21 +3414,63 @@ app.post('/api/admissions/:id/transfer-bed', authenticateToken, async (req: any,
     });
     if (!admission) return res.status(404).json({ error: 'Active admission not found' });
 
+    // Locate destination in either table. Branch / tenant scoped.
     const targetBed = await prisma.bed.findFirst({
       where: { id: bedId, branchId: req.user.branchId },
     });
-    if (!targetBed) return res.status(404).json({ error: 'Destination bed not found in this branch' });
-    const isVacant = ['vacant', 'available'].includes((targetBed.status || '').toLowerCase());
-    if (!isVacant) return res.status(409).json({ error: 'Destination bed is not vacant' });
+    const targetICUBed = targetBed
+      ? null
+      : await prisma.iCUBed.findFirst({
+          where: { id: bedId, tenantId: req.user.tenantId },
+        });
+    if (!targetBed && !targetICUBed) {
+      return res.status(404).json({ error: 'Destination bed not found in this branch' });
+    }
 
+    const targetStatus = (targetBed?.status || targetICUBed?.status || '').toLowerCase();
+    if (!['vacant', 'available'].includes(targetStatus)) {
+      return res.status(409).json({ error: 'Destination bed is not vacant' });
+    }
+
+    // Locate current placement (could be in either table — admission.bedId
+    // for general beds, ICUBed.admissionId for critical-care).
     const oldBedId = admission.bedId;
+    const oldICUBed = await prisma.iCUBed.findFirst({
+      where: { admissionId: admission.id },
+    });
+
+    if (oldBedId === bedId || oldICUBed?.id === bedId) {
+      return res.status(400).json({ error: 'Patient is already in this bed.' });
+    }
 
     await prisma.$transaction(async (tx: any) => {
-      if (oldBedId && oldBedId !== bedId) {
+      // Free the old bed (whichever table it was in).
+      if (oldBedId) {
         await tx.bed.update({ where: { id: oldBedId }, data: { status: 'vacant' } });
       }
-      await tx.bed.update({ where: { id: bedId }, data: { status: 'occupied' } });
-      await tx.admission.update({ where: { id: admission.id }, data: { bedId } });
+      if (oldICUBed) {
+        await tx.iCUBed.update({
+          where: { id: oldICUBed.id },
+          data: { status: 'vacant', admissionId: null, currentPatient: null },
+        });
+      }
+
+      // Occupy the new bed.
+      if (targetBed) {
+        await tx.bed.update({ where: { id: targetBed.id }, data: { status: 'occupied' } });
+        await tx.admission.update({ where: { id: admission.id }, data: { bedId: targetBed.id } });
+      } else if (targetICUBed) {
+        await tx.iCUBed.update({
+          where: { id: targetICUBed.id },
+          data: {
+            status: 'occupied',
+            admissionId: admission.id,
+            currentPatient: admission.patientId,
+          },
+        });
+        // Clear FK to regular Bed since the patient is now in ICU.
+        await tx.admission.update({ where: { id: admission.id }, data: { bedId: null } });
+      }
     });
 
     void writeAudit({
@@ -3382,8 +3478,8 @@ app.post('/api/admissions/:id/transfer-bed', authenticateToken, async (req: any,
       action: 'BED_TRANSFER',
       resource: 'Admission',
       resourceId: admission.id,
-      oldValue: { bedId: oldBedId },
-      newValue: { bedId },
+      oldValue: { bedId: oldBedId, icuBedId: oldICUBed?.id || null },
+      newValue: { bedId: targetBed?.id || null, icuBedId: targetICUBed?.id || null },
     });
 
     const updated = await prisma.admission.findUnique({
@@ -3561,9 +3657,32 @@ app.get('/api/icu/beds', authenticateToken, async (req: any, res: Response) => {
       orderBy: { bedNumber: 'asc' },
     });
 
-    res.json(beds.map(b => ({
-      ...b,
-      latestVitals: b.vitalsRecords[0] ? {
+    // Hydrate admission + patient info for each occupied bed in two
+    // batched queries so the response is one round-trip instead of N.
+    // The frontend expects bed.admission and bed.patient on occupied
+    // beds so the card can show patient name, MRN, diagnosis, and the
+    // "Vent" badge (derived from ICUBed.ventilatorId or vitals.mode).
+    const admissionIds = beds.map((b: any) => b.admissionId).filter((x: any): x is string => !!x);
+    const patientIds = beds.map((b: any) => b.currentPatient).filter((x: any): x is string => !!x);
+    const [admissions, patients] = await Promise.all([
+      admissionIds.length
+        ? prisma.admission.findMany({
+            where: { id: { in: admissionIds } },
+            select: { id: true, admissionDate: true, diagnosis: true },
+          })
+        : Promise.resolve([] as any[]),
+      patientIds.length
+        ? prisma.patient.findMany({
+            where: { id: { in: patientIds } },
+            select: { id: true, name: true, mrn: true, dob: true, gender: true },
+          })
+        : Promise.resolve([] as any[]),
+    ]);
+    const admById = new Map(admissions.map((a: any) => [a.id, a]));
+    const patById = new Map(patients.map((p: any) => [p.id, p]));
+
+    res.json(beds.map(b => {
+      const latestVitals = b.vitalsRecords[0] ? {
         hr: b.vitalsRecords[0].heartRate,
         bp: b.vitalsRecords[0].systolicBP && b.vitalsRecords[0].diastolicBP
           ? `${b.vitalsRecords[0].systolicBP}/${b.vitalsRecords[0].diastolicBP}` : null,
@@ -3573,8 +3692,42 @@ app.get('/api/icu/beds', authenticateToken, async (req: any, res: Response) => {
         gcs: b.vitalsRecords[0].gcs,
         ventilatorMode: b.vitalsRecords[0].ventilatorMode,
         timestamp: b.vitalsRecords[0].recordedAt,
-      } : null,
-    })));
+      } : null;
+      const adm: any = b.admissionId ? admById.get(b.admissionId) : null;
+      const pat: any = b.currentPatient ? patById.get(b.currentPatient) : null;
+      // "Ventilated" is true when either the bed has a ventilator attached
+      // (ICUBed.ventilatorId set) or the latest vitals record names a
+      // ventilator mode. Either signal is enough to surface the Vent badge.
+      const isVentilated = !!b.ventilatorId || !!(b.vitalsRecords[0]?.ventilatorMode);
+      // Translate lowercase DB statuses to the uppercase tokens the
+      // frontend has always expected ('OCCUPIED' / 'AVAILABLE'). Anything
+      // that doesn't match falls through to upper-case so we can still
+      // see and act on 'MAINTENANCE' / 'CLEANING'.
+      const rawStatus = (b.status || '').toLowerCase();
+      const status =
+        rawStatus === 'occupied' ? 'OCCUPIED'
+        : (rawStatus === 'vacant' || rawStatus === 'available') ? 'AVAILABLE'
+        : (b.status || '').toUpperCase();
+      return {
+        ...b,
+        status,
+        patient: pat ? {
+          id: pat.id,
+          name: pat.name,
+          mrn: pat.mrn,
+          age: pat.dob ? Math.floor((Date.now() - new Date(pat.dob).getTime()) / (1000 * 60 * 60 * 24 * 365.25)) : null,
+          gender: pat.gender,
+        } : null,
+        admission: adm ? {
+          id: adm.id,
+          admissionDate: adm.admissionDate,
+          diagnosis: adm.diagnosis || '',
+          isVentilated,
+          ventilatorMode: b.vitalsRecords[0]?.ventilatorMode || undefined,
+        } : null,
+        latestVitals,
+      };
+    }));
   } catch (error) {
     console.error('Get ICU beds error:', error);
     res.status(500).json({ error: 'Internal server error' });

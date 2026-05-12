@@ -225,12 +225,16 @@ export default function ICU() {
     occupancyRate: icuBeds.length > 0 ? Math.round((occupiedBeds.length / icuBeds.length) * 100) : 0
   };
 
-  // Per-unit counts power the tab labels (e.g. "ITU (6)") and let an empty
-  // unit show a friendly "no beds" panel instead of a blank one.
-  const unitCounts: Record<string, number> = {};
+  // Per-unit counts power the tab labels (e.g. "ITU (6 · 2 vent)") and
+  // let an empty unit show a friendly "no beds" panel instead of a blank
+  // one. We track total + ventilated separately so the tab can flag
+  // critical-care units with patients currently on a ventilator.
+  const unitCounts: Record<string, { total: number; vent: number }> = {};
   for (const b of icuBeds) {
     const u = (b.icuUnit || 'ICU').toUpperCase();
-    unitCounts[u] = (unitCounts[u] || 0) + 1;
+    if (!unitCounts[u]) unitCounts[u] = { total: 0, vent: 0 };
+    unitCounts[u].total += 1;
+    if (b.admission?.isVentilated) unitCounts[u].vent += 1;
   }
 
   // Beds for a given unit code (or all critical-care beds if `null`).
@@ -358,12 +362,17 @@ export default function ICU() {
           ) : (
           <Tabs defaultValue="all">
             <TabsList className="flex-wrap h-auto">
-              <TabsTrigger value="all">All ({stats.totalBeds})</TabsTrigger>
-              {CRITICAL_CARE_UNITS.map((u) => (
-                <TabsTrigger key={u.code} value={u.code}>
-                  {u.label} ({unitCounts[u.code] || 0})
-                </TabsTrigger>
-              ))}
+              <TabsTrigger value="all">
+                All ({stats.totalBeds}{stats.ventilated > 0 ? ` · ${stats.ventilated} vent` : ''})
+              </TabsTrigger>
+              {CRITICAL_CARE_UNITS.map((u) => {
+                const c = unitCounts[u.code] || { total: 0, vent: 0 };
+                return (
+                  <TabsTrigger key={u.code} value={u.code}>
+                    {u.label} ({c.total}{c.vent > 0 ? ` · ${c.vent} vent` : ''})
+                  </TabsTrigger>
+                );
+              })}
             </TabsList>
 
             {[null, ...CRITICAL_CARE_UNITS.map(u => u.code)].map((unit) => {
