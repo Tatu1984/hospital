@@ -145,6 +145,13 @@ export default function ICU() {
   const [transferTargetBedId, setTransferTargetBedId] = useState('');
   const [transferBedSearch, setTransferBedSearch] = useState('');
   const [transferWardFilter, setTransferWardFilter] = useState('all');
+  // Assign-patient-to-bed flow — used when an empty ICU bed is clicked.
+  // Operator picks one of the currently-active admissions and the
+  // transfer-bed endpoint moves them onto this bed.
+  const [isAssignPatientOpen, setIsAssignPatientOpen] = useState(false);
+  const [activeAdmissionsForAssign, setActiveAdmissionsForAssign] = useState<any[]>([]);
+  const [assignTargetAdmissionId, setAssignTargetAdmissionId] = useState('');
+  const [assignSearch, setAssignSearch] = useState('');
 
   const [vitalsFormData, setVitalsFormData] = useState<VitalsFormData>({
     bedId: '',
@@ -246,6 +253,49 @@ export default function ICU() {
         console.error('Load beds for transfer error:', err);
         setTransferBeds([]);
       });
+  };
+
+  const openAssignPatientPicker = () => {
+    setAssignTargetAdmissionId('');
+    setAssignSearch('');
+    setIsAssignPatientOpen(true);
+    // Fetch the active admissions list so the operator can pick one to
+    // move onto this bed. We deliberately don't filter to unassigned
+    // only — moving a patient currently in a general bed into ICU is
+    // the most common reason this picker exists.
+    api.get('/api/admissions', { params: { status: 'active' } })
+      .then((res) => setActiveAdmissionsForAssign(Array.isArray(res.data) ? res.data : []))
+      .catch((err) => {
+        console.error('Load admissions for assign error:', err);
+        setActiveAdmissionsForAssign([]);
+      });
+  };
+
+  const handleAssignPatient = async () => {
+    if (!selectedBed?.id || !assignTargetAdmissionId) return;
+    setLoading(true);
+    try {
+      await api.post(`/api/admissions/${assignTargetAdmissionId}/transfer-bed`, {
+        bedId: selectedBed.id,
+      });
+      await fetchICUBeds();
+      setIsAssignPatientOpen(false);
+      // Refresh the details so the dialog re-renders with the new patient.
+      if (selectedBed?.id) {
+        setDetailsLoading(true);
+        try {
+          const res = await api.get(`/api/icu/beds/${selectedBed.id}/details`);
+          setBedDetails(res.data);
+        } finally {
+          setDetailsLoading(false);
+        }
+      }
+    } catch (err: any) {
+      console.error('Assign patient error:', err);
+      alert(err?.response?.data?.error || 'Could not assign patient.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleICUTransfer = async () => {
@@ -843,8 +893,16 @@ export default function ICU() {
           {detailsLoading && !bedDetails ? (
             <div className="py-12 text-center text-slate-500">Loading patient details…</div>
           ) : !bedDetails?.patient ? (
-            <div className="py-12 text-center text-slate-500">
-              No patient occupying this bed.
+            <div className="py-10 text-center space-y-3">
+              <div className="text-slate-600">This bed is currently vacant.</div>
+              <div className="text-xs text-slate-500">
+                Move an existing admitted patient onto this bed — typically when a
+                general-ward patient needs to step up to {selectedBed?.icuUnit || 'critical care'}.
+              </div>
+              <Button onClick={openAssignPatientPicker} className="mt-2">
+                <Bed className="w-4 h-4 mr-1" />
+                Assign a patient to this bed
+              </Button>
             </div>
           ) : (
             <Tabs defaultValue="overview" className="w-full">
@@ -874,11 +932,18 @@ export default function ICU() {
           )}
 
           <DialogFooter>
-            {bedDetails?.admission?.id && (
+            {bedDetails?.admission?.id ? (
               <Button variant="outline" onClick={openTransferPicker}>
                 <Bed className="w-4 h-4 mr-1" />
                 Transfer / step-down to another bed
               </Button>
+            ) : (
+              !detailsLoading && !bedDetails?.patient && (
+                <Button onClick={openAssignPatientPicker}>
+                  <Bed className="w-4 h-4 mr-1" />
+                  Assign a patient
+                </Button>
+              )
             )}
             <Button variant="outline" onClick={() => setIsDetailsDialogOpen(false)}>Close</Button>
           </DialogFooter>
@@ -917,6 +982,99 @@ export default function ICU() {
             </Button>
             <Button onClick={handleICUTransfer} disabled={loading || !transferTargetBedId}>
               {loading ? 'Transferring…' : 'Transfer'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Assign-patient picker — opened from an empty ICU bed. Lists every
+          active admission so the operator can step a general-ward patient
+          up to critical care. Same /api/admissions/:id/transfer-bed
+          endpoint handles the move atomically. */}
+      <Dialog open={isAssignPatientOpen} onOpenChange={setIsAssignPatientOpen}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Assign a patient</DialogTitle>
+            <DialogDescription>
+              Pick the admitted patient who should occupy{' '}
+              <span className="font-medium">{selectedBed?.bedNumber}</span>
+              {' '}({selectedBed?.icuUnit}). They will be moved off their current
+              bed (if any) in one transaction.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <Input
+              placeholder="Search by patient name, MRN, diagnosis…"
+              value={assignSearch}
+              onChange={(e) => setAssignSearch(e.target.value)}
+            />
+            {(() => {
+              const q = assignSearch.trim().toLowerCase();
+              const visible = activeAdmissionsForAssign.filter((adm: any) => {
+                if (!q) return true;
+                const hay = [
+                  adm.patientName, adm.patient?.name,
+                  adm.patientMRN, adm.patient?.mrn,
+                  adm.diagnosis,
+                  adm.bedNumber, adm.bed?.bedNumber,
+                ].filter(Boolean).join(' ').toLowerCase();
+                return hay.includes(q);
+              });
+              if (visible.length === 0) {
+                return (
+                  <div className="text-center py-8 text-slate-500 border rounded-lg">
+                    {activeAdmissionsForAssign.length === 0
+                      ? 'No active admissions found.'
+                      : 'No admissions match your search.'}
+                  </div>
+                );
+              }
+              return (
+                <div className="space-y-2 max-h-[55vh] overflow-y-auto pr-1">
+                  {visible.map((adm: any) => {
+                    const sel = assignTargetAdmissionId === adm.id;
+                    const currentBed = adm.bedNumber || adm.bed?.bedNumber || 'Unassigned';
+                    const currentWard = adm.bed?.category || adm.wardName || (currentBed === 'Unassigned' ? '—' : 'Unknown');
+                    const name = adm.patientName || adm.patient?.name || 'Unknown';
+                    const mrn = adm.patientMRN || adm.patient?.mrn || '';
+                    return (
+                      <button
+                        key={adm.id}
+                        type="button"
+                        onClick={() => setAssignTargetAdmissionId(adm.id)}
+                        className={[
+                          'w-full text-left rounded-md border-2 p-3 transition',
+                          sel ? 'border-blue-600 bg-blue-50' : 'border-slate-200 bg-white hover:border-slate-400',
+                        ].join(' ')}
+                      >
+                        <div className="flex justify-between items-baseline gap-2 flex-wrap">
+                          <div>
+                            <div className="font-medium">{name}</div>
+                            <div className="text-xs text-slate-500">MRN: {mrn}</div>
+                          </div>
+                          <div className="text-xs text-slate-500 text-right">
+                            Currently:<br />
+                            <span className="font-medium">{currentWard}</span> · bed {currentBed}
+                          </div>
+                        </div>
+                        {adm.diagnosis && (
+                          <div className="text-xs text-slate-600 mt-2 line-clamp-2">
+                            <span className="font-medium text-slate-500">Dx:</span> {adm.diagnosis}
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsAssignPatientOpen(false)} disabled={loading}>
+              Cancel
+            </Button>
+            <Button onClick={handleAssignPatient} disabled={loading || !assignTargetAdmissionId}>
+              {loading ? 'Assigning…' : 'Assign to this bed'}
             </Button>
           </DialogFooter>
         </DialogContent>
