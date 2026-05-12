@@ -74,6 +74,60 @@ const CRITICAL_CARE_UNITS: Array<{ code: string; label: string }> = [
   { code: 'ICCU', label: 'ICCU' },
 ];
 
+// Wire shape of /api/icu/beds/:id/details — denormalized bundle that
+// drives every tab of the patient-details dialog without further fetches.
+interface DetailsVitals {
+  id: string;
+  recordedAt: string;
+  heartRate: number | null;
+  systolicBP: number | null;
+  diastolicBP: number | null;
+  bp: string | null;
+  temperature: number | null;
+  spo2: number | null;
+  respiratoryRate: number | null;
+  gcs: number | null;
+  ventilatorMode: string | null;
+  fio2: number | null;
+  peep: number | null;
+}
+interface DetailsOrder {
+  id: string;
+  orderType: string; // 'lab' | 'radiology'
+  orderedAt: string;
+  status: string;
+  priority: string;
+  details: any;
+  results: Array<{ id: string; resultedAt: string; isCritical: boolean; resultData: any }>;
+}
+interface DetailsPrescription {
+  id: string;
+  createdAt: string;
+  drugs: any;
+  doctor: string;
+  fromOpdNote: string;
+}
+interface ICUDetails {
+  bed: { id: string; bedNumber: string; icuUnit: string; status: string; ventilatorId: string | null };
+  patient: { id: string; name: string; mrn: string; age: number | null; gender: string | null; phone: string | null; address: string | null } | null;
+  admission: { id: string; admissionDate: string; diagnosis: string | null; admittingDoctor: string | null; isVentilated: boolean } | null;
+  vitals: DetailsVitals[];
+  orders: DetailsOrder[];
+  prescriptions: DetailsPrescription[];
+}
+
+// Shape of a general bed coming back from /api/beds (now includes both
+// Bed and ICUBed rows). Only the fields the transfer picker cares about.
+interface PickerBed {
+  id: string;
+  bedNumber: string;
+  category?: string | null;
+  status: string;
+  ward?: { id: string | null; name: string; type: string } | null;
+  floor?: string | null;
+  __source?: 'icubed';
+}
+
 export default function ICU() {
   const [icuBeds, setICUBeds] = useState<ICUBed[]>([]);
   const [selectedBed, setSelectedBed] = useState<ICUBed | null>(null);
@@ -81,6 +135,16 @@ export default function ICU() {
   const [isVentilatorDialogOpen, setIsVentilatorDialogOpen] = useState(false);
   const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  // Full denormalized payload for the currently-open details dialog.
+  const [bedDetails, setBedDetails] = useState<ICUDetails | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  // Transfer / step-down flow state — picker for moving the ICU patient
+  // to a general bed or another ICU bed.
+  const [isTransferOpen, setIsTransferOpen] = useState(false);
+  const [transferBeds, setTransferBeds] = useState<PickerBed[]>([]);
+  const [transferTargetBedId, setTransferTargetBedId] = useState('');
+  const [transferBedSearch, setTransferBedSearch] = useState('');
+  const [transferWardFilter, setTransferWardFilter] = useState('all');
 
   const [vitalsFormData, setVitalsFormData] = useState<VitalsFormData>({
     bedId: '',
@@ -156,6 +220,52 @@ export default function ICU() {
   const openDetailsDialog = (bed: ICUBed) => {
     setSelectedBed(bed);
     setIsDetailsDialogOpen(true);
+    // Kick off the denormalized fetch in the background. The dialog
+    // shows a loading state for the parts that depend on it.
+    setBedDetails(null);
+    setDetailsLoading(true);
+    api.get(`/api/icu/beds/${bed.id}/details`)
+      .then((res) => setBedDetails(res.data))
+      .catch((err) => {
+        console.error('Load ICU bed details error:', err);
+      })
+      .finally(() => setDetailsLoading(false));
+  };
+
+  // Open the bed-picker for stepping the patient down (or sideways)
+  // to another bed. Loads the full bed inventory once and lets the
+  // operator filter by ward and status.
+  const openTransferPicker = () => {
+    setTransferTargetBedId('');
+    setTransferBedSearch('');
+    setTransferWardFilter('all');
+    setIsTransferOpen(true);
+    api.get('/api/beds')
+      .then((res) => setTransferBeds(Array.isArray(res.data) ? res.data : []))
+      .catch((err) => {
+        console.error('Load beds for transfer error:', err);
+        setTransferBeds([]);
+      });
+  };
+
+  const handleICUTransfer = async () => {
+    if (!bedDetails?.admission?.id || !transferTargetBedId) return;
+    setLoading(true);
+    try {
+      await api.post(`/api/admissions/${bedDetails.admission.id}/transfer-bed`, {
+        bedId: transferTargetBedId,
+      });
+      // Refresh the ICU bed grid + close both dialogs. The detail panel
+      // will be reopened by the operator if they want.
+      await fetchICUBeds();
+      setIsTransferOpen(false);
+      setIsDetailsDialogOpen(false);
+    } catch (err: any) {
+      console.error('ICU transfer error:', err);
+      alert(err?.response?.data?.error || 'Could not transfer patient.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleRecordVitals = async () => {
@@ -694,94 +804,628 @@ export default function ICU() {
         </DialogContent>
       </Dialog>
 
-      {/* Patient Details Dialog */}
+      {/* Patient Details Dialog — bigger, tabbed view that puts everything
+          the ICU team needs in one place. Tabs:
+            • Overview: patient banner, latest vitals with delta vs the
+              previous record, running medications, key reports.
+            • Vitals Trend: chart-friendly list of the last 30 vital
+              records so the team can spot a drift.
+            • Reports: lab + radiology results with the most recent on
+              top; each result shows what's changed vs the prior. */}
       <Dialog open={isDetailsDialogOpen} onOpenChange={setIsDetailsDialogOpen}>
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="max-w-6xl max-h-[92vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Patient Details</DialogTitle>
-          </DialogHeader>
-          {selectedBed && selectedBed.patient && (
-            <div className="space-y-4 py-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-sm text-slate-500">Patient Name</Label>
-                  <div className="font-medium">{selectedBed.patient.name}</div>
-                </div>
-                <div>
-                  <Label className="text-sm text-slate-500">MRN</Label>
-                  <div className="font-medium">{selectedBed.patient.mrn}</div>
-                </div>
-                <div>
-                  <Label className="text-sm text-slate-500">Age / Gender</Label>
-                  <div className="font-medium">{selectedBed.patient.age} / {selectedBed.patient.gender}</div>
-                </div>
-                <div>
-                  <Label className="text-sm text-slate-500">Bed</Label>
-                  <div className="font-medium">{selectedBed.bedNumber} - {selectedBed.icuUnit}</div>
-                </div>
-                <div>
-                  <Label className="text-sm text-slate-500">Admission Date</Label>
-                  <div className="font-medium">
-                    {selectedBed.admission?.admissionDate ?
-                      new Date(selectedBed.admission.admissionDate).toLocaleDateString() :
-                      'N/A'}
-                  </div>
-                </div>
-                <div>
-                  <Label className="text-sm text-slate-500">Ventilation Status</Label>
-                  <div className="font-medium">
-                    {selectedBed.admission?.isVentilated ? (
-                      <Badge className="bg-orange-600">Ventilated</Badge>
-                    ) : (
-                      <Badge variant="secondary">Spontaneous</Badge>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <Label className="text-sm text-slate-500">Diagnosis</Label>
-                <div className="font-medium">{selectedBed.admission?.diagnosis || 'N/A'}</div>
-              </div>
-
-              {selectedBed.latestVitals && (
-                <div>
-                  <Label className="text-sm text-slate-500">Latest Vital Signs</Label>
-                  <div className="grid grid-cols-4 gap-3 mt-2">
-                    <div className="p-3 bg-slate-50 rounded-md">
-                      <div className="text-xs text-slate-500">Heart Rate</div>
-                      <div className={`font-semibold ${getVitalColor(getVitalStatus(selectedBed.latestVitals.hr, 'hr'))}`}>
-                        {selectedBed.latestVitals.hr} bpm
-                      </div>
-                    </div>
-                    <div className="p-3 bg-slate-50 rounded-md">
-                      <div className="text-xs text-slate-500">BP</div>
-                      <div className="font-semibold">{selectedBed.latestVitals.bp}</div>
-                    </div>
-                    <div className="p-3 bg-slate-50 rounded-md">
-                      <div className="text-xs text-slate-500">SpO2</div>
-                      <div className={`font-semibold ${getVitalColor(getVitalStatus(selectedBed.latestVitals.spo2, 'spo2'))}`}>
-                        {selectedBed.latestVitals.spo2}%
-                      </div>
-                    </div>
-                    <div className="p-3 bg-slate-50 rounded-md">
-                      <div className="text-xs text-slate-500">Temperature</div>
-                      <div className={`font-semibold ${getVitalColor(getVitalStatus(selectedBed.latestVitals.temp, 'temp'))}`}>
-                        {selectedBed.latestVitals.temp}°F
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-xs text-slate-500 mt-2">
-                    Last updated: {selectedBed.latestVitals.timestamp ?
-                      new Date(selectedBed.latestVitals.timestamp).toLocaleString() :
-                      'N/A'}
-                  </div>
-                </div>
+            <DialogTitle className="flex items-center gap-3 flex-wrap">
+              <span>Patient Details</span>
+              {bedDetails?.bed && (
+                <span className="text-sm font-normal text-slate-500">
+                  {bedDetails.bed.bedNumber} · {bedDetails.bed.icuUnit}
+                </span>
               )}
+              {bedDetails?.admission?.isVentilated && (
+                <Badge className="bg-orange-600">
+                  <Wind className="w-3 h-3 mr-1" />
+                  Ventilated
+                </Badge>
+              )}
+            </DialogTitle>
+            {bedDetails?.patient && (
+              <DialogDescription>
+                <span className="font-medium text-slate-700">{bedDetails.patient.name}</span>
+                {' · '}MRN {bedDetails.patient.mrn}
+                {bedDetails.patient.age != null && ` · ${bedDetails.patient.age}y`}
+                {bedDetails.patient.gender && ` · ${bedDetails.patient.gender}`}
+                {bedDetails.admission?.admittingDoctor && ` · Under ${bedDetails.admission.admittingDoctor}`}
+              </DialogDescription>
+            )}
+          </DialogHeader>
+
+          {detailsLoading && !bedDetails ? (
+            <div className="py-12 text-center text-slate-500">Loading patient details…</div>
+          ) : !bedDetails?.patient ? (
+            <div className="py-12 text-center text-slate-500">
+              No patient occupying this bed.
             </div>
+          ) : (
+            <Tabs defaultValue="overview" className="w-full">
+              <TabsList>
+                <TabsTrigger value="overview">Overview</TabsTrigger>
+                <TabsTrigger value="trend">Vitals Trend ({bedDetails.vitals.length})</TabsTrigger>
+                <TabsTrigger value="reports">Reports ({bedDetails.orders.length})</TabsTrigger>
+                <TabsTrigger value="meds">Medications ({bedDetails.prescriptions.length})</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="overview">
+                <ICUOverviewPane details={bedDetails} getVitalStatus={getVitalStatus} getVitalColor={getVitalColor} />
+              </TabsContent>
+
+              <TabsContent value="trend">
+                <ICUTrendPane vitals={bedDetails.vitals} />
+              </TabsContent>
+
+              <TabsContent value="reports">
+                <ICUReportsPane orders={bedDetails.orders} />
+              </TabsContent>
+
+              <TabsContent value="meds">
+                <ICUMedsPane prescriptions={bedDetails.prescriptions} />
+              </TabsContent>
+            </Tabs>
           )}
+
+          <DialogFooter>
+            {bedDetails?.admission?.id && (
+              <Button variant="outline" onClick={openTransferPicker}>
+                <Bed className="w-4 h-4 mr-1" />
+                Transfer / step-down to another bed
+              </Button>
+            )}
+            <Button variant="outline" onClick={() => setIsDetailsDialogOpen(false)}>Close</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Transfer dialog — pick any bed in the hospital (general or ICU).
+          The backend transfer-bed endpoint handles the cross-table swap. */}
+      <Dialog open={isTransferOpen} onOpenChange={setIsTransferOpen}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Transfer / step-down patient</DialogTitle>
+            <DialogDescription>
+              {bedDetails?.patient
+                ? <>
+                    <span className="font-medium">{bedDetails.patient.name}</span> ·{' '}
+                    Currently in <span className="font-medium">{bedDetails.bed?.icuUnit}</span> ·
+                    bed <span className="font-medium">{bedDetails.bed?.bedNumber}</span>.
+                    Pick a destination — vacant beds only.
+                  </>
+                : 'Pick a destination bed.'}
+            </DialogDescription>
+          </DialogHeader>
+          <ICUTransferPicker
+            beds={transferBeds.filter((b) => b.id !== bedDetails?.bed?.id)}
+            search={transferBedSearch}
+            setSearch={setTransferBedSearch}
+            wardFilter={transferWardFilter}
+            setWardFilter={setTransferWardFilter}
+            selected={transferTargetBedId}
+            setSelected={setTransferTargetBedId}
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsTransferOpen(false)} disabled={loading}>
+              Cancel
+            </Button>
+            <Button onClick={handleICUTransfer} disabled={loading || !transferTargetBedId}>
+              {loading ? 'Transferring…' : 'Transfer'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sub-components for the details dialog. Kept in the same file so the dialog
+// stays self-contained; they only consume the denormalized response payload.
+// ---------------------------------------------------------------------------
+
+function delta(curr: number | null | undefined, prev: number | null | undefined): { text: string; cls: string } | null {
+  if (curr == null || prev == null) return null;
+  const d = +(curr - prev).toFixed(2);
+  if (Math.abs(d) < 0.05) return null;
+  const sign = d > 0 ? '+' : '';
+  return {
+    text: `${sign}${d}`,
+    cls: d > 0 ? 'text-rose-600' : 'text-emerald-600',
+  };
+}
+
+function ICUOverviewPane({
+  details,
+  getVitalStatus,
+  getVitalColor,
+}: {
+  details: ICUDetails;
+  getVitalStatus: (v: string, t: string) => 'normal' | 'warning' | 'critical';
+  getVitalColor: (s: 'normal' | 'warning' | 'critical') => string;
+}) {
+  const latest = details.vitals[0];
+  const prev = details.vitals[1];
+  const recentLab = details.orders.find((o) => o.orderType === 'lab' && o.results.length > 0);
+  const recentRad = details.orders.find((o) => o.orderType === 'radiology' && o.results.length > 0);
+  const runningMeds = details.prescriptions[0]; // newest
+
+  return (
+    <div className="space-y-5 py-3">
+      {/* Diagnosis + admission */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="md:col-span-2">
+          <Label className="text-xs text-slate-500">Working diagnosis</Label>
+          <div className="font-medium whitespace-pre-wrap">{details.admission?.diagnosis || '—'}</div>
+        </div>
+        <div>
+          <Label className="text-xs text-slate-500">Admitted</Label>
+          <div className="font-medium">
+            {details.admission?.admissionDate ? new Date(details.admission.admissionDate).toLocaleString() : '—'}
+          </div>
+        </div>
+      </div>
+
+      {/* Latest vitals with delta vs previous record */}
+      <div>
+        <div className="flex justify-between items-baseline mb-2">
+          <Label className="text-xs uppercase tracking-wide text-slate-500">Latest vitals</Label>
+          {latest && (
+            <span className="text-xs text-slate-500">
+              {new Date(latest.recordedAt).toLocaleString()}
+              {prev && ` · vs ${new Date(prev.recordedAt).toLocaleString()}`}
+            </span>
+          )}
+        </div>
+        {!latest ? (
+          <div className="text-sm text-slate-500 italic">No vitals recorded yet.</div>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <VitalTile label="Heart rate" unit="bpm"
+              value={latest.heartRate}
+              delta={delta(latest.heartRate, prev?.heartRate)}
+              colorCls={getVitalColor(getVitalStatus(String(latest.heartRate ?? ''), 'hr'))} />
+            <VitalTile label="Blood pressure" unit="mmHg"
+              value={latest.bp}
+              delta={delta(latest.systolicBP, prev?.systolicBP)}
+              deltaSuffix=" sys"
+              colorCls="" />
+            <VitalTile label="SpO₂" unit="%"
+              value={latest.spo2}
+              delta={delta(latest.spo2, prev?.spo2)}
+              colorCls={getVitalColor(getVitalStatus(String(latest.spo2 ?? ''), 'spo2'))} />
+            <VitalTile label="Temperature" unit="°F"
+              value={latest.temperature}
+              delta={delta(latest.temperature, prev?.temperature)}
+              colorCls={getVitalColor(getVitalStatus(String(latest.temperature ?? ''), 'temp'))} />
+            <VitalTile label="Resp rate" unit="/min"
+              value={latest.respiratoryRate}
+              delta={delta(latest.respiratoryRate, prev?.respiratoryRate)}
+              colorCls="" />
+            <VitalTile label="GCS" unit=""
+              value={latest.gcs}
+              delta={delta(latest.gcs, prev?.gcs)}
+              colorCls="" />
+            {latest.ventilatorMode && (
+              <VitalTile label="Vent mode" unit="" value={latest.ventilatorMode} delta={null} colorCls="" />
+            )}
+            {latest.fio2 != null && (
+              <VitalTile label="FiO₂" unit="%" value={latest.fio2} delta={delta(latest.fio2, prev?.fio2)} colorCls="" />
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Running medications */}
+      <div>
+        <Label className="text-xs uppercase tracking-wide text-slate-500">Running medications</Label>
+        {!runningMeds ? (
+          <div className="text-sm text-slate-500 italic mt-2">No prescriptions recorded.</div>
+        ) : (
+          <div className="mt-2 border rounded-md p-3 bg-slate-50">
+            <div className="text-xs text-slate-500 mb-2">
+              By {runningMeds.doctor} · {new Date(runningMeds.createdAt).toLocaleString()}
+            </div>
+            {renderDrugList(runningMeds.drugs)}
+          </div>
+        )}
+      </div>
+
+      {/* At-a-glance recent reports */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <ReportSnippet label="Most recent lab" order={recentLab} />
+        <ReportSnippet label="Most recent radiology" order={recentRad} />
+      </div>
+    </div>
+  );
+}
+
+function VitalTile({
+  label, unit, value, delta, deltaSuffix, colorCls,
+}: {
+  label: string;
+  unit: string;
+  value: string | number | null | undefined;
+  delta: { text: string; cls: string } | null;
+  deltaSuffix?: string;
+  colorCls: string;
+}) {
+  return (
+    <div className="p-3 bg-slate-50 rounded-md border">
+      <div className="text-xs text-slate-500">{label}</div>
+      <div className="flex items-baseline gap-2 mt-0.5">
+        <div className={`font-semibold text-lg ${colorCls}`}>
+          {value ?? '—'}{value != null && unit ? ` ${unit}` : ''}
+        </div>
+        {delta && (
+          <div className={`text-xs ${delta.cls}`}>{delta.text}{deltaSuffix || ''}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function renderDrugList(drugs: any): JSX.Element {
+  if (!drugs) return <span className="text-sm text-slate-500 italic">—</span>;
+  const list = Array.isArray(drugs) ? drugs : Array.isArray(drugs?.items) ? drugs.items : null;
+  if (!list || list.length === 0) {
+    // Fallback — render the JSON so something always shows up rather
+    // than a confusing blank panel.
+    return <pre className="text-xs text-slate-600 whitespace-pre-wrap">{JSON.stringify(drugs, null, 2)}</pre>;
+  }
+  return (
+    <ul className="space-y-1 text-sm">
+      {list.map((d: any, i: number) => (
+        <li key={i} className="flex items-baseline gap-2">
+          <span className="font-medium">{d.name || d.drug || d.medication || `Drug ${i + 1}`}</span>
+          {(d.dose || d.dosage || d.strength) && (
+            <span className="text-slate-500">· {d.dose || d.dosage || d.strength}</span>
+          )}
+          {(d.frequency || d.freq) && <span className="text-slate-500">· {d.frequency || d.freq}</span>}
+          {d.route && <span className="text-slate-500">· {d.route}</span>}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function ReportSnippet({ label, order }: { label: string; order: DetailsOrder | undefined }) {
+  if (!order) {
+    return (
+      <div className="border rounded-md p-3">
+        <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
+        <div className="text-sm text-slate-500 italic mt-1">None yet.</div>
+      </div>
+    );
+  }
+  const latest = order.results[0];
+  return (
+    <div className="border rounded-md p-3">
+      <div className="flex justify-between items-baseline gap-2">
+        <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
+        <div className="text-xs text-slate-500">{new Date(order.orderedAt).toLocaleDateString()}</div>
+      </div>
+      <div className="font-medium text-sm mt-1">
+        {order.details?.testName || order.details?.modality || order.details?.test || 'Order'}
+      </div>
+      {latest && (
+        <div className="text-xs text-slate-600 mt-1 line-clamp-2 whitespace-pre-wrap">
+          {summarizeResult(latest.resultData)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function summarizeResult(rd: any): string {
+  if (!rd) return '';
+  if (typeof rd === 'string') return rd;
+  if (Array.isArray(rd?.values)) {
+    return rd.values.slice(0, 3).map((v: any) => `${v.name}: ${v.value}${v.unit || ''}`).join(' · ');
+  }
+  if (rd?.impression) return String(rd.impression);
+  if (rd?.findings) return String(rd.findings).slice(0, 140);
+  return JSON.stringify(rd).slice(0, 120);
+}
+
+function ICUTrendPane({ vitals }: { vitals: DetailsVitals[] }) {
+  if (vitals.length === 0) {
+    return <div className="py-8 text-center text-slate-500">No vitals recorded yet.</div>;
+  }
+  const reversed = [...vitals].reverse(); // chronological
+  // Inline-SVG mini sparkline so we don't pull in a chart library just
+  // for four lines. One line per series, normalized to its own range.
+  const series: Array<{ label: string; values: Array<number | null> }> = [
+    { label: 'HR', values: reversed.map((v) => v.heartRate) },
+    { label: 'SpO₂', values: reversed.map((v) => v.spo2) },
+    { label: 'Sys BP', values: reversed.map((v) => v.systolicBP) },
+    { label: 'Temp', values: reversed.map((v) => v.temperature) },
+  ];
+  return (
+    <div className="space-y-4 py-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {series.map((s) => (
+          <Sparkline key={s.label} label={s.label} values={s.values} />
+        ))}
+      </div>
+      <div>
+        <Label className="text-xs uppercase tracking-wide text-slate-500">Last 30 readings</Label>
+        <div className="mt-2 border rounded-md divide-y">
+          {vitals.map((v) => (
+            <div key={v.id} className="px-3 py-2 grid grid-cols-2 md:grid-cols-7 gap-2 text-sm">
+              <div className="text-xs text-slate-500">{new Date(v.recordedAt).toLocaleString()}</div>
+              <div>HR: {v.heartRate ?? '—'}</div>
+              <div>BP: {v.bp ?? '—'}</div>
+              <div>SpO₂: {v.spo2 ?? '—'}</div>
+              <div>Temp: {v.temperature ?? '—'}</div>
+              <div>RR: {v.respiratoryRate ?? '—'}</div>
+              <div>GCS: {v.gcs ?? '—'}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Sparkline({ label, values }: { label: string; values: Array<number | null> }) {
+  const numbers = values.filter((n): n is number => n != null);
+  const w = 240; const h = 50;
+  if (numbers.length === 0) {
+    return (
+      <div className="border rounded-md p-3">
+        <div className="text-xs text-slate-500">{label}</div>
+        <div className="text-xs text-slate-400 italic mt-2">No data</div>
+      </div>
+    );
+  }
+  const min = Math.min(...numbers);
+  const max = Math.max(...numbers);
+  const range = max - min || 1;
+  const pts = values
+    .map((n, i) => {
+      if (n == null) return null;
+      const x = (i / Math.max(1, values.length - 1)) * w;
+      const y = h - ((n - min) / range) * h;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .filter(Boolean)
+    .join(' ');
+  const latest = numbers[numbers.length - 1];
+  const first = numbers[0];
+  const change = latest - first;
+  return (
+    <div className="border rounded-md p-3">
+      <div className="flex justify-between items-baseline">
+        <div className="text-xs text-slate-500">{label}</div>
+        <div className="text-xs text-slate-500">
+          {latest} <span className={change > 0 ? 'text-rose-600' : change < 0 ? 'text-emerald-600' : ''}>
+            ({change > 0 ? '+' : ''}{change.toFixed(1)} since start)
+          </span>
+        </div>
+      </div>
+      <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-12 mt-1">
+        <polyline points={pts} fill="none" stroke="currentColor" strokeWidth="1.5" className="text-blue-500" />
+      </svg>
+    </div>
+  );
+}
+
+function ICUReportsPane({ orders }: { orders: DetailsOrder[] }) {
+  if (orders.length === 0) {
+    return <div className="py-8 text-center text-slate-500">No lab or radiology orders yet.</div>;
+  }
+  // For each lab "test name" track the previous result so we can render
+  // a diff inline. Naive name-based pairing — good enough until we model
+  // result lineage properly.
+  return (
+    <div className="space-y-3 py-3">
+      {orders.map((o, i) => {
+        const prevSameType = orders.slice(i + 1).find((p) => p.orderType === o.orderType);
+        return (
+          <ReportRow key={o.id} order={o} prev={prevSameType} />
+        );
+      })}
+    </div>
+  );
+}
+
+function ReportRow({ order, prev }: { order: DetailsOrder; prev?: DetailsOrder }) {
+  const result = order.results[0];
+  const prevResult = prev?.results[0];
+  return (
+    <div className="border rounded-md p-3">
+      <div className="flex justify-between items-baseline gap-2 flex-wrap">
+        <div>
+          <span className="text-[10px] uppercase tracking-wide font-medium text-slate-500">{order.orderType}</span>{' '}
+          <span className="font-medium">{order.details?.testName || order.details?.modality || order.details?.test || 'Order'}</span>
+          {order.priority && order.priority !== 'routine' && (
+            <Badge className="ml-2 bg-orange-100 text-orange-800" variant="secondary">{order.priority}</Badge>
+          )}
+        </div>
+        <div className="text-xs text-slate-500">{new Date(order.orderedAt).toLocaleString()}</div>
+      </div>
+      {!result ? (
+        <div className="text-sm text-slate-500 italic mt-1">{order.status} — no result yet.</div>
+      ) : (
+        <div className="mt-2">
+          {Array.isArray((result.resultData as any)?.values) ? (
+            <table className="text-sm w-full">
+              <thead>
+                <tr className="text-xs text-slate-500">
+                  <th className="text-left font-normal py-1">Test</th>
+                  <th className="text-left font-normal">Value</th>
+                  <th className="text-left font-normal">Range</th>
+                  <th className="text-left font-normal">Δ vs previous</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(result.resultData as any).values.map((row: any, idx: number) => {
+                  const prevRow = Array.isArray((prevResult?.resultData as any)?.values)
+                    ? (prevResult?.resultData as any).values.find((r: any) => r.name === row.name)
+                    : null;
+                  const cur = parseFloat(row.value);
+                  const prv = prevRow ? parseFloat(prevRow.value) : NaN;
+                  const d = !Number.isNaN(cur) && !Number.isNaN(prv) ? +(cur - prv).toFixed(2) : null;
+                  return (
+                    <tr key={idx} className={row.abnormal ? 'bg-rose-50' : ''}>
+                      <td className="py-1">{row.name}</td>
+                      <td className="font-medium">{row.value}{row.unit ? ` ${row.unit}` : ''}</td>
+                      <td className="text-slate-500">{row.range || '—'}</td>
+                      <td className={d == null ? 'text-slate-400' : d > 0 ? 'text-rose-600' : d < 0 ? 'text-emerald-600' : ''}>
+                        {d == null ? '—' : `${d > 0 ? '+' : ''}${d}`}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : (
+            <div className="text-sm whitespace-pre-wrap">
+              {(result.resultData as any)?.impression || (result.resultData as any)?.findings || JSON.stringify(result.resultData)}
+            </div>
+          )}
+          {result.isCritical && <Badge className="bg-red-600 mt-2">Critical</Badge>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ICUMedsPane({ prescriptions }: { prescriptions: DetailsPrescription[] }) {
+  if (prescriptions.length === 0) {
+    return <div className="py-8 text-center text-slate-500">No prescriptions recorded yet.</div>;
+  }
+  return (
+    <div className="space-y-3 py-3">
+      {prescriptions.map((rx) => (
+        <div key={rx.id} className="border rounded-md p-3">
+          <div className="flex justify-between items-baseline gap-2 flex-wrap">
+            <div className="text-xs text-slate-500">By {rx.doctor}</div>
+            <div className="text-xs text-slate-500">{new Date(rx.createdAt).toLocaleString()}</div>
+          </div>
+          <div className="mt-2">{renderDrugList(rx.drugs)}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ICUTransferPicker({
+  beds, search, setSearch, wardFilter, setWardFilter, selected, setSelected,
+}: {
+  beds: PickerBed[];
+  search: string;
+  setSearch: (s: string) => void;
+  wardFilter: string;
+  setWardFilter: (s: string) => void;
+  selected: string;
+  setSelected: (s: string) => void;
+}) {
+  const vacant = (s: string) => ['vacant', 'available'].includes((s || '').toLowerCase());
+  const categories = Array.from(new Set(beds.map((b) => b.ward?.type || b.category || 'OTHER')));
+  const countsByCategory: Record<string, { total: number; vacant: number }> = {};
+  for (const b of beds) {
+    const cat = (b.ward?.type || b.category || 'OTHER');
+    if (!countsByCategory[cat]) countsByCategory[cat] = { total: 0, vacant: 0 };
+    countsByCategory[cat].total += 1;
+    if (vacant(b.status)) countsByCategory[cat].vacant += 1;
+  }
+  const q = search.trim().toLowerCase();
+  const matchesSearch = (b: PickerBed) =>
+    !q ||
+    b.bedNumber.toLowerCase().includes(q) ||
+    (b.ward?.name || '').toLowerCase().includes(q) ||
+    (b.category || '').toLowerCase().includes(q);
+  const visible = beds
+    .filter((b) => wardFilter === 'all' || (b.ward?.type || b.category) === wardFilter)
+    .filter(matchesSearch);
+  const groups: Record<string, { wardName: string; wardType: string; beds: PickerBed[] }> = {};
+  for (const b of visible) {
+    const key = b.ward?.id || b.category || 'OTHER';
+    const wardName = b.ward?.name || b.category || 'Uncategorized';
+    const wardType = b.ward?.type || b.category || 'OTHER';
+    if (!groups[key]) groups[key] = { wardName, wardType, beds: [] };
+    groups[key].beds.push(b);
+  }
+  const groupList = Object.values(groups).sort((a, b) => a.wardName.localeCompare(b.wardName));
+  return (
+    <div className="space-y-3 py-2">
+      <div className="flex flex-wrap gap-2 items-center">
+        <Input
+          placeholder="Search bed number, ward…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="flex-1 min-w-[200px]"
+        />
+        <Select value={wardFilter} onValueChange={setWardFilter}>
+          <SelectTrigger className="w-56">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All wards ({beds.length})</SelectItem>
+            {categories.sort((a, b) => a.localeCompare(b)).map((cat) => {
+              const c = countsByCategory[cat];
+              return (
+                <SelectItem key={cat} value={cat}>
+                  {cat} ({c.vacant} vacant / {c.total})
+                </SelectItem>
+              );
+            })}
+          </SelectContent>
+        </Select>
+      </div>
+      {groupList.length === 0 ? (
+        <div className="text-center py-8 text-slate-500 border rounded-lg">
+          No beds match. Clear the search or pick "All wards".
+        </div>
+      ) : (
+        <div className="space-y-3 max-h-[55vh] overflow-y-auto pr-1">
+          {groupList.map((g) => (
+            <div key={g.wardName}>
+              <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">
+                {g.wardName}{' '}
+                <span className="text-slate-400 font-normal">
+                  ({g.beds.filter((b) => vacant(b.status)).length} vacant / {g.beds.length})
+                </span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                {g.beds.map((bed) => {
+                  const v = vacant(bed.status);
+                  const sel = selected === bed.id;
+                  return (
+                    <button
+                      key={bed.id}
+                      type="button"
+                      disabled={!v}
+                      onClick={() => v && setSelected(bed.id)}
+                      className={[
+                        'text-left rounded-md border-2 p-2 transition',
+                        sel
+                          ? 'border-blue-600 bg-blue-600 text-white'
+                          : v
+                            ? 'border-green-500 bg-green-50 hover:bg-green-100 cursor-pointer'
+                            : 'border-slate-200 bg-slate-50 text-slate-400 cursor-not-allowed',
+                      ].join(' ')}
+                    >
+                      <div className="font-medium text-sm">{bed.bedNumber}</div>
+                      <div className={`text-[10px] ${sel ? 'text-blue-50' : 'text-slate-500'}`}>
+                        {v ? 'Vacant' : bed.status}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

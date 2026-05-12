@@ -3753,6 +3753,140 @@ app.post('/api/icu/beds', authenticateToken, async (req: any, res: Response) => 
   }
 });
 
+// Comprehensive ICU bed detail — one round-trip that returns everything
+// the ICU "Patient Details" dialog needs to paint Overview / Vitals trend
+// / Reports / Medications tabs without separate fetches per tab.
+//
+// Returns:
+//   - bed (with patient + admission joined)
+//   - vitals: last 30 records (newest first) so the dialog can show the
+//     latest, a sparkline trend, and the delta from the previous record
+//   - orders: lab + radiology orders for this patient (newest first,
+//     last 20) with results joined
+//   - prescriptions: drug lists from the most recent OPD note for this
+//     patient (the closest thing to "running medications" in the schema)
+app.get('/api/icu/beds/:id/details', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const bed = await prisma.iCUBed.findFirst({
+      where: { id: req.params.id, tenantId: req.user.tenantId },
+    });
+    if (!bed) return res.status(404).json({ error: 'ICU bed not found' });
+
+    const [vitals, patient, admission] = await Promise.all([
+      prisma.iCUVitals.findMany({
+        where: { icuBedId: bed.id },
+        orderBy: { recordedAt: 'desc' },
+        take: 30,
+      }),
+      bed.currentPatient
+        ? prisma.patient.findUnique({
+            where: { id: bed.currentPatient },
+            select: { id: true, name: true, mrn: true, dob: true, gender: true, contact: true, address: true },
+          })
+        : Promise.resolve(null),
+      bed.admissionId
+        ? prisma.admission.findUnique({
+            where: { id: bed.admissionId },
+            include: { admittingDoctor: { select: { name: true } } },
+          })
+        : Promise.resolve(null),
+    ]);
+
+    let orders: any[] = [];
+    let prescriptions: any[] = [];
+    if (patient?.id) {
+      orders = await prisma.order.findMany({
+        where: { patientId: patient.id, orderType: { in: ['lab', 'radiology'] } },
+        include: { results: true },
+        orderBy: { orderedAt: 'desc' },
+        take: 20,
+      });
+      // Prescriptions live on OPDNote which we join via patientId →
+      // opdNote.patientId. Pull the last 10 OPDNotes' prescriptions; the
+      // most recent of these is what the ICU team treats as the active
+      // medication list.
+      const opdNotes = await prisma.oPDNote.findMany({
+        where: { patientId: patient.id },
+        include: { prescriptions: { include: { doctor: { select: { name: true } } } } },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+      });
+      prescriptions = opdNotes
+        .flatMap((n) => n.prescriptions.map((p: any) => ({
+          id: p.id,
+          createdAt: p.createdAt,
+          drugs: p.drugs,
+          doctor: p.doctor?.name || 'Unknown',
+          fromOpdNote: n.id,
+        })));
+    }
+
+    const age = patient?.dob
+      ? Math.floor((Date.now() - new Date(patient.dob).getTime()) / (1000 * 60 * 60 * 24 * 365.25))
+      : null;
+
+    res.json({
+      bed: {
+        id: bed.id,
+        bedNumber: bed.bedNumber,
+        icuUnit: bed.icuUnit,
+        status: bed.status,
+        ventilatorId: bed.ventilatorId,
+      },
+      patient: patient ? {
+        id: patient.id,
+        name: patient.name,
+        mrn: patient.mrn,
+        age,
+        gender: patient.gender,
+        phone: patient.contact,
+        address: patient.address,
+      } : null,
+      admission: admission ? {
+        id: admission.id,
+        admissionDate: admission.admissionDate,
+        diagnosis: admission.diagnosis,
+        admittingDoctor: admission.admittingDoctor?.name || null,
+        // Match the wire shape the frontend ICU page already consumes.
+        isVentilated: !!bed.ventilatorId,
+      } : null,
+      vitals: vitals.map((v) => ({
+        id: v.id,
+        recordedAt: v.recordedAt,
+        heartRate: v.heartRate,
+        systolicBP: v.systolicBP,
+        diastolicBP: v.diastolicBP,
+        bp: v.systolicBP && v.diastolicBP ? `${v.systolicBP}/${v.diastolicBP}` : null,
+        temperature: v.temperature != null ? Number(v.temperature) : null,
+        spo2: v.spo2,
+        respiratoryRate: v.respiratoryRate,
+        gcs: v.gcs,
+        ventilatorMode: v.ventilatorMode,
+        fio2: v.fio2,
+        peep: v.peep,
+      })),
+      orders: orders.map((o) => ({
+        id: o.id,
+        orderType: o.orderType,
+        orderedAt: o.orderedAt,
+        status: o.status,
+        priority: o.priority,
+        details: o.details,
+        results: o.results.map((r: any) => ({
+          id: r.id,
+          resultedAt: r.resultedAt,
+          isCritical: r.isCritical,
+          resultData: r.resultData,
+        })),
+      })),
+      prescriptions,
+    });
+  } catch (error) {
+    console.error('Get ICU bed details error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.post('/api/icu/vitals', authenticateToken, async (req: any, res: Response) => {
   try {
     const { icuBedId, patientId, heartRate, systolicBP, diastolicBP, temperature, spo2, respiratoryRate, gcs, ventilatorMode, fio2, peep } = req.body;
