@@ -226,7 +226,13 @@ export const createEmergencySchema = z.object({
   patientId: idSchema.optional().nullable(),
   patientName: z.string().min(1).max(100),
   patientContact: z.string().regex(phoneRegex).optional().nullable(),
+  // Accept either patientAge/patientGender (handler convention) or the
+  // shorter age/gender the Emergency UI sends.
   patientAge: z.preprocess(
+    (v) => (typeof v === 'string' && v ? Number(v) : v),
+    z.number().int().min(0).max(150).optional().nullable()
+  ),
+  age: z.preprocess(
     (v) => (typeof v === 'string' && v ? Number(v) : v),
     z.number().int().min(0).max(150).optional().nullable()
   ),
@@ -234,10 +240,20 @@ export const createEmergencySchema = z.object({
     (v) => (typeof v === 'string' ? v.toUpperCase() : v),
     z.enum(['MALE', 'FEMALE', 'OTHER']).optional().nullable()
   ),
+  gender: z.preprocess(
+    (v) => (typeof v === 'string' ? v.toUpperCase() : v),
+    z.enum(['MALE', 'FEMALE', 'OTHER']).optional().nullable()
+  ),
+  // Accept either name — the rest of the codebase (handler, frontend,
+  // DB column) uses `triageCategory`; older callers may send `triageLevel`.
+  triageCategory: z.preprocess(
+    (v) => (typeof v === 'string' ? v.toUpperCase() : v),
+    z.enum(['RED', 'YELLOW', 'GREEN'])
+  ).optional(),
   triageLevel: z.preprocess(
     (v) => (typeof v === 'string' ? v.toUpperCase() : v),
     z.enum(['RED', 'YELLOW', 'GREEN'])
-  ),
+  ).optional(),
   chiefComplaint: z.string().min(1).max(1000),
   arrivalMode: z.preprocess(
     (v) => (typeof v === 'string' ? v.toUpperCase().replace(/[ -]/g, '_') : v),

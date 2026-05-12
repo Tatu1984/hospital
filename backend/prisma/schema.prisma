@@ -267,6 +267,7 @@ model Patient {
   referralSource    ReferralSource?    @relation(fields: [referralSourceId], references: [id])
   commissions       Commission[]
   insurances        PatientInsurance[]
+  dialysisSessions  DialysisSession[]
 
   @@unique([tenantId, mrn])
   @@map("patients")
@@ -1490,10 +1491,15 @@ model DialysisSession {
   tenantId       String
   patientId      String
   machineId      String?
+  bedId          String?
   nephrologistId String? // FK to User
   nurseId        String? // FK to User
   scheduledDate  DateTime
   scheduledTime  String?
+  // Booking-register slot. One of SLOT_1 (08-12), SLOT_2 (12-16),
+  // SLOT_3 (16-20), SLOT_4 (20-24). Nullable so existing clinical
+  // sessions without a slot continue to work.
+  slot           String?
   startedAt      DateTime?
   endedAt        DateTime?
   durationMin    Int? // typically 240 for HD
@@ -1517,7 +1523,10 @@ model DialysisSession {
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
   machine        DialysisMachine? @relation(fields: [machineId], references: [id])
+  patient        Patient          @relation(fields: [patientId], references: [id])
 
+  @@unique([machineId, scheduledDate, slot])
+  @@unique([bedId, scheduledDate, slot])
   @@index([tenantId])
   @@index([patientId])
   @@index([scheduledDate])

@@ -3635,6 +3635,248 @@ app.post('/api/emergency/cases/:id/discharge', authenticateToken, async (req: an
 });
 
 // ===========================
+// DIALYSIS APIs
+// ===========================
+// Machine inventory + per-slot session register. Beds for dialysis live
+// in the regular Bed table with category='DIALYSIS'. Machines are a
+// separate, smaller pool that exceeds bed count so a failed machine
+// doesn't cancel a session.
+
+app.get('/api/dialysis/machines', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const machines = await prisma.dialysisMachine.findMany({
+      where: { tenantId: req.user.tenantId, status: { not: 'retired' } },
+      orderBy: { machineName: 'asc' },
+    });
+    res.json(machines);
+  } catch (error) {
+    console.error('Get dialysis machines error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/dialysis/machines', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { machineName, name, machineCode, code, model, modality, status, notes } = req.body || {};
+    const finalName = machineName || name;
+    if (!finalName) return res.status(400).json({ error: 'machineName is required' });
+    // Auto-generate a machineCode if the caller didn't supply one — the
+    // schema requires it and forcing operators to invent codes is friction.
+    const finalCode = machineCode || code || `DM-${Date.now().toString(36).toUpperCase()}`;
+    const machine = await prisma.dialysisMachine.create({
+      data: {
+        tenantId: req.user.tenantId,
+        branchId: req.user.branchId,
+        machineName: finalName,
+        machineCode: finalCode,
+        model: model || null,
+        modality: modality || 'HD',
+        status: status || 'available',
+        notes: notes || null,
+      },
+    });
+    res.status(201).json(machine);
+  } catch (error: any) {
+    if (error?.code === 'P2002') {
+      return res.status(409).json({ error: 'A machine with this code already exists.' });
+    }
+    console.error('Create dialysis machine error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/dialysis/machines/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const existing = await prisma.dialysisMachine.findFirst({
+      where: { id: req.params.id, tenantId: req.user.tenantId },
+    });
+    if (!existing) return res.status(404).json({ error: 'Machine not found' });
+    const { machineName, name, model, modality, status, notes } = req.body || {};
+    const finalName = machineName || name;
+    const updated = await prisma.dialysisMachine.update({
+      where: { id: existing.id },
+      data: {
+        ...(finalName !== undefined && { machineName: finalName }),
+        ...(model !== undefined && { model }),
+        ...(modality !== undefined && { modality }),
+        ...(status !== undefined && { status }),
+        ...(notes !== undefined && { notes }),
+      },
+    });
+    res.json(updated);
+  } catch (error) {
+    console.error('Update dialysis machine error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.delete('/api/dialysis/machines/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const existing = await prisma.dialysisMachine.findFirst({
+      where: { id: req.params.id, tenantId: req.user.tenantId },
+    });
+    if (!existing) return res.status(404).json({ error: 'Machine not found' });
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const upcoming = await prisma.dialysisSession.count({
+      where: { machineId: existing.id, scheduledDate: { gte: today } },
+    });
+    if (upcoming > 0) {
+      return res.status(409).json({
+        error: `Machine has ${upcoming} upcoming session(s). Reassign or cancel them first.`,
+      });
+    }
+    // Soft delete by flipping status to retired — sessions still resolve
+    // their machine relation for historical reports.
+    await prisma.dialysisMachine.update({
+      where: { id: existing.id },
+      data: { status: 'retired' },
+    });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Delete dialysis machine error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Dialysis beds — just a filter over the regular bed table. Returns
+// what's available to assign to a session along with each bed's
+// current occupancy for the requested date+slot (if provided).
+app.get('/api/dialysis/beds', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const beds = await prisma.bed.findMany({
+      where: { branchId: req.user.branchId, category: 'DIALYSIS' },
+      orderBy: { bedNumber: 'asc' },
+    });
+    res.json(beds);
+  } catch (error) {
+    console.error('Get dialysis beds error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Sessions for a date (defaults to today). Returns sessions grouped
+// by slot so the frontend can paint the 4-slot grid in one call.
+app.get('/api/dialysis/sessions', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const dateParam = (req.query.date as string) || new Date().toISOString().slice(0, 10);
+    const scheduledDate = new Date(`${dateParam}T00:00:00.000Z`);
+    if (Number.isNaN(scheduledDate.getTime())) {
+      return res.status(400).json({ error: 'Invalid date — use YYYY-MM-DD' });
+    }
+    const sessions = await prisma.dialysisSession.findMany({
+      where: { tenantId: req.user.tenantId, scheduledDate },
+      include: {
+        patient: { select: { id: true, name: true, mrn: true } },
+        machine: { select: { id: true, machineName: true, machineCode: true, status: true } },
+      },
+      orderBy: [{ slot: 'asc' }, { createdAt: 'asc' }],
+    });
+    res.json({ date: dateParam, sessions });
+  } catch (error) {
+    console.error('Get dialysis sessions error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/dialysis/sessions', authenticateToken, async (req: any, res: Response) => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { isValidSlot } = require('./shared/dialysisSlots');
+    const { patientId, machineId, bedId, sessionDate, scheduledDate: scheduledDateBody, slot, notes } = req.body || {};
+    const dateInput = sessionDate || scheduledDateBody;
+    if (!patientId) return res.status(400).json({ error: 'patientId is required' });
+    if (!machineId) return res.status(400).json({ error: 'machineId is required' });
+    if (!dateInput) return res.status(400).json({ error: 'sessionDate (YYYY-MM-DD) is required' });
+    if (!slot || !isValidSlot(slot)) {
+      return res.status(400).json({ error: 'slot must be SLOT_1/SLOT_2/SLOT_3/SLOT_4' });
+    }
+
+    const date = new Date(`${dateInput}T00:00:00.000Z`);
+    if (Number.isNaN(date.getTime())) {
+      return res.status(400).json({ error: 'Invalid sessionDate — use YYYY-MM-DD' });
+    }
+
+    const [patient, machine, bed] = await Promise.all([
+      prisma.patient.findFirst({ where: { id: patientId, tenantId: req.user.tenantId } }),
+      prisma.dialysisMachine.findFirst({ where: { id: machineId, tenantId: req.user.tenantId, status: { not: 'retired' } } }),
+      bedId ? prisma.bed.findFirst({ where: { id: bedId, branchId: req.user.branchId, category: 'DIALYSIS' } }) : Promise.resolve(true),
+    ]);
+    if (!patient) return res.status(404).json({ error: 'Patient not found in this tenant' });
+    if (!machine) return res.status(404).json({ error: 'Machine not found or retired' });
+    if (bedId && !bed) return res.status(404).json({ error: 'Bed not found or not a dialysis bed' });
+
+    const session = await prisma.dialysisSession.create({
+      data: {
+        tenantId: req.user.tenantId,
+        patientId,
+        machineId,
+        bedId: bedId || null,
+        scheduledDate: date,
+        slot,
+        notes: notes || null,
+        status: 'scheduled',
+      },
+      include: {
+        patient: { select: { id: true, name: true, mrn: true } },
+        machine: { select: { id: true, machineName: true, machineCode: true, status: true } },
+      },
+    });
+    res.status(201).json(session);
+  } catch (error: any) {
+    if (error?.code === 'P2002') {
+      const target = error.meta?.target || '';
+      const isMachine = String(target).includes('machineId');
+      const isBed = String(target).includes('bedId');
+      return res.status(409).json({
+        error: isMachine
+          ? 'This machine is already booked for that slot. Pick another machine.'
+          : isBed
+            ? 'This bed is already booked for that slot. Pick another bed.'
+            : 'Double-booking — that slot is already taken.',
+      });
+    }
+    console.error('Create dialysis session error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.patch('/api/dialysis/sessions/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const existing = await prisma.dialysisSession.findFirst({
+      where: { id: req.params.id, tenantId: req.user.tenantId },
+    });
+    if (!existing) return res.status(404).json({ error: 'Session not found' });
+    const { status, notes } = req.body || {};
+    const updated = await prisma.dialysisSession.update({
+      where: { id: existing.id },
+      data: {
+        ...(status !== undefined && { status }),
+        ...(notes !== undefined && { notes }),
+      },
+    });
+    res.json(updated);
+  } catch (error) {
+    console.error('Update dialysis session error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.delete('/api/dialysis/sessions/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const existing = await prisma.dialysisSession.findFirst({
+      where: { id: req.params.id, tenantId: req.user.tenantId },
+    });
+    if (!existing) return res.status(404).json({ error: 'Session not found' });
+    await prisma.dialysisSession.delete({ where: { id: existing.id } });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Delete dialysis session error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ===========================
 // ICU & CRITICAL CARE APIs
 // ===========================
 

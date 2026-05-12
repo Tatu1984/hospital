@@ -27,6 +27,7 @@ export const WARD_CATEGORIES: WardCategory[] = [
   { type: 'WARD_MEN',     label: "Men's Ward",         group: 'general',  defaultTariff: 800,  defaultBeds: 20, description: 'Open ward for male patients.' },
   { type: 'WARD_WOMEN',   label: "Women's Ward",       group: 'general',  defaultTariff: 800,  defaultBeds: 20, description: 'Open ward for female patients.' },
   { type: 'NURSERY',      label: 'Nursery',            group: 'special',  defaultTariff: 1500, defaultBeds: 10, description: 'Neonatal nursery (well-baby care).' },
+  { type: 'DIALYSIS',     label: 'Dialysis',           group: 'special',  defaultTariff: 2000, defaultBeds: 10, description: 'Dialysis chairs — bookable by 4-hour slot.' },
   { type: 'ICU',          label: 'ICU',                group: 'critical', defaultTariff: 8000, defaultBeds: 8,  description: 'General Intensive Care Unit.' },
   { type: 'ITU',          label: 'ITU',                group: 'critical', defaultTariff: 6000, defaultBeds: 6,  description: 'Intensive Therapy Unit.' },
   { type: 'HDU',          label: 'HDU',                group: 'critical', defaultTariff: 4500, defaultBeds: 8,  description: 'High Dependency Unit (step-down from ICU).' },
