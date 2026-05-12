@@ -3910,55 +3910,77 @@ app.get('/api/dialysis/sessions', authenticateToken, async (req: any, res: Respo
   }
 });
 
+// Build marker — bumped manually on each meaningful change so curl/
+// network-tab can verify which version of the handler is responding.
+const DIALYSIS_BUILD = 'dialysis-v3-2026-05-12-bulletproof';
+
 app.post('/api/dialysis/sessions', authenticateToken, async (req: any, res: Response) => {
+  // Single-step error reporter — every failure path returns the actual
+  // cause so an operator can read the toast without DevTools. The
+  // build marker stamps every response so we can tell which deploy
+  // a given browser hit.
+  const fail = (status: number, error: string, extra?: any) =>
+    res.status(status).json({ error, build: DIALYSIS_BUILD, ...(extra || {}) });
+
   try {
+    res.setHeader('X-Server-Build', DIALYSIS_BUILD);
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { isValidSlot } = require('./shared/dialysisSlots');
     const {
-      patientId,
-      machineId,
-      bedId,
-      sessionDate,
-      scheduledDate: scheduledDateBody,
-      slot,
-      notes,
-      // Recurrence: when set to N > 1, create N weekly bookings (same
-      // weekday, same slot, same machine/bed) starting from sessionDate.
-      // Conflicts on individual weeks are skipped with a reason rather
-      // than failing the whole batch.
-      repeatWeeks,
+      patientId, machineId, bedId,
+      sessionDate, scheduledDate: scheduledDateBody,
+      slot, notes, repeatWeeks,
     } = req.body || {};
     const dateInput = sessionDate || scheduledDateBody;
-    if (!patientId) return res.status(400).json({ error: 'patientId is required' });
-    if (!machineId) return res.status(400).json({ error: 'machineId is required' });
-    if (!dateInput) return res.status(400).json({ error: 'sessionDate (YYYY-MM-DD) is required' });
+    if (!patientId) return fail(400, 'patientId is required');
+    if (!machineId) return fail(400, 'machineId is required');
+    if (!dateInput) return fail(400, 'sessionDate (YYYY-MM-DD) is required');
     if (!slot || !isValidSlot(slot)) {
-      return res.status(400).json({ error: 'slot must be SLOT_1/SLOT_2/SLOT_3/SLOT_4' });
+      return fail(400, 'slot must be SLOT_1/SLOT_2/SLOT_3/SLOT_4');
     }
 
     const startDate = new Date(`${dateInput}T00:00:00.000Z`);
-    if (Number.isNaN(startDate.getTime())) {
-      return res.status(400).json({ error: 'Invalid sessionDate — use YYYY-MM-DD' });
-    }
+    if (Number.isNaN(startDate.getTime())) return fail(400, 'Invalid sessionDate — use YYYY-MM-DD');
 
-    // Clamp recurrence to a sensible range so a fat-fingered "999" doesn't
-    // try to create thousands of rows. 52 weeks (a year) is the ceiling.
     const repeatCount = Math.max(
       1,
       Math.min(52, Number.isFinite(Number(repeatWeeks)) ? Math.floor(Number(repeatWeeks)) : 1),
     );
 
-    const [patient, machine, bed] = await Promise.all([
-      prisma.patient.findFirst({ where: { id: patientId, tenantId: req.user.tenantId } }),
-      prisma.dialysisMachine.findFirst({ where: { id: machineId, tenantId: req.user.tenantId, status: { not: 'retired' } } }),
-      bedId ? prisma.bed.findFirst({ where: { id: bedId, branchId: req.user.branchId, category: 'DIALYSIS' } }) : Promise.resolve(true),
-    ]);
-    if (!patient) return res.status(404).json({ error: 'Patient not found in this tenant' });
-    if (!machine) return res.status(404).json({ error: 'Machine not found or retired' });
-    if (bedId && !bed) return res.status(404).json({ error: 'Bed not found or not a dialysis bed' });
+    // ------------------------------------------------------------------
+    // Pre-flight checks. Each Prisma call is wrapped individually so a
+    // surprise error doesn't bubble up as a generic 500.
+    // ------------------------------------------------------------------
+    let patient;
+    try {
+      patient = await prisma.patient.findFirst({
+        where: { id: patientId, tenantId: req.user.tenantId },
+      });
+    } catch (e: any) {
+      return fail(500, `Patient lookup failed: ${e?.message || e}`, { code: e?.code });
+    }
+    if (!patient) return fail(404, 'Patient not found in this tenant');
 
-    const created: any[] = [];
-    const skipped: Array<{ date: string; reason: string }> = [];
+    let machine;
+    try {
+      machine = await prisma.dialysisMachine.findFirst({
+        where: { id: machineId, tenantId: req.user.tenantId, status: { not: 'retired' } },
+      });
+    } catch (e: any) {
+      return fail(500, `Machine lookup failed: ${e?.message || e}`, { code: e?.code });
+    }
+    if (!machine) return fail(404, 'Machine not found or retired');
+
+    if (bedId) {
+      try {
+        const bed = await prisma.bed.findFirst({
+          where: { id: bedId, branchId: req.user.branchId, category: 'DIALYSIS' },
+        });
+        if (!bed) return fail(404, 'Bed not found or not a dialysis bed');
+      } catch (e: any) {
+        return fail(500, `Bed lookup failed: ${e?.message || e}`, { code: e?.code });
+      }
+    }
 
     // Build the list of dates: startDate, +7d, +14d, …
     const targetDates: Date[] = [];
@@ -3968,10 +3990,61 @@ app.post('/api/dialysis/sessions', authenticateToken, async (req: any, res: Resp
       targetDates.push(d);
     }
 
-    // Best-effort: create each session in its own try/catch so a single
-    // week conflict doesn't fail the whole recurring schedule.
+    // ------------------------------------------------------------------
+    // Pre-check conflicts in one batched query — avoids relying on the
+    // database's unique constraint (which depends on the migration having
+    // applied) and gives a friendlier per-week reason without throwing.
+    // ------------------------------------------------------------------
+    let existingConflicts: any[] = [];
+    try {
+      existingConflicts = await prisma.dialysisSession.findMany({
+        where: {
+          tenantId: req.user.tenantId,
+          slot,
+          scheduledDate: { in: targetDates },
+          OR: [
+            { machineId },
+            ...(bedId ? [{ bedId } as any] : []),
+          ],
+        },
+        select: { scheduledDate: true, machineId: true, bedId: true },
+      });
+    } catch (e: any) {
+      // If the slot/bedId columns don't exist yet (migration not applied),
+      // this query fails. Surface that clearly so the operator can re-run
+      // migrations rather than seeing a generic 500.
+      const msg = String(e?.message || e || '');
+      if (msg.includes('column') && (msg.includes('slot') || msg.includes('bedId'))) {
+        return fail(503, 'Dialysis booking columns missing — run migrate deploy', {
+          code: e?.code,
+          detail: msg.slice(0, 240),
+        });
+      }
+      return fail(500, `Conflict pre-check failed: ${msg.slice(0, 240)}`, { code: e?.code });
+    }
+
+    const conflictByDate: Record<string, { machine: boolean; bed: boolean }> = {};
+    for (const c of existingConflicts) {
+      const key = (c.scheduledDate as Date).toISOString().slice(0, 10);
+      if (!conflictByDate[key]) conflictByDate[key] = { machine: false, bed: false };
+      if (c.machineId === machineId) conflictByDate[key].machine = true;
+      if (bedId && c.bedId === bedId) conflictByDate[key].bed = true;
+    }
+
+    const created: any[] = [];
+    const skipped: Array<{ date: string; reason: string }> = [];
+
     for (const d of targetDates) {
       const yyyyMmDd = d.toISOString().slice(0, 10);
+      const conflict = conflictByDate[yyyyMmDd];
+      if (conflict?.machine) {
+        skipped.push({ date: yyyyMmDd, reason: 'Machine already booked for that slot' });
+        continue;
+      }
+      if (conflict?.bed) {
+        skipped.push({ date: yyyyMmDd, reason: 'Bed already booked for that slot' });
+        continue;
+      }
       try {
         const session = await prisma.dialysisSession.create({
           data: {
@@ -3991,50 +4064,32 @@ app.post('/api/dialysis/sessions', authenticateToken, async (req: any, res: Resp
         });
         created.push(session);
       } catch (err: any) {
+        // Last-line-of-defense per-week catch. Anything that gets here is
+        // logged + surfaced with the actual message — never a silent 500.
+        const msg = err?.meta?.message || err?.message || String(err);
+        console.error(`[dialysis] create failed for ${yyyyMmDd}:`, err);
         if (err?.code === 'P2002') {
-          const target = err.meta?.target || '';
-          const isMachine = String(target).includes('machineId');
-          const isBed = String(target).includes('bedId');
-          skipped.push({
-            date: yyyyMmDd,
-            reason: isMachine
-              ? 'Machine already booked for that slot'
-              : isBed
-                ? 'Bed already booked for that slot'
-                : 'Slot already taken',
-          });
+          skipped.push({ date: yyyyMmDd, reason: 'Slot already taken (race condition)' });
         } else {
-          // Unexpected error on a single week — log and mark skipped so the
-          // operator gets a clear summary instead of a 500 that loses
-          // partial progress.
-          console.error(`Dialysis session create failed for ${yyyyMmDd}:`, err);
-          skipped.push({ date: yyyyMmDd, reason: 'Unexpected error — see server logs' });
+          skipped.push({ date: yyyyMmDd, reason: `${msg.slice(0, 180)}${err?.code ? ` (${err.code})` : ''}` });
         }
       }
     }
 
-    // Single-session callers (repeatWeeks=1) get the original single-object
-    // response shape so the existing UI keeps working. Recurring callers
-    // get { created, skipped } so they can show a summary.
     if (repeatCount === 1) {
       if (created.length === 0) {
-        const reason = skipped[0]?.reason || 'Could not create session';
-        return res.status(409).json({ error: reason });
+        return res.status(409).json({
+          error: skipped[0]?.reason || 'Could not create session',
+          build: DIALYSIS_BUILD,
+        });
       }
       return res.status(201).json(created[0]);
     }
-    res.status(201).json({ created, skipped, totalRequested: repeatCount });
+    return res.status(201).json({ created, skipped, totalRequested: repeatCount, build: DIALYSIS_BUILD });
   } catch (error: any) {
     console.error('Create dialysis session error:', error);
-    // Surface the actual cause so the operator can diagnose without
-    // digging through Vercel logs. Prisma errors carry a `code` and
-    // a useful `message`; anything else falls back to error.message
-    // or a generic string.
-    res.status(500).json({
-      error: error?.code === 'P2003'
-        ? 'A referenced record (patient/machine/bed) does not exist.'
-        : error?.meta?.message || error?.message || 'Internal server error',
-      code: error?.code || undefined,
+    return fail(500, error?.meta?.message || error?.message || String(error) || 'Unknown error', {
+      code: error?.code,
     });
   }
 });
