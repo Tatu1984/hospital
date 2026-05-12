@@ -3637,6 +3637,87 @@ app.post('/api/emergency/cases/:id/discharge', authenticateToken, async (req: an
 // ===========================
 // DIALYSIS APIs
 // ===========================
+
+// One-click seed for the dialysis unit. Creates a "Dialysis" ward + 10
+// chair beds + 15 machines (1.5× spare ratio so a failed machine
+// doesn't cancel a session). Idempotent — re-runs only fill in what's
+// missing. Returns a summary so the UI can tell the operator what got
+// added.
+app.post('/api/dialysis/seed', authenticateToken, async (req: any, res: Response) => {
+  if (!req.user?.roleIds?.includes('ADMIN')) {
+    return res.status(403).json({ error: 'admin only' });
+  }
+  const targetBeds = 10;
+  const targetMachines = 15;
+  try {
+    // Ward — find/create exactly like the standard-ward seed does.
+    let ward = await prisma.ward.findFirst({
+      where: { tenantId: req.user.tenantId, type: 'DIALYSIS' },
+    });
+    if (!ward) {
+      ward = await prisma.ward.create({
+        data: {
+          tenantId: req.user.tenantId,
+          branchId: req.user.branchId,
+          name: 'Dialysis',
+          type: 'DIALYSIS',
+          floor: '',
+          totalBeds: targetBeds,
+          tariffPerDay: 2000,
+          isActive: true,
+        },
+      });
+    }
+
+    // Beds — count existing and add the difference.
+    const existingBeds = await prisma.bed.count({
+      where: { branchId: req.user.branchId, category: 'DIALYSIS' },
+    });
+    const bedsToAdd = Math.max(0, targetBeds - existingBeds);
+    if (bedsToAdd > 0) {
+      const rows = Array.from({ length: bedsToAdd }, (_, i) => ({
+        branchId: req.user.branchId,
+        wardId: ward!.id,
+        bedNumber: `DLY-${String(existingBeds + i + 1).padStart(2, '0')}`,
+        category: 'DIALYSIS',
+        status: 'vacant',
+      }));
+      await prisma.bed.createMany({ data: rows, skipDuplicates: true });
+    }
+
+    // Machines — same idempotent pattern, separate inventory pool.
+    const existingMachines = await prisma.dialysisMachine.count({
+      where: { tenantId: req.user.tenantId, status: { not: 'retired' } },
+    });
+    const machinesToAdd = Math.max(0, targetMachines - existingMachines);
+    if (machinesToAdd > 0) {
+      const rows = Array.from({ length: machinesToAdd }, (_, i) => {
+        const n = String(existingMachines + i + 1).padStart(2, '0');
+        return {
+          tenantId: req.user.tenantId,
+          branchId: req.user.branchId,
+          machineName: `Machine ${n}`,
+          machineCode: `DM-${n}`,
+          modality: 'HD',
+          status: 'available',
+        };
+      });
+      await prisma.dialysisMachine.createMany({ data: rows, skipDuplicates: true });
+    }
+
+    res.json({
+      ok: true,
+      summary: {
+        beds: { existing: existingBeds, created: bedsToAdd, total: existingBeds + bedsToAdd },
+        machines: { existing: existingMachines, created: machinesToAdd, total: existingMachines + machinesToAdd },
+      },
+    });
+  } catch (error) {
+    console.error('Seed dialysis error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Machine inventory + per-slot session register. Beds for dialysis live
 // in the regular Bed table with category='DIALYSIS'. Machines are a
 // separate, smaller pool that exceeds bed count so a failed machine
@@ -3777,14 +3858,36 @@ app.get('/api/dialysis/sessions', authenticateToken, async (req: any, res: Respo
     const sessions = await prisma.dialysisSession.findMany({
       where,
       include: {
-        patient: { select: { id: true, name: true, mrn: true } },
+        patient: {
+          select: {
+            id: true,
+            name: true,
+            mrn: true,
+            // Latest admission's admitting doctor — that's the "respective
+            // doctor of the patient" the register column shows. Limit to
+            // the most recent so we don't over-fetch.
+            admissions: {
+              orderBy: { admissionDate: 'desc' },
+              take: 1,
+              select: {
+                admittingDoctor: { select: { id: true, name: true } },
+              },
+            },
+          },
+        },
         machine: { select: { id: true, machineName: true, machineCode: true, status: true } },
       },
       orderBy: dateParam
         ? [{ slot: 'asc' }, { createdAt: 'asc' }]
         : [{ scheduledDate: 'desc' }, { createdAt: 'desc' }],
     });
-    res.json(sessions);
+    // Flatten the doctor onto the session so the frontend doesn't need to
+    // know about admission relations.
+    const enriched = sessions.map((s) => ({
+      ...s,
+      patientDoctor: s.patient?.admissions?.[0]?.admittingDoctor?.name || null,
+    }));
+    res.json(enriched);
   } catch (error) {
     console.error('Get dialysis sessions error:', error);
     res.status(500).json({ error: 'Internal server error' });

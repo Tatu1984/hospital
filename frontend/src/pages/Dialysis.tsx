@@ -495,6 +495,9 @@ interface SlotRow {
   notes?: string | null;
   patient?: { id: string; name: string; mrn: string } | null;
   machine?: { id: string; machineName: string; machineCode: string; status: string } | null;
+  // Flattened "treating doctor" — pulled from the patient's latest
+  // admission's admittingDoctor on the backend.
+  patientDoctor?: string | null;
 }
 
 function todayYMD(): string {
@@ -546,13 +549,28 @@ function DialysisRegisterPanel({
   const bedCount = beds.length;
   const ratioOk = bedCount === 0 || machineCount >= Math.ceil(bedCount * 1.5);
 
-  function openBookingFor(slot: string) {
+  function openBookingFor(slot: string, bedId?: string) {
     setBookingSlot(slot);
     setBookingPatient('');
     setBookingMachine('');
-    setBookingBed('');
+    setBookingBed(bedId || '');
     setBookingNotes('');
     setBookingOpen(true);
+  }
+
+  async function seedDialysis() {
+    try {
+      const res = await api.post('/api/dialysis/seed');
+      const s = res.data?.summary;
+      await load();
+      await onChanged();
+      toast.success(
+        'Dialysis seeded',
+        `Beds: ${s?.beds?.total ?? 10} (added ${s?.beds?.created ?? 0}). Machines: ${s?.machines?.total ?? 15} (added ${s?.machines?.created ?? 0}).`,
+      );
+    } catch (err: any) {
+      toast.error('Could not seed dialysis', err?.response?.data?.error || err?.message || 'Try again.');
+    }
   }
 
   async function submitBooking() {
@@ -621,79 +639,145 @@ function DialysisRegisterPanel({
             </Badge>
           )}
           {bedCount === 0 && (
-            <Badge variant="secondary" className="bg-rose-100 text-rose-900">
-              No dialysis beds — add some via Master Data → Beds (category Dialysis)
-            </Badge>
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary" className="bg-rose-100 text-rose-900">
+                No dialysis beds configured
+              </Badge>
+              <Button size="sm" onClick={seedDialysis}>
+                <Plus className="w-3 h-3 mr-1" />
+                Seed 10 beds + 15 machines
+              </Button>
+            </div>
+          )}
+          {bedCount > 0 && machineCount === 0 && (
+            <Button size="sm" variant="outline" onClick={seedDialysis}>
+              <Plus className="w-3 h-3 mr-1" />
+              Add 15 machines
+            </Button>
           )}
         </CardContent>
       </Card>
 
+      {/* Per-slot view: one card per slot containing a 5-wide grid of
+          bed tiles. Each tile shows the booking (patient + treating
+          doctor) or a + Book action. The bed becomes the primary unit
+          of UI — the operator sees "Bed DLY-03 is booked for Suresh K.
+          under Dr Sharma" at a glance. */}
       {DIALYSIS_SLOTS.map((s) => {
-        const rows = sessionsBySlot[s.code] || [];
+        const slotSessions = sessionsBySlot[s.code] || [];
+        const sessionByBedId: Record<string, SlotRow> = {};
+        for (const row of slotSessions) {
+          if (row.bedId) sessionByBedId[row.bedId] = row;
+        }
+        // Sessions without a bedId — render as extra tiles at the end so
+        // the operator can still see / cancel them.
+        const unassignedSessions = slotSessions.filter((r) => !r.bedId);
         return (
           <Card key={s.code}>
             <CardHeader className="pb-2 flex flex-row items-center justify-between">
-              <div>
-                <CardTitle className="text-base flex items-center gap-2">
-                  {s.label}
-                  <Badge variant="secondary" className="font-normal">
-                    {rows.length} / {bedCount || '∞'}
-                  </Badge>
-                </CardTitle>
-              </div>
+              <CardTitle className="text-base flex items-center gap-2">
+                {s.label}
+                <Badge variant="secondary" className="font-normal">
+                  {slotSessions.length} / {bedCount || 0} booked
+                </Badge>
+              </CardTitle>
               <Button
                 size="sm"
+                variant="outline"
                 onClick={() => openBookingFor(s.code)}
                 disabled={loading || machineCount === 0}
               >
                 <Plus className="w-3 h-3 mr-1" />
-                Book
+                Book without bed
               </Button>
             </CardHeader>
             <CardContent className="pt-0">
-              {rows.length === 0 ? (
-                <div className="text-sm text-slate-500 italic py-3">No bookings for this slot.</div>
+              {beds.length === 0 ? (
+                <div className="text-sm text-slate-500 italic py-3">
+                  No dialysis beds yet. Use the "Seed 10 beds + 15 machines" button above.
+                </div>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Patient</TableHead>
-                      <TableHead>MRN</TableHead>
-                      <TableHead>Machine</TableHead>
-                      <TableHead>Bed</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {rows.map((row) => {
-                      const bed = beds.find((b) => b.id === row.bedId);
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
+                  {beds.map((bed) => {
+                    const sess = sessionByBedId[bed.id];
+                    if (sess) {
                       return (
-                        <TableRow key={row.id}>
-                          <TableCell className="font-medium">{row.patient?.name || '—'}</TableCell>
-                          <TableCell>{row.patient?.mrn || '—'}</TableCell>
-                          <TableCell>
-                            {row.machine?.machineName || '—'}
-                            {row.machine?.machineCode && (
-                              <span className="text-xs text-slate-500"> · {row.machine.machineCode}</span>
-                            )}
-                          </TableCell>
-                          <TableCell>{bed?.bedNumber || (row.bedId ? row.bedId : '—')}</TableCell>
-                          <TableCell><StatusBadge value={row.status} /></TableCell>
-                          <TableCell className="text-right">
+                        <div
+                          key={bed.id}
+                          className="rounded-md border-2 border-blue-200 bg-blue-50 p-2"
+                        >
+                          <div className="flex items-baseline justify-between gap-1">
+                            <div className="font-medium text-sm">{bed.bedNumber}</div>
                             <Button
                               size="sm"
                               variant="ghost"
-                              onClick={() => cancelSession(row.id)}
+                              className="h-6 w-6 p-0"
+                              onClick={() => cancelSession(sess.id)}
+                              title="Cancel session"
                             >
                               <Trash2 className="w-3 h-3" />
                             </Button>
-                          </TableCell>
-                        </TableRow>
+                          </div>
+                          <div className="text-xs font-medium text-slate-900 mt-0.5 line-clamp-1">
+                            {sess.patient?.name || 'Unknown'}
+                          </div>
+                          <div className="text-[10px] text-slate-500 line-clamp-1">
+                            {sess.patient?.mrn || ''}
+                          </div>
+                          <div className="text-[10px] text-slate-600 mt-1 line-clamp-1">
+                            {sess.patientDoctor ? `Dr ${sess.patientDoctor}` : 'No doctor assigned'}
+                          </div>
+                          <div className="text-[10px] text-slate-500 mt-0.5 line-clamp-1">
+                            {sess.machine?.machineCode || sess.machine?.machineName || ''}
+                          </div>
+                        </div>
                       );
-                    })}
-                  </TableBody>
-                </Table>
+                    }
+                    return (
+                      <button
+                        key={bed.id}
+                        type="button"
+                        onClick={() => openBookingFor(s.code, bed.id)}
+                        disabled={loading || machineCount === 0}
+                        className="text-left rounded-md border-2 border-dashed border-slate-200 bg-white p-2 hover:border-slate-400 hover:bg-slate-50 transition disabled:opacity-50"
+                      >
+                        <div className="font-medium text-sm">{bed.bedNumber}</div>
+                        <div className="text-xs text-slate-400 italic mt-0.5">Vacant</div>
+                        <div className="text-[10px] text-blue-600 mt-2 flex items-center gap-0.5">
+                          <Plus className="w-3 h-3" /> Book
+                        </div>
+                      </button>
+                    );
+                  })}
+
+                  {unassignedSessions.map((row) => (
+                    <div
+                      key={row.id}
+                      className="rounded-md border-2 border-amber-200 bg-amber-50 p-2"
+                    >
+                      <div className="flex items-baseline justify-between gap-1">
+                        <div className="text-[10px] uppercase tracking-wide text-amber-700">No bed</div>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 w-6 p-0"
+                          onClick={() => cancelSession(row.id)}
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </Button>
+                      </div>
+                      <div className="text-xs font-medium text-slate-900 mt-0.5 line-clamp-1">
+                        {row.patient?.name || 'Unknown'}
+                      </div>
+                      <div className="text-[10px] text-slate-500 line-clamp-1">
+                        {row.patient?.mrn || ''}
+                      </div>
+                      <div className="text-[10px] text-slate-600 mt-1 line-clamp-1">
+                        {row.patientDoctor ? `Dr ${row.patientDoctor}` : 'No doctor assigned'}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               )}
             </CardContent>
           </Card>
