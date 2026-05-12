@@ -508,6 +508,16 @@ function todayYMD(): string {
   return `${y}-${m}-${day}`;
 }
 
+// Last day of the same month as the given YYYY-MM-DD. Used as the
+// default "Repeat until" target so a permanent patient gets the rest
+// of the current month booked in one click.
+function endOfMonthYMD(ymd: string): string {
+  const d = new Date(`${ymd}T00:00:00.000Z`);
+  if (Number.isNaN(d.getTime())) return ymd;
+  const eom = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0));
+  return eom.toISOString().slice(0, 10);
+}
+
 function DialysisRegisterPanel({
   machines,
   patients,
@@ -529,6 +539,11 @@ function DialysisRegisterPanel({
   const [bookingMachine, setBookingMachine] = useState<string>('');
   const [bookingBed, setBookingBed] = useState<string>('');
   const [bookingNotes, setBookingNotes] = useState<string>('');
+  // Recurrence — for a "permanent" patient who comes the same day +
+  // slot every week. Operator picks "Repeat until <date>"; we compute
+  // the number of weeks from start to that date.
+  const [bookingRepeat, setBookingRepeat] = useState(false);
+  const [bookingRepeatUntil, setBookingRepeatUntil] = useState<string>('');
 
   async function load() {
     setLoading(true);
@@ -555,6 +570,9 @@ function DialysisRegisterPanel({
     setBookingMachine('');
     setBookingBed(bedId || '');
     setBookingNotes('');
+    setBookingRepeat(false);
+    // Default "until" = last day of the same month as `date`.
+    setBookingRepeatUntil(endOfMonthYMD(date));
     setBookingOpen(true);
   }
 
@@ -578,21 +596,107 @@ function DialysisRegisterPanel({
       toast.warning('Patient and machine are required');
       return;
     }
+    // Compute the number of weekly repeats. Inclusive of start; rounded
+    // down to whole weeks. 1 = just today (no recurrence).
+    let repeatWeeks = 1;
+    if (bookingRepeat && bookingRepeatUntil) {
+      const start = new Date(`${date}T00:00:00.000Z`).getTime();
+      const until = new Date(`${bookingRepeatUntil}T00:00:00.000Z`).getTime();
+      if (until < start) {
+        toast.warning('Until date is before the start', 'Pick an "until" date on or after the booking date.');
+        return;
+      }
+      const days = Math.floor((until - start) / (1000 * 60 * 60 * 24));
+      repeatWeeks = Math.min(52, Math.floor(days / 7) + 1);
+    }
     try {
-      await api.post('/api/dialysis/sessions', {
+      const res = await api.post('/api/dialysis/sessions', {
         patientId: bookingPatient,
         machineId: bookingMachine,
         bedId: bookingBed || null,
         sessionDate: date,
         slot: bookingSlot,
         notes: bookingNotes || null,
+        repeatWeeks,
       });
       setBookingOpen(false);
       await load();
       await onChanged();
-      toast.success('Session booked', `Patient added to ${slotLabel(bookingSlot)}.`);
+      if (repeatWeeks === 1) {
+        toast.success('Session booked', `Patient added to ${slotLabel(bookingSlot)}.`);
+      } else {
+        const data = res.data;
+        const created = data?.created?.length ?? 0;
+        const skipped = data?.skipped?.length ?? 0;
+        toast.success(
+          'Recurring sessions booked',
+          `${created} of ${repeatWeeks} weeks scheduled${skipped > 0 ? ` · ${skipped} skipped (conflicts)` : ''}.`,
+        );
+      }
     } catch (err: any) {
       toast.error('Could not book', err?.response?.data?.error || err?.message || 'Try again.');
+    }
+  }
+
+  // Download the week containing `date` as CSV — for the on-ground team
+  // to print and pin up. We hit /api/dialysis/sessions with from/to so
+  // the server returns one week's worth of bookings (sorted by date,
+  // slot, then bed). Falls back gracefully if the range query isn't
+  // supported yet (still produces the visible-day CSV).
+  async function downloadWeekly() {
+    const start = new Date(`${date}T00:00:00.000Z`);
+    // Anchor on Monday of the week containing `date`. JS getUTCDay()
+    // returns 0 for Sunday; shift to a Mon=0 index.
+    const dow = (start.getUTCDay() + 6) % 7;
+    const monday = new Date(start.getTime() - dow * 86400000);
+    const sunday = new Date(monday.getTime() + 6 * 86400000);
+    const fromYmd = monday.toISOString().slice(0, 10);
+    const toYmd = sunday.toISOString().slice(0, 10);
+    try {
+      const res = await api.get('/api/dialysis/sessions', { params: { from: fromYmd, to: toYmd } });
+      const rows: SlotRow[] = Array.isArray(res.data) ? res.data : [];
+      // Group by date for readable export ordering.
+      const order: Record<string, number> = { SLOT_1: 1, SLOT_2: 2, SLOT_3: 3, SLOT_4: 4 };
+      rows.sort((a, b) => {
+        const da = (a as any).scheduledDate || '';
+        const db = (b as any).scheduledDate || '';
+        if (da !== db) return da < db ? -1 : 1;
+        return (order[a.slot] || 99) - (order[b.slot] || 99);
+      });
+      const header = ['Date', 'Slot', 'Bed', 'Patient', 'MRN', 'Doctor', 'Machine', 'Status', 'Notes'];
+      const escape = (v: any) => {
+        if (v == null) return '';
+        const s = String(v);
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const lines = [header.join(',')];
+      for (const r of rows) {
+        const bed = beds.find((b) => b.id === r.bedId);
+        const dt = ((r as any).scheduledDate || '').slice(0, 10);
+        lines.push([
+          dt,
+          slotLabel(r.slot),
+          bed?.bedNumber || (r.bedId || ''),
+          r.patient?.name || '',
+          r.patient?.mrn || '',
+          r.patientDoctor ? `Dr ${r.patientDoctor}` : '',
+          r.machine?.machineCode || r.machine?.machineName || '',
+          r.status || '',
+          (r as any).notes || '',
+        ].map(escape).join(','));
+      }
+      const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `dialysis-week-${fromYmd}-to-${toYmd}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success('Schedule downloaded', `${rows.length} bookings for ${fromYmd} → ${toYmd}.`);
+    } catch (err: any) {
+      toast.error('Could not download', err?.response?.data?.error || err?.message || 'Try again.');
     }
   }
 
@@ -629,6 +733,9 @@ function DialysisRegisterPanel({
               className="w-44"
             />
           </div>
+          <Button size="sm" variant="outline" onClick={downloadWeekly}>
+            Download week (CSV)
+          </Button>
           <div className="text-xs text-slate-500">
             <span className="font-medium">{bedCount}</span> bed{bedCount === 1 ? '' : 's'} ·{' '}
             <span className="font-medium">{machineCount}</span> machine{machineCount === 1 ? '' : 's'}
@@ -840,10 +947,62 @@ function DialysisRegisterPanel({
                 placeholder="Anything the team should know"
               />
             </div>
+
+            {/* Recurrence — for permanent dialysis patients who come on
+                the same weekday + slot every week. We book the whole
+                run in one click; conflicts on individual weeks are
+                reported in the success toast. */}
+            <div className="col-span-2 border rounded-md p-3 bg-slate-50 space-y-2">
+              <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={bookingRepeat}
+                  onChange={(e) => setBookingRepeat(e.target.checked)}
+                  className="w-4 h-4"
+                />
+                Repeat weekly — same day + slot
+              </label>
+              {bookingRepeat && (
+                <div className="flex flex-wrap items-end gap-2 ml-6">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Until (inclusive)</Label>
+                    <Input
+                      type="date"
+                      value={bookingRepeatUntil}
+                      onChange={(e) => setBookingRepeatUntil(e.target.value)}
+                      min={date}
+                      className="w-44"
+                    />
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    type="button"
+                    onClick={() => setBookingRepeatUntil(endOfMonthYMD(date))}
+                  >
+                    End of month
+                  </Button>
+                  {bookingRepeatUntil && bookingRepeatUntil >= date && (
+                    <div className="text-xs text-slate-500">
+                      {(() => {
+                        const days = Math.floor(
+                          (new Date(`${bookingRepeatUntil}T00:00:00.000Z`).getTime() -
+                            new Date(`${date}T00:00:00.000Z`).getTime()) / 86400000,
+                        );
+                        const weeks = Math.min(52, Math.floor(days / 7) + 1);
+                        return `→ ${weeks} session${weeks === 1 ? '' : 's'} will be booked`;
+                      })()}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setBookingOpen(false)}>Cancel</Button>
-            <Button onClick={submitBooking}>Book session</Button>
+            <Button onClick={submitBooking}>
+              {bookingRepeat ? 'Book recurring sessions' : 'Book session'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -3848,7 +3848,23 @@ app.get('/api/dialysis/sessions', authenticateToken, async (req: any, res: Respo
     //     shape (array). The register UI filters by date itself.
     const where: any = { tenantId: req.user.tenantId };
     const dateParam = req.query.date as string | undefined;
-    if (dateParam) {
+    const fromParam = req.query.from as string | undefined;
+    const toParam = req.query.to as string | undefined;
+    if (fromParam || toParam) {
+      // Range query — used by the weekly CSV export.
+      const range: any = {};
+      if (fromParam) {
+        const d = new Date(`${fromParam}T00:00:00.000Z`);
+        if (Number.isNaN(d.getTime())) return res.status(400).json({ error: 'Invalid `from` — use YYYY-MM-DD' });
+        range.gte = d;
+      }
+      if (toParam) {
+        const d = new Date(`${toParam}T00:00:00.000Z`);
+        if (Number.isNaN(d.getTime())) return res.status(400).json({ error: 'Invalid `to` — use YYYY-MM-DD' });
+        range.lte = d;
+      }
+      where.scheduledDate = range;
+    } else if (dateParam) {
       const scheduledDate = new Date(`${dateParam}T00:00:00.000Z`);
       if (Number.isNaN(scheduledDate.getTime())) {
         return res.status(400).json({ error: 'Invalid date — use YYYY-MM-DD' });
@@ -3898,7 +3914,20 @@ app.post('/api/dialysis/sessions', authenticateToken, async (req: any, res: Resp
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { isValidSlot } = require('./shared/dialysisSlots');
-    const { patientId, machineId, bedId, sessionDate, scheduledDate: scheduledDateBody, slot, notes } = req.body || {};
+    const {
+      patientId,
+      machineId,
+      bedId,
+      sessionDate,
+      scheduledDate: scheduledDateBody,
+      slot,
+      notes,
+      // Recurrence: when set to N > 1, create N weekly bookings (same
+      // weekday, same slot, same machine/bed) starting from sessionDate.
+      // Conflicts on individual weeks are skipped with a reason rather
+      // than failing the whole batch.
+      repeatWeeks,
+    } = req.body || {};
     const dateInput = sessionDate || scheduledDateBody;
     if (!patientId) return res.status(400).json({ error: 'patientId is required' });
     if (!machineId) return res.status(400).json({ error: 'machineId is required' });
@@ -3907,10 +3936,17 @@ app.post('/api/dialysis/sessions', authenticateToken, async (req: any, res: Resp
       return res.status(400).json({ error: 'slot must be SLOT_1/SLOT_2/SLOT_3/SLOT_4' });
     }
 
-    const date = new Date(`${dateInput}T00:00:00.000Z`);
-    if (Number.isNaN(date.getTime())) {
+    const startDate = new Date(`${dateInput}T00:00:00.000Z`);
+    if (Number.isNaN(startDate.getTime())) {
       return res.status(400).json({ error: 'Invalid sessionDate — use YYYY-MM-DD' });
     }
+
+    // Clamp recurrence to a sensible range so a fat-fingered "999" doesn't
+    // try to create thousands of rows. 52 weeks (a year) is the ceiling.
+    const repeatCount = Math.max(
+      1,
+      Math.min(52, Number.isFinite(Number(repeatWeeks)) ? Math.floor(Number(repeatWeeks)) : 1),
+    );
 
     const [patient, machine, bed] = await Promise.all([
       prisma.patient.findFirst({ where: { id: patientId, tenantId: req.user.tenantId } }),
@@ -3921,36 +3957,74 @@ app.post('/api/dialysis/sessions', authenticateToken, async (req: any, res: Resp
     if (!machine) return res.status(404).json({ error: 'Machine not found or retired' });
     if (bedId && !bed) return res.status(404).json({ error: 'Bed not found or not a dialysis bed' });
 
-    const session = await prisma.dialysisSession.create({
-      data: {
-        tenantId: req.user.tenantId,
-        patientId,
-        machineId,
-        bedId: bedId || null,
-        scheduledDate: date,
-        slot,
-        notes: notes || null,
-        status: 'scheduled',
-      },
-      include: {
-        patient: { select: { id: true, name: true, mrn: true } },
-        machine: { select: { id: true, machineName: true, machineCode: true, status: true } },
-      },
-    });
-    res.status(201).json(session);
-  } catch (error: any) {
-    if (error?.code === 'P2002') {
-      const target = error.meta?.target || '';
-      const isMachine = String(target).includes('machineId');
-      const isBed = String(target).includes('bedId');
-      return res.status(409).json({
-        error: isMachine
-          ? 'This machine is already booked for that slot. Pick another machine.'
-          : isBed
-            ? 'This bed is already booked for that slot. Pick another bed.'
-            : 'Double-booking — that slot is already taken.',
-      });
+    const created: any[] = [];
+    const skipped: Array<{ date: string; reason: string }> = [];
+
+    // Build the list of dates: startDate, +7d, +14d, …
+    const targetDates: Date[] = [];
+    for (let i = 0; i < repeatCount; i++) {
+      const d = new Date(startDate.getTime());
+      d.setUTCDate(d.getUTCDate() + i * 7);
+      targetDates.push(d);
     }
+
+    // Best-effort: create each session in its own try/catch so a single
+    // week conflict doesn't fail the whole recurring schedule.
+    for (const d of targetDates) {
+      const yyyyMmDd = d.toISOString().slice(0, 10);
+      try {
+        const session = await prisma.dialysisSession.create({
+          data: {
+            tenantId: req.user.tenantId,
+            patientId,
+            machineId,
+            bedId: bedId || null,
+            scheduledDate: d,
+            slot,
+            notes: notes || null,
+            status: 'scheduled',
+          },
+          include: {
+            patient: { select: { id: true, name: true, mrn: true } },
+            machine: { select: { id: true, machineName: true, machineCode: true, status: true } },
+          },
+        });
+        created.push(session);
+      } catch (err: any) {
+        if (err?.code === 'P2002') {
+          const target = err.meta?.target || '';
+          const isMachine = String(target).includes('machineId');
+          const isBed = String(target).includes('bedId');
+          skipped.push({
+            date: yyyyMmDd,
+            reason: isMachine
+              ? 'Machine already booked for that slot'
+              : isBed
+                ? 'Bed already booked for that slot'
+                : 'Slot already taken',
+          });
+        } else {
+          // Unexpected error on a single week — log and mark skipped so the
+          // operator gets a clear summary instead of a 500 that loses
+          // partial progress.
+          console.error(`Dialysis session create failed for ${yyyyMmDd}:`, err);
+          skipped.push({ date: yyyyMmDd, reason: 'Unexpected error — see server logs' });
+        }
+      }
+    }
+
+    // Single-session callers (repeatWeeks=1) get the original single-object
+    // response shape so the existing UI keeps working. Recurring callers
+    // get { created, skipped } so they can show a summary.
+    if (repeatCount === 1) {
+      if (created.length === 0) {
+        const reason = skipped[0]?.reason || 'Could not create session';
+        return res.status(409).json({ error: reason });
+      }
+      return res.status(201).json(created[0]);
+    }
+    res.status(201).json({ created, skipped, totalRequested: repeatCount });
+  } catch (error: any) {
     console.error('Create dialysis session error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
