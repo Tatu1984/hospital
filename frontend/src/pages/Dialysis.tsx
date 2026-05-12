@@ -634,7 +634,21 @@ function DialysisRegisterPanel({
         );
       }
     } catch (err: any) {
-      toast.error('Could not book', err?.response?.data?.error || err?.message || 'Try again.');
+      // Dump the full server response to the console so an operator can
+      // copy-paste it back if the toast text isn't enough. The toast
+      // already shows server-supplied error if there is one.
+      // eslint-disable-next-line no-console
+      console.error('[dialysis booking] error response:', {
+        status: err?.response?.status,
+        data: err?.response?.data,
+        message: err?.message,
+      });
+      const detail = err?.response?.data?.error
+        || err?.response?.data?.message
+        || err?.message
+        || 'Try again.';
+      const code = err?.response?.data?.code ? ` (${err.response.data.code})` : '';
+      toast.error('Could not book', `${detail}${code}`);
     }
   }
 
