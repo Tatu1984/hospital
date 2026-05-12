@@ -141,6 +141,29 @@ export default function Inpatient() {
     return data?.error || data?.message || e?.message || fallback;
   };
 
+  // Inline seed trigger so an admin who lands on this page with an empty
+  // bed list can fix it in one click without navigating to Master Data.
+  const handleSeedFromHere = async () => {
+    if (!confirm('Create the standard ward types and their default beds? Existing wards are kept; missing beds are filled in.')) return;
+    setLoading(true);
+    try {
+      const res = await api.post('/api/master/seed-standard-wards');
+      await fetchBeds();
+      await fetchAdmissions();
+      const created = (res.data?.summary || []).reduce((a: number, b: any) => a + (b.bedsCreated || 0), 0);
+      const migrated = (res.data?.summary || []).reduce((a: number, b: any) => a + (b.bedsMigrated || 0), 0);
+      toast.success(
+        `Seed complete`,
+        `Created ${created} bed${created === 1 ? '' : 's'}${migrated ? `, migrated ${migrated} from the wrong table` : ''}.`,
+      );
+    } catch (error: any) {
+      console.error('Seed standard wards error:', error);
+      toast.error('Could not seed wards', errMsg(error, 'Try again.'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleAdmit = async () => {
     if (!admitFormData.patientId) { toast.warning('Patient required'); return; }
 
@@ -433,10 +456,19 @@ export default function Inpatient() {
         </CardHeader>
         <CardContent>
           {ipdBeds.length === 0 ? (
-            <div className="text-center py-12 text-slate-500">
-              No beds configured yet. Go to <span className="font-medium">Master Data → Beds</span> to add beds,
-              or use <span className="font-medium">Master Data → Wards/Rooms → Seed standard wards</span> to
-              create the 10 default ward types in one click.
+            <div className="text-center py-12 text-slate-500 space-y-3">
+              <div>
+                {beds.length === 0
+                  ? 'No beds are configured for this branch yet.'
+                  : `${beds.length} bed${beds.length === 1 ? '' : 's'} returned, but none are non-critical (Pvt Cabin / share / Men's / Women's / Nursery). Critical-care beds live on the ICU page.`}
+              </div>
+              <div>
+                Click below to create the 10 standard ward types and their default beds, or
+                go to <span className="font-medium">Master Data → Beds</span> to add beds manually.
+              </div>
+              <Button onClick={handleSeedFromHere} disabled={loading} className="mt-2">
+                {loading ? 'Seeding…' : 'Seed standard wards'}
+              </Button>
             </div>
           ) : (
             <Tabs defaultValue="all">
