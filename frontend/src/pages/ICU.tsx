@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Heart, Activity, Wind, Droplet, Thermometer, Users, Bed, TrendingUp, FileText } from 'lucide-react';
 import api from '../services/api';
+import { useToast } from '../components/Toast';
 
 interface ICUBed {
   id: string;
@@ -129,6 +130,7 @@ interface PickerBed {
 }
 
 export default function ICU() {
+  const toast = useToast();
   const [icuBeds, setICUBeds] = useState<ICUBed[]>([]);
   const [selectedBed, setSelectedBed] = useState<ICUBed | null>(null);
   const [isVitalsDialogOpen, setIsVitalsDialogOpen] = useState(false);
@@ -296,19 +298,17 @@ export default function ICU() {
       // eslint-disable-next-line no-console
       console.log('[icu] bed details after assign:', detailsRes);
       if (!detailsRes?.patient) {
-        // Surface the bad state to the operator instead of silently
-        // showing "no patient" again. They can then share the response
-        // with support.
-        alert(
-          'Transfer call succeeded but the bed still shows no patient. ' +
-          'Please share the console output ([icu] bed details) — there is ' +
-          'a data inconsistency we need to investigate.'
+        toast.warning(
+          'Assigned, but bed still shows no patient',
+          'The transfer call succeeded but the bed isn\'t reporting the new occupant yet. Try closing and reopening the dialog.',
         );
+      } else {
+        toast.success('Patient assigned', 'The bed is now occupied.');
       }
       setBedDetails(detailsRes);
     } catch (err: any) {
       console.error('Assign patient error:', err);
-      alert(err?.response?.data?.error || 'Could not assign patient.');
+      toast.error('Could not assign patient', err?.response?.data?.error || err?.message || 'Try again.');
     } finally {
       setLoading(false);
       setDetailsLoading(false);
@@ -316,20 +316,31 @@ export default function ICU() {
   };
 
   const handleICUTransfer = async () => {
-    if (!bedDetails?.admission?.id || !transferTargetBedId) return;
+    // The transfer button now appears whenever either source (details
+    // endpoint OR the bed-card row) has an admission id, so accept
+    // both here. Earlier this only checked bedDetails and silently
+    // bailed when the details endpoint returned empty.
+    const admissionId = bedDetails?.admission?.id || selectedBed?.admission?.id;
+    if (!admissionId) {
+      toast.warning('No admission found', 'Cannot determine which admission to transfer.');
+      return;
+    }
+    if (!transferTargetBedId) {
+      toast.warning('Pick a destination', 'Select a vacant bed before transferring.');
+      return;
+    }
     setLoading(true);
     try {
-      await api.post(`/api/admissions/${bedDetails.admission.id}/transfer-bed`, {
+      await api.post(`/api/admissions/${admissionId}/transfer-bed`, {
         bedId: transferTargetBedId,
       });
-      // Refresh the ICU bed grid + close both dialogs. The detail panel
-      // will be reopened by the operator if they want.
       await fetchICUBeds();
       setIsTransferOpen(false);
       setIsDetailsDialogOpen(false);
+      toast.success('Patient transferred', 'The bed assignment has been updated.');
     } catch (err: any) {
       console.error('ICU transfer error:', err);
-      alert(err?.response?.data?.error || 'Could not transfer patient.');
+      toast.error('Could not transfer patient', err?.response?.data?.error || err?.message || 'Try again.');
     } finally {
       setLoading(false);
     }
@@ -953,8 +964,9 @@ export default function ICU() {
                           await fetchICUBeds();
                           const res = await api.get(`/api/icu/beds/${selectedBed.id}/details`);
                           setBedDetails(res.data);
+                          toast.success('Bed reset', 'Status is now vacant.');
                         } catch (err: any) {
-                          alert(err?.response?.data?.error || 'Could not reset bed.');
+                          toast.error('Could not reset bed', err?.response?.data?.error || err?.message || 'Try again.');
                         }
                       }}>
                         Reset bed status to vacant
