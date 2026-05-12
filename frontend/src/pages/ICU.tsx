@@ -4,7 +4,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -82,9 +81,6 @@ export default function ICU() {
   const [isVentilatorDialogOpen, setIsVentilatorDialogOpen] = useState(false);
   const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  // Unit filter. 'ALL' shows beds across every critical-care unit;
-  // a code restricts to that unit only.
-  const [unitFilter, setUnitFilter] = useState<string>('ALL');
 
   const [vitalsFormData, setVitalsFormData] = useState<VitalsFormData>({
     bedId: '',
@@ -214,31 +210,33 @@ export default function ICU() {
     }
   };
 
-  // Apply the unit filter to everything below: stats counts, the grid,
-  // and the tabs. Filtering at this single point keeps every downstream
-  // count consistent with what the operator sees on screen.
-  const filteredByUnit = unitFilter === 'ALL'
-    ? icuBeds
-    : icuBeds.filter(b => (b.icuUnit || '').toUpperCase() === unitFilter);
-
-  const occupiedBeds = filteredByUnit.filter(b => b.status === 'OCCUPIED');
+  // Stats counts use the full bed list (across every critical-care unit) so
+  // the totals at the top of the page don't shift when the operator switches
+  // unit tabs — same pattern as the IPD page.
+  const occupiedBeds = icuBeds.filter(b => b.status === 'OCCUPIED');
   const ventilatedPatients = occupiedBeds.filter(b => b.admission?.isVentilated);
-  const availableBeds = filteredByUnit.filter(b => b.status === 'AVAILABLE');
+  const availableBeds = icuBeds.filter(b => b.status === 'AVAILABLE');
 
   const stats = {
-    totalBeds: filteredByUnit.length,
+    totalBeds: icuBeds.length,
     occupied: occupiedBeds.length,
     available: availableBeds.length,
     ventilated: ventilatedPatients.length,
-    occupancyRate: filteredByUnit.length > 0 ? Math.round((occupiedBeds.length / filteredByUnit.length) * 100) : 0
+    occupancyRate: icuBeds.length > 0 ? Math.round((occupiedBeds.length / icuBeds.length) * 100) : 0
   };
 
-  // Per-unit counts so the unit selector can show what's available.
+  // Per-unit counts power the tab labels (e.g. "ITU (6)") and let an empty
+  // unit show a friendly "no beds" panel instead of a blank one.
   const unitCounts: Record<string, number> = {};
   for (const b of icuBeds) {
     const u = (b.icuUnit || 'ICU').toUpperCase();
     unitCounts[u] = (unitCounts[u] || 0) + 1;
   }
+
+  // Beds for a given unit code (or all critical-care beds if `null`).
+  const bedsForUnit = (unitCode: string | null) => unitCode === null
+    ? icuBeds
+    : icuBeds.filter(b => (b.icuUnit || '').toUpperCase() === unitCode);
 
   const getVitalStatus = (vital: string, type: string): 'normal' | 'warning' | 'critical' => {
     if (!vital) return 'normal';
@@ -342,43 +340,44 @@ export default function ICU() {
         </Card>
       </div>
 
-      {/* ICU Beds Overview */}
+      {/* ICU Beds Overview — same layout as IPD: tabs by unit, each tab
+          shows the bed-card grid for that unit. Stats above are global so
+          they don't move around as the operator switches tabs. */}
       <Card>
         <CardHeader>
-          <div className="flex justify-between items-start gap-4 flex-wrap">
-            <div>
-              <CardTitle>ICU Bed Status</CardTitle>
-              <CardDescription>Real-time patient monitoring across ICU / ITU / HDU / ICCU</CardDescription>
-            </div>
-            <div className="flex items-center gap-2">
-              <Label className="text-xs text-slate-500">Unit</Label>
-              <Select value={unitFilter} onValueChange={setUnitFilter}>
-                <SelectTrigger className="w-44">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="ALL">All units ({icuBeds.length})</SelectItem>
-                  {CRITICAL_CARE_UNITS.map((u) => (
-                    <SelectItem key={u.code} value={u.code}>
-                      {u.label} ({unitCounts[u.code] || 0})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
+          <CardTitle>ICU Bed Status</CardTitle>
+          <CardDescription>Real-time patient monitoring across ICU / ITU / HDU / ICCU</CardDescription>
         </CardHeader>
         <CardContent>
+          {icuBeds.length === 0 ? (
+            <div className="text-center py-12 text-slate-500">
+              No ICU beds configured. Go to <span className="font-medium">Master Data → Wards/Rooms</span>{' '}
+              and click <span className="font-medium">Seed standard wards</span> to create ICU / ITU / HDU /
+              ICCU beds.
+            </div>
+          ) : (
           <Tabs defaultValue="all">
-            <TabsList>
-              <TabsTrigger value="all">All Beds ({stats.totalBeds})</TabsTrigger>
-              <TabsTrigger value="occupied">Occupied ({stats.occupied})</TabsTrigger>
-              <TabsTrigger value="ventilated">Ventilated ({stats.ventilated})</TabsTrigger>
+            <TabsList className="flex-wrap h-auto">
+              <TabsTrigger value="all">All ({stats.totalBeds})</TabsTrigger>
+              {CRITICAL_CARE_UNITS.map((u) => (
+                <TabsTrigger key={u.code} value={u.code}>
+                  {u.label} ({unitCounts[u.code] || 0})
+                </TabsTrigger>
+              ))}
             </TabsList>
 
-            <TabsContent value="all">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {filteredByUnit.map((bed) => (
+            {[null, ...CRITICAL_CARE_UNITS.map(u => u.code)].map((unit) => {
+              const tabValue = unit ?? 'all';
+              const beds = bedsForUnit(unit);
+              return (
+                <TabsContent key={tabValue} value={tabValue}>
+                  {beds.length === 0 ? (
+                    <div className="text-center py-10 text-slate-500">
+                      No beds in this unit. Add one from Master Data → Beds, or run "Seed standard wards".
+                    </div>
+                  ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {beds.map((bed) => (
                   // Whole card is clickable — opens the Details dialog. The
                   // inner Vitals / Vent / Details buttons stop event
                   // propagation so they still trigger their own dialogs.
@@ -476,128 +475,12 @@ export default function ICU() {
                   </Card>
                 ))}
               </div>
-            </TabsContent>
-
-            <TabsContent value="occupied">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Bed</TableHead>
-                    <TableHead>Patient</TableHead>
-                    <TableHead>Admission Date</TableHead>
-                    <TableHead>Diagnosis</TableHead>
-                    <TableHead>Latest Vitals</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {occupiedBeds.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={7} className="text-center py-8 text-slate-500">
-                        No occupied beds
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    occupiedBeds.map((bed) => (
-                      <TableRow key={bed.id}>
-                        <TableCell className="font-medium">{bed.bedNumber}</TableCell>
-                        <TableCell>
-                          <div>
-                            <div className="font-medium">{bed.patient?.name}</div>
-                            <div className="text-xs text-slate-500">{bed.patient?.mrn}</div>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          {bed.admission?.admissionDate ?
-                            new Date(bed.admission.admissionDate).toLocaleDateString() :
-                            'N/A'}
-                        </TableCell>
-                        <TableCell className="max-w-xs truncate">{bed.admission?.diagnosis}</TableCell>
-                        <TableCell>
-                          {bed.latestVitals ? (
-                            <div className="text-sm">
-                              <div className={getVitalColor(getVitalStatus(bed.latestVitals.hr, 'hr'))}>
-                                HR: {bed.latestVitals.hr}
-                              </div>
-                              <div className={getVitalColor(getVitalStatus(bed.latestVitals.spo2, 'spo2'))}>
-                                SpO2: {bed.latestVitals.spo2}%
-                              </div>
-                            </div>
-                          ) : (
-                            <span className="text-slate-400">No data</span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          {bed.admission?.isVentilated && (
-                            <Badge className="bg-orange-600">Ventilated</Badge>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex gap-2">
-                            <Button size="sm" variant="outline" onClick={() => openVitalsDialog(bed)}>
-                              Record Vitals
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))
                   )}
-                </TableBody>
-              </Table>
-            </TabsContent>
-
-            <TabsContent value="ventilated">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Bed</TableHead>
-                    <TableHead>Patient</TableHead>
-                    <TableHead>Ventilator Mode</TableHead>
-                    <TableHead>Vitals</TableHead>
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {ventilatedPatients.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={5} className="text-center py-8 text-slate-500">
-                        No ventilated patients
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    ventilatedPatients.map((bed) => (
-                      <TableRow key={bed.id} className="bg-orange-50">
-                        <TableCell className="font-medium">{bed.bedNumber}</TableCell>
-                        <TableCell>
-                          <div className="font-medium">{bed.patient?.name}</div>
-                          <div className="text-xs text-slate-500">{bed.patient?.mrn}</div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline">{bed.admission?.ventilatorMode || 'N/A'}</Badge>
-                        </TableCell>
-                        <TableCell>
-                          {bed.latestVitals && (
-                            <div className="text-sm">
-                              SpO2: {bed.latestVitals.spo2}% | RR: {bed.latestVitals.rr}
-                            </div>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex gap-2">
-                            <Button size="sm" variant="outline" onClick={() => openVentilatorDialog(bed)}>
-                              <Wind className="w-4 h-4 mr-1" />
-                              Update Vent
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </TabsContent>
+                </TabsContent>
+              );
+            })}
           </Tabs>
+          )}
         </CardContent>
       </Card>
 
