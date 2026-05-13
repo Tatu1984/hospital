@@ -261,6 +261,7 @@ model Patient {
   invoices          Invoice[]
   opdNotes          OPDNote[]
   orders            Order[]
+  prescriptions     Prescription[]
   branch            Branch             @relation(fields: [branchId], references: [id])
   tenant            Tenant             @relation(fields: [tenantId], references: [id])
   preAuths          PreAuthorization[]
@@ -316,6 +317,7 @@ model Encounter {
   invoices       Invoice[]
   opdNotes       OPDNote[]
   orders         Order[]
+  prescriptions  Prescription[]
 
   @@map("encounters")
 }
@@ -377,15 +379,32 @@ model OPDNote {
   @@map("opd_notes")
 }
 
+// Schema reconciled with the live `prescriptions` table in migration
+// 20260513000000_reconcile_prescriptions. The original Prisma model only
+// reflected (id, opdNoteId, doctorId, drugs, createdAt) but the live DB
+// also has patientId / encounterId / status / notes / instructions /
+// updatedAt — drift from an earlier iteration that the schema never
+// caught up to. Modelling all of them lets us drop the raw-SQL
+// workarounds in patient.repository, report.repository, and the
+// demo-seed introspection block.
 model Prescription {
-  id        String   @id @default(uuid())
-  opdNoteId String
-  doctorId  String
-  drugs     Json
-  createdAt DateTime @default(now())
-  doctor    User     @relation(fields: [doctorId], references: [id])
-  opdNote   OPDNote  @relation(fields: [opdNoteId], references: [id])
+  id            String    @id @default(uuid())
+  opdNoteId     String
+  patientId     String
+  encounterId   String?
+  doctorId      String
+  drugs         Json
+  status        String    @default("active")
+  notes         String?
+  instructions  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  doctor        User      @relation(fields: [doctorId], references: [id])
+  opdNote       OPDNote   @relation(fields: [opdNoteId], references: [id])
+  patient       Patient   @relation(fields: [patientId], references: [id])
+  encounter     Encounter? @relation(fields: [encounterId], references: [id])
 
+  @@index([patientId, createdAt])
   @@map("prescriptions")
 }
 

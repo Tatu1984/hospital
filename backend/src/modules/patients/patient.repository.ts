@@ -104,7 +104,7 @@ export async function chartFor(tenantId: string, patientId: string) {
   });
   if (!patient) return null;
 
-  const [admissions, encounters, orders, prescriptionsRaw, invoices, surgeries] = await Promise.all([
+  const [admissions, encounters, orders, prescriptions, invoices, surgeries] = await Promise.all([
     prisma.admission.findMany({
       where: { patientId, patient: { tenantId } },
       orderBy: { admissionDate: 'desc' },
@@ -133,16 +133,22 @@ export async function chartFor(tenantId: string, patientId: string) {
       include: { results: { orderBy: { resultedAt: 'desc' } } },
       take: 100,
     }),
-    // Prescriptions are read via raw SQL because of the schema drift on
-    // the prescriptions table (live DB has its own patientId column the
-    // Prisma model doesn't expose). Same workaround as reports module.
-    prisma.$queryRaw<Array<{ id: string; doctorId: string; drugs: any; createdAt: Date }>>`
-      SELECT id, "doctorId", drugs, "createdAt"
-      FROM "prescriptions"
-      WHERE "patientId" = ${patientId}
-      ORDER BY "createdAt" DESC
-      LIMIT 50
-    `,
+    // Migration 20260513000000_reconcile_prescriptions made patientId a
+    // first-class Prisma column with a real FK; the raw-SQL workaround
+    // is gone. doctor is included in the same query so we don't need a
+    // separate fan-out + manual join.
+    prisma.prescription.findMany({
+      where: { patientId },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      select: {
+        id: true,
+        doctorId: true,
+        drugs: true,
+        createdAt: true,
+        doctor: { select: { id: true, name: true } },
+      },
+    }),
     prisma.invoice.findMany({
       where: { patientId },
       orderBy: { createdAt: 'desc' },
@@ -154,16 +160,6 @@ export async function chartFor(tenantId: string, patientId: string) {
       take: 30,
     }),
   ]);
-
-  // Resolve doctor names for prescriptions in one shot.
-  const rxDoctorIds = Array.from(new Set(prescriptionsRaw.map((r) => r.doctorId).filter(Boolean)));
-  const rxDoctors = rxDoctorIds.length
-    ? await prisma.user.findMany({
-        where: { id: { in: rxDoctorIds } },
-        select: { id: true, name: true },
-      })
-    : [];
-  const rxDoctorName: Record<string, string> = Object.fromEntries(rxDoctors.map((d) => [d.id, d.name]));
 
   // Resolve ward names for admissions that have a bed.
   const wardIds = Array.from(new Set(
@@ -182,8 +178,7 @@ export async function chartFor(tenantId: string, patientId: string) {
     admissions,
     encounters,
     orders,
-    prescriptionsRaw,
-    rxDoctorName,
+    prescriptions,
     invoices,
     surgeries,
     wardName,

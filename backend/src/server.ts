@@ -669,68 +669,25 @@ app.post('/api/internal/demo-seed', authenticateToken, async (req: any, res: Res
           plan: 'Symptomatic management. Cough syrup + analgesic. Review in 5 days if not improved.',
         },
       });
-      // Live `prescriptions` table has more NOT NULL columns than the
-      // Prisma schema reflects (drift from an earlier iteration of the
-      // schema; no migration ever dropped them). Discover the actual
-      // NOT NULL columns at runtime and write a permissive INSERT that
-      // covers them with sensible values.
-      const rxId = require('crypto').randomUUID();
+      // Migration 20260513000000_reconcile_prescriptions brought the
+      // live table back in sync with Prisma, so we can use the typed
+      // create call here — no more runtime information_schema lookup.
       const drugs = [
         { name: 'Dextromethorphan syrup', dose: '10 ml', frequency: 'TDS', days: 5, route: 'PO', instructions: 'After meals' },
         { name: 'Paracetamol', dose: '500 mg', frequency: 'SOS', days: 5, route: 'PO', instructions: 'For fever or body ache' },
         { name: 'Steam inhalation', dose: '—', frequency: 'BID', days: 5, route: 'Topical', instructions: '5-10 minutes per session' },
       ];
-      const cols = await prisma.$queryRaw<Array<{ column_name: string; data_type: string; is_nullable: string; column_default: string | null }>>`
-        SELECT column_name, data_type, is_nullable, column_default
-        FROM information_schema.columns
-        WHERE table_name = 'prescriptions'
-      `;
-      // Build a value bag covering every required column; let Postgres
-      // defaults fill in the rest. Maps friendly fields onto whatever
-      // names the live DB actually uses.
-      const now = new Date();
-      const fillers: Record<string, any> = {
-        id: rxId,
-        opdNoteId: opdNote.id,
-        doctorId: doctor.id,
-        drugs: JSON.stringify(drugs),
-        patientId: patient.id,
-        status: 'active',
-        // updatedAt is NOT NULL on the live table without a default
-        // (drift — the rest of the codebase uses Prisma's @updatedAt
-        // marker which auto-fills on update only). Set it explicitly
-        // so the INSERT lands.
-        updatedAt: now,
-        createdAt: now,
-        // Best-guess defaults for any other NOT NULL columns the schema
-        // forgot — we just need the row to land.
-        encounterId: encounter.id,
-        notes: '',
-        instructions: '',
-      };
-      const required = cols.filter((c) => c.is_nullable === 'NO' && c.column_default === null);
-      const includeCols = required.filter((c) => fillers[c.column_name] !== undefined);
-      const missing = required.filter((c) => fillers[c.column_name] === undefined);
-      // Stash for inclusion in the response so an operator can see which
-      // columns we couldn't fill without diving into Vercel logs.
-      (req as any).__rxSkipReason = missing.length ? missing.map((c) => c.column_name) : null;
-      (req as any).__rxAllCols = cols.map((c) => `${c.column_name}:${c.data_type}${c.is_nullable === 'NO' ? '!' : ''}${c.column_default ? '=def' : ''}`);
-      if (missing.length) {
-        // If a NOT NULL column we didn't anticipate exists, log + skip Rx
-        // rather than crashing the whole demo-seed.
-        console.warn('[demo-seed] prescription schema drift — skipping Rx; unknown required columns:', missing.map((c) => c.column_name));
-      } else {
-        const colList = includeCols.map((c) => `"${c.column_name}"`).join(', ');
-        // Postgres won't implicitly text → jsonb (error 42804). Emit an
-        // explicit ::jsonb cast on placeholders for any jsonb column.
-        const placeholders = includeCols.map((c, i) => {
-          const cast = c.data_type === 'jsonb' || c.data_type === 'json' ? '::jsonb' : '';
-          return `$${i + 1}${cast}`;
-        }).join(', ');
-        const values = includeCols.map((c) => fillers[c.column_name]);
-        await prisma.$executeRawUnsafe(`INSERT INTO "prescriptions" (${colList}) VALUES (${placeholders})`, ...values);
-        prescriptionId = rxId;
-      }
+      const rx = await prisma.prescription.create({
+        data: {
+          opdNoteId: opdNote.id,
+          patientId: patient.id,
+          encounterId: encounter.id,
+          doctorId: doctor.id,
+          drugs,
+          status: 'active',
+        },
+      });
+      prescriptionId = rx.id;
     }
 
     return res.json({
@@ -742,12 +699,6 @@ app.post('/api/internal/demo-seed', authenticateToken, async (req: any, res: Res
         invoiceId: invoice.id,
         prescriptionId,
       },
-      // Diagnostic — only present when something is off so the operator
-      // doesn't have to dig through Vercel logs to know why prescriptionId
-      // came back null.
-      rxDiagnostic: (req as any).__rxSkipReason
-        ? { missingRequiredColumns: (req as any).__rxSkipReason, allColumns: (req as any).__rxAllCols }
-        : undefined,
     });
   } catch (e: any) {
     console.error('demo-seed error:', e);
@@ -1496,6 +1447,8 @@ app.post('/api/opd-notes', authenticateToken, async (req: any, res: Response) =>
       await prisma.prescription.create({
         data: {
           opdNoteId: opdNote.id,
+          patientId,
+          encounterId,
           doctorId: req.user.userId,
           drugs: prescription.drugs,
         },

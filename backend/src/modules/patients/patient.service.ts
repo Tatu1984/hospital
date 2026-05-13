@@ -87,7 +87,7 @@ export async function updateMyProfile(
 export async function getChart(tenantId: string, patientId: string) {
   const data = await repo.chartFor(tenantId, patientId);
   if (!data) throw new PatientNotFoundError();
-  const { patient, admissions, encounters, orders, prescriptionsRaw, rxDoctorName, invoices, surgeries, wardName } = data;
+  const { patient, admissions, encounters, orders, prescriptions, invoices, surgeries, wardName } = data;
 
   return {
     patient: {
@@ -149,10 +149,10 @@ export async function getChart(tenantId: string, patientId: string) {
         isCritical: r.isCritical,
       })),
     })),
-    prescriptions: prescriptionsRaw.map((rx: any) => ({
+    prescriptions: prescriptions.map((rx: any) => ({
       id: rx.id,
       issuedAt: rx.createdAt.toISOString(),
-      doctorName: rxDoctorName[rx.doctorId] || null,
+      doctorName: rx.doctor?.name || null,
       drugs: rx.drugs,
     })),
     invoices: invoices.map((inv: any) => ({

@@ -15,41 +15,22 @@ export async function listLabAndRadiologyOrders(patientId: string) {
 }
 
 export async function listPrescriptions(patientId: string) {
-  // The live prescriptions table has both an opdNoteId (FK to OPDNote) AND
-  // its own patientId column — schema drift from an earlier iteration. We
-  // query by patientId directly via raw SQL to catch every row regardless
-  // of how it was inserted, then re-join doctor.name in JS for the display.
-  // Once the schema drift is reconciled (drop redundant patientId or
-  // re-add it to Prisma), this can revert to a typed prisma.prescription
-  // query.
-  const rows = await prisma.$queryRaw<Array<{
-    id: string;
-    doctorId: string;
-    drugs: any;
-    createdAt: Date;
-  }>>`
-    SELECT id, "doctorId", drugs, "createdAt"
-    FROM "prescriptions"
-    WHERE "patientId" = ${patientId}
-    ORDER BY "createdAt" DESC
-    LIMIT 50
-  `;
-  if (rows.length === 0) return [];
-  const doctorIds = Array.from(new Set(rows.map((r) => r.doctorId).filter(Boolean)));
-  const doctors = doctorIds.length
-    ? await prisma.user.findMany({
-        where: { id: { in: doctorIds } },
-        select: { id: true, name: true },
-      })
-    : [];
-  const dn: Record<string, string> = Object.fromEntries(doctors.map((d) => [d.id, d.name]));
-  return rows.map((r) => ({
-    id: r.id,
-    doctorId: r.doctorId,
-    drugs: r.drugs,
-    createdAt: r.createdAt,
-    doctor: r.doctorId ? { name: dn[r.doctorId] || 'Unknown' } : null,
-  }));
+  // Migration 20260513000000_reconcile_prescriptions brought the live
+  // table back in line with the Prisma model, so this can now be a
+  // typed prisma.prescription query — the raw $queryRaw + manual
+  // doctor join is gone.
+  return prisma.prescription.findMany({
+    where: { patientId },
+    orderBy: { createdAt: 'desc' },
+    take: 50,
+    select: {
+      id: true,
+      doctorId: true,
+      drugs: true,
+      createdAt: true,
+      doctor: { select: { name: true } },
+    },
+  });
 }
 
 export async function listInvoices(patientId: string) {
