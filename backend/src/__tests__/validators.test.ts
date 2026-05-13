@@ -788,9 +788,19 @@ describe('Common Validators', () => {
       expect(result.success).toBe(false);
     });
 
-    it('should reject limit greater than 100', () => {
+    it('should accept limit within the 500 cap', () => {
       const result = paginationSchema.safeParse({
         limit: 200,
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.limit).toBe(200);
+      }
+    });
+
+    it('should reject limit greater than the 500 cap', () => {
+      const result = paginationSchema.safeParse({
+        limit: 600,
       });
       expect(result.success).toBe(false);
     });

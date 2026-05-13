@@ -218,7 +218,9 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
 
   // ICU
   'GET /api/icu/beds': ['icu:view'],
+  'GET /api/icu/beds/:id/details': ['icu:view'],
   'POST /api/icu/beds': ['icu:create'],
+  'POST /api/icu/beds/:id/reset': ['icu:edit'],
   'GET /api/icu/patients': ['icu:view'],
   'POST /api/icu/vitals': ['icu_vitals:create'],
   'POST /api/icu/ventilator': ['icu:edit'],
@@ -503,6 +505,7 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   'GET /api/master/departments': ['master_data:view'],
   'GET /api/master/wards': ['master_data:view'],
   'GET /api/master/packages': ['master_data:view'],
+  'GET /api/master/beds': ['master_data:view'],
   'POST /api/master/:type': ['master_data:edit'],
   'PUT /api/master/:type/:id': ['master_data:edit'],
   'DELETE /api/master/:type/:id': ['master_data:edit'],
