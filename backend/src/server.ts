@@ -113,6 +113,8 @@ import { paginate } from './utils/tenantScope';
 
 // Audit log writer (persists to AuditLog table)
 import { writeAudit, clientIp } from './utils/audit';
+import { encryptCredentials, decryptCredentials } from './utils/integrationSecrets';
+import { assertSafeOutboundUrl, UnsafeOutboundUrlError } from './utils/ssrf';
 import {
   workingDaysInclusive,
   daysInMonth,
@@ -7927,12 +7929,16 @@ app.post('/api/users/:id/reset-password', authenticateToken, async (req: any, re
 // Mask the credentials JSON before returning. Replace each value with
 // either 'set' or 'unset'; never leak plaintext over the wire after
 // it's been written. The admin can re-enter credentials to update.
+// Credentials at rest are AES-GCM-encrypted (utils/integrationSecrets);
+// decrypt first so we can mask key-by-key. A row in the legacy plaintext
+// format is masked transparently — decryptCredentials passes it through.
 function maskIntegrationCredentials(row: any): any {
   if (!row) return row;
   const masked = { ...row };
-  if (masked.credentials && typeof masked.credentials === 'object') {
+  if (masked.credentials != null) {
+    const plain = decryptCredentials(masked.credentials);
     masked.credentials = Object.fromEntries(
-      Object.entries(masked.credentials).map(([k, v]) => [k, v ? 'set' : 'unset']),
+      Object.entries(plain).map(([k, v]) => [k, v ? 'set' : 'unset']),
     );
   }
   return masked;
@@ -8008,7 +8014,8 @@ app.post('/api/admin/integrations', authenticateToken, requirePermission('system
         baseUrl: baseUrl || null,
         webUrl: webUrl || null,
         authType: authType || 'api_key',
-        credentials: credentials || {},
+        // AES-GCM envelope. The DB never sees plaintext secrets again.
+        credentials: encryptCredentials(credentials || {}) || undefined,
         headers: headers || null,
         targetModules: Array.isArray(targetModules) ? targetModules : [],
         enabled: enabled !== false,
@@ -8047,9 +8054,11 @@ app.put('/api/admin/integrations/:id', authenticateToken, requirePermission('sys
     if (authType !== undefined) data.authType = authType;
     // Credentials only updated if explicitly provided. If admin sends
     // a partial object, merge with existing so they don't have to re-enter
-    // every secret on every save.
+    // every secret on every save. Decrypt the stored envelope first
+    // (legacy plaintext rows pass through), apply the diff, then
+    // re-encrypt before write.
     if (credentials && typeof credentials === 'object') {
-      const existing = (owned.credentials as any) || {};
+      const existing = decryptCredentials(owned.credentials);
       const merged: Record<string, any> = { ...existing };
       for (const [k, v] of Object.entries(credentials)) {
         // 'set' / 'unset' come from masked GET responses — ignore them
@@ -8057,7 +8066,7 @@ app.put('/api/admin/integrations/:id', authenticateToken, requirePermission('sys
         if (v === '' || v === null) delete merged[k];
         else merged[k] = v;
       }
-      data.credentials = merged;
+      data.credentials = encryptCredentials(merged);
     }
     if (headers !== undefined) data.headers = headers;
     if (Array.isArray(targetModules)) data.targetModules = targetModules;
@@ -8112,7 +8121,7 @@ app.post('/api/admin/integrations/:id/test', authenticateToken, requirePermissio
       return res.status(400).json({ error: 'baseUrl not configured — cannot test' });
     }
 
-    const creds: any = integ.credentials || {};
+    const creds: any = decryptCredentials(integ.credentials);
     const extraHeaders: any = (integ.headers as any) || {};
     const headers: Record<string, string> = { Accept: 'application/json', ...extraHeaders };
 
@@ -8139,15 +8148,32 @@ app.post('/api/admin/integrations/:id/test', authenticateToken, requirePermissio
     let body = '';
     let ok = false;
     try {
+      // SSRF guard: refuse non-http(s) schemes and hosts that resolve
+      // to loopback / RFC1918 / link-local. An admin with system:manage
+      // could otherwise set baseUrl to http://169.254.169.254 (cloud
+      // metadata) or http://localhost:6379 (Redis) and exfiltrate
+      // arbitrary internal-network responses via this endpoint.
+      const safe = await assertSafeOutboundUrl(url);
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), 10_000);
-      const r = await fetch(url, { headers, signal: ctrl.signal as any });
+      // redirect: 'manual' so a 302 to an internal host can't bypass
+      // the guard we just ran on the initial URL.
+      const r = await fetch(safe.href, { headers, signal: ctrl.signal as any, redirect: 'manual' });
       clearTimeout(t);
       status = r.status;
       ok = r.ok;
       const text = await r.text();
       body = text.slice(0, 200);
     } catch (e: any) {
+      if (e instanceof UnsafeOutboundUrlError) {
+        auditLogger.securityEvent('SSRF_BLOCKED', {
+          id: integ.id,
+          url,
+          reason: e.message,
+          by: req.user.userId,
+        });
+        return res.status(400).json({ error: 'UNSAFE_URL', message: e.message });
+      }
       body = e?.message || 'Network error';
       ok = false;
     }
@@ -8178,11 +8204,18 @@ async function findActiveIntegration(tenantId: string, category: string, targetM
   const rows = await prisma.integration.findMany({
     where: { tenantId, category, enabled: true },
   });
-  if (targetModule) {
-    const matching = rows.find((r) => (r.targetModules || []).includes(targetModule));
-    if (matching) return matching;
-  }
-  return rows[0] || null;
+  const pick = (() => {
+    if (targetModule) {
+      const matching = rows.find((r) => (r.targetModules || []).includes(targetModule));
+      if (matching) return matching;
+    }
+    return rows[0] || null;
+  })();
+  if (!pick) return null;
+  // Decrypt credentials before handing the row back. Callers (SMS / email
+  // / payment services) expect a plaintext object so they can pluck
+  // apiKey/secret/etc without knowing the storage format.
+  return { ...pick, credentials: decryptCredentials(pick.credentials) };
 }
 // Re-export so the type is preserved if other modules import this later.
 export { findActiveIntegration };
