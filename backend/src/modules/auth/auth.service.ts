@@ -54,6 +54,11 @@ export async function loginWithPassword(input: MobileLoginInput): Promise<Mobile
     tenantId: user.tenantId,
     branchId: user.branchId,
     roleIds: user.roleIds,
+    // Bake the user's per-user permission overrides into the access token
+    // so the route-level RBAC gate (dynamicRBAC) sees them on every
+    // request without a DB hit. Same trade-off as the desktop login.
+    extraPermissions: user.extraPermissions || [],
+    revokedPermissions: user.revokedPermissions || [],
     patientId: linkedPatient?.id || null,
     // Mobile flag so the auth middleware can branch its rate-limit / refresh
     // policy if we add per-platform tuning later. Harmless if unused.

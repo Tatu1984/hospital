@@ -602,14 +602,24 @@ export function hasPermission(
   return false;
 }
 
-// Helper function to check if user has any of the specified permissions
-export function hasAnyPermission(userRoles: string[], permissions: Permission[]): boolean {
-  return permissions.some(permission => hasPermission(userRoles, permission));
+// Helper function to check if user has any of the specified permissions.
+// Optional overrides arg makes per-user grants/revocations effective at the
+// route-level RBAC gate (dynamicRBAC), not just at the per-handler middleware.
+export function hasAnyPermission(
+  userRoles: string[],
+  permissions: Permission[],
+  overrides?: { extras?: string[]; revoked?: string[] },
+): boolean {
+  return permissions.some(permission => hasPermission(userRoles, permission, overrides));
 }
 
 // Helper function to check if user has all of the specified permissions
-export function hasAllPermissions(userRoles: string[], permissions: Permission[]): boolean {
-  return permissions.every(permission => hasPermission(userRoles, permission));
+export function hasAllPermissions(
+  userRoles: string[],
+  permissions: Permission[],
+  overrides?: { extras?: string[]; revoked?: string[] },
+): boolean {
+  return permissions.every(permission => hasPermission(userRoles, permission, overrides));
 }
 
 // Get all permissions for a user based on their roles + optional

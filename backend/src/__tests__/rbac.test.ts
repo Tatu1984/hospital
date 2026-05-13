@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   ROLE_PERMISSIONS,
   getUserPermissions,
+  hasPermission,
+  hasAnyPermission,
+  hasAllPermissions,
   Role,
   Permission,
 } from '../rbac';
@@ -268,6 +271,76 @@ describe('Permission Utility Functions', () => {
 
       // Should contain same permissions regardless of order
       expect(perms1.sort()).toEqual(perms2.sort());
+    });
+  });
+
+  // Per-user extraPermissions / revokedPermissions are stored on the User row
+  // and baked into the access JWT at login + refresh. The deny-by-default
+  // route gate (dynamicRBAC) and the per-handler middleware (requirePermission /
+  // checkPermission) must consult them, otherwise the schema columns are
+  // dead state. These tests pin that behavior at the rbac helper layer.
+  describe('per-user overrides', () => {
+    it('hasPermission grants a permission that the role lacks via extras', () => {
+      // DOCTOR does not have system:manage.
+      expect(hasPermission(['DOCTOR'], 'system:manage')).toBe(false);
+      const grant = hasPermission(['DOCTOR'], 'system:manage', {
+        extras: ['system:manage'],
+      });
+      expect(grant).toBe(true);
+    });
+
+    it('hasPermission revokes a permission the role would otherwise grant', () => {
+      // DOCTOR does have prescriptions:create.
+      expect(hasPermission(['DOCTOR'], 'prescriptions:create')).toBe(true);
+      const revoked = hasPermission(['DOCTOR'], 'prescriptions:create', {
+        revoked: ['prescriptions:create'],
+      });
+      expect(revoked).toBe(false);
+    });
+
+    it('hasPermission: revocation wins over extra (same permission in both lists)', () => {
+      const result = hasPermission(['DOCTOR'], 'system:manage', {
+        extras: ['system:manage'],
+        revoked: ['system:manage'],
+      });
+      expect(result).toBe(false);
+    });
+
+    it('hasAnyPermission honors overrides', () => {
+      const granted = hasAnyPermission(['DOCTOR'], ['system:manage'], {
+        extras: ['system:manage'],
+      });
+      expect(granted).toBe(true);
+
+      const revoked = hasAnyPermission(['DOCTOR'], ['prescriptions:create'], {
+        revoked: ['prescriptions:create'],
+      });
+      expect(revoked).toBe(false);
+    });
+
+    it('hasAllPermissions honors overrides', () => {
+      const ok = hasAllPermissions(
+        ['DOCTOR'],
+        ['prescriptions:create', 'system:manage'],
+        { extras: ['system:manage'] },
+      );
+      expect(ok).toBe(true);
+
+      const partial = hasAllPermissions(
+        ['DOCTOR'],
+        ['prescriptions:create', 'system:manage'],
+        { extras: [], revoked: ['prescriptions:create'] },
+      );
+      expect(partial).toBe(false);
+    });
+
+    it('getUserPermissions union(roles, extras) minus revoked', () => {
+      const perms = getUserPermissions(['DOCTOR'], {
+        extras: ['system:manage'],
+        revoked: ['prescriptions:create'],
+      });
+      expect(perms).toContain('system:manage');
+      expect(perms).not.toContain('prescriptions:create');
     });
   });
 });

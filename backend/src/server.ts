@@ -974,6 +974,11 @@ app.post('/api/auth/refresh', async (req: Request, res: Response) => {
         tenantId: user.tenantId,
         branchId: user.branchId,
         roleIds: user.roleIds,
+        // Re-bake current overrides into the rotated access token so a
+        // revocation issued via /admin endpoints takes effect within one
+        // refresh cycle (not stuck on the old token until logout).
+        extraPermissions: user.extraPermissions || [],
+        revokedPermissions: user.revokedPermissions || [],
       },
       process.env.JWT_SECRET!,
       { expiresIn: process.env.JWT_EXPIRES_IN || '1h' } as jwt.SignOptions

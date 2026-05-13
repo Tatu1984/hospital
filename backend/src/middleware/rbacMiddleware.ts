@@ -30,6 +30,8 @@ interface AuthenticatedRequest extends Request {
     tenantId: string;
     branchId: string;
     roleIds: string[];
+    extraPermissions?: string[];
+    revokedPermissions?: string[];
   };
 }
 
@@ -78,7 +80,11 @@ export function dynamicRBAC(req: AuthenticatedRequest, res: Response, next: Next
   }
 
   const userRoles = req.user.roleIds || [];
-  if (!hasAnyPermission(userRoles, requiredPermissions)) {
+  const overrides = {
+    extras: req.user.extraPermissions || [],
+    revoked: req.user.revokedPermissions || [],
+  };
+  if (!hasAnyPermission(userRoles, requiredPermissions, overrides)) {
     auditLogger.securityEvent('ACCESS_DENIED', {
       userId: req.user.userId,
       path: req.path,
@@ -154,7 +160,11 @@ export function checkPermission(permission: Permission) {
       });
     }
     const userRoles = req.user.roleIds || [];
-    if (!hasAnyPermission(userRoles, [permission])) {
+    const overrides = {
+      extras: req.user.extraPermissions || [],
+      revoked: req.user.revokedPermissions || [],
+    };
+    if (!hasAnyPermission(userRoles, [permission], overrides)) {
       return res.status(403).json({
         error: 'FORBIDDEN',
         message: 'You do not have permission to perform this action',
