@@ -2,7 +2,7 @@
 // copy (not a shared package) so each app can evolve its API surface
 // independently without an import dance. If the two clients drift, we'll
 // extract a shared `mobile/lib-shared/` workspace package.
-import axios, { InternalAxiosRequestConfig } from 'axios';
+import axios, { AxiosHeaders, InternalAxiosRequestConfig } from 'axios';
 import * as SecureStore from 'expo-secure-store';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'https://hospital-c3k5.vercel.app';
@@ -66,7 +66,9 @@ api.interceptors.response.use(
       original._retry = true;
       const fresh = await refreshAccessToken();
       if (fresh) {
-        original.headers = { ...(original.headers || {}), Authorization: `Bearer ${fresh}` };
+        const headers = new AxiosHeaders(original.headers);
+        headers.set('Authorization', `Bearer ${fresh}`);
+        original.headers = headers;
         return api.request(original);
       }
     }

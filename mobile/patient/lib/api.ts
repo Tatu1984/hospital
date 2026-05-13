@@ -1,6 +1,6 @@
 // Axios client + auth interceptor. Same shape as the web portal's
 // frontend/src/services/api.ts so the two surfaces feel symmetric.
-import axios, { InternalAxiosRequestConfig } from 'axios';
+import axios, { AxiosHeaders, InternalAxiosRequestConfig } from 'axios';
 import * as SecureStore from 'expo-secure-store';
 
 // Defaults to the production backend. Override via EXPO_PUBLIC_API_URL in
@@ -68,7 +68,9 @@ api.interceptors.response.use(
       original._retry = true;
       const fresh = await refreshAccessToken();
       if (fresh) {
-        original.headers = { ...(original.headers || {}), Authorization: `Bearer ${fresh}` };
+        const headers = new AxiosHeaders(original.headers);
+        headers.set('Authorization', `Bearer ${fresh}`);
+        original.headers = headers;
         return api.request(original);
       }
     }
