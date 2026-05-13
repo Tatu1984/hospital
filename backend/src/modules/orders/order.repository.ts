@@ -1,12 +1,20 @@
 import { prisma } from '../../shared/prisma';
 
 // Pending orders for a patient — both lab and radiology in one query so the
-// doctor can scan the chart in one network call. Tenant scope is enforced
-// upstream via the Patient row (the controller validates the patient
-// belongs to req.user.tenantId before getting here).
-export async function listForPatient(patientId: string) {
+// doctor can scan the chart in one network call. Order has no tenantId column,
+// so isolation is enforced by walking the patient relation: a request from
+// tenant A asking for patient X's orders will only match rows whose
+// patient.tenantId == A. If patientId belongs to a different tenant the
+// result set is silently empty (same shape as "no orders yet"), which is
+// the right contract for an enumeration endpoint — no oracle for which
+// patient IDs exist in other tenants.
+export async function listForPatient(patientId: string, tenantId: string) {
   return prisma.order.findMany({
-    where: { patientId, orderType: { in: ['lab', 'radiology'] } },
+    where: {
+      patientId,
+      patient: { tenantId },
+      orderType: { in: ['lab', 'radiology'] },
+    },
     orderBy: { orderedAt: 'desc' },
     include: { results: { select: { id: true } } },
     take: 50,

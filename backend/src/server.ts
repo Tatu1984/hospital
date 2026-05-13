@@ -8627,7 +8627,11 @@ app.post('/api/insurance-companies', authenticateToken, async (req: any, res: Re
 // Get patient insurances
 app.get('/api/patient-insurances', authenticateToken, async (req: any, res: Response) => {
   try {
+    // PatientInsurance has no tenantId column; isolation walks through the
+    // patient relation. Without this filter, a logged-in tenant A user saw
+    // every tenant's insurance rows in one global list.
     const patientInsurances = await prisma.patientInsurance.findMany({
+      where: { patient: { tenantId: req.user.tenantId } },
       include: {
         patient: { select: { id: true, name: true, mrn: true } },
         tpa: { select: { id: true, name: true } },
@@ -8660,15 +8664,28 @@ app.post('/api/patient-insurances', authenticateToken, async (req: any, res: Res
   try {
     const { patientId, insuranceCompanyId, policyNumber, policyHolderName, validFrom, validTill, sumInsured } = req.body;
 
-    // If patientId is passed as patientName (from frontend), find or create patient
+    // If patientId is passed as patientName (from frontend), find or create patient.
+    // The demo fallback must stay inside req.user.tenantId — otherwise the
+    // first patient in the global table (typically another tenant's) gets
+    // a brand new insurance row attached to them.
     let actualPatientId = patientId;
     if (!patientId || patientId === '') {
-      // Use first patient as demo
-      const patient = await prisma.patient.findFirst();
+      const patient = await prisma.patient.findFirst({ where: { tenantId: req.user.tenantId } });
       if (!patient) {
         return res.status(400).json({ error: 'No patients found in the system' });
       }
       actualPatientId = patient.id;
+    } else {
+      // When a real patientId is supplied, verify it belongs to this tenant.
+      // Without this check a malicious client could attach an insurance row
+      // to any patient in any tenant just by guessing the UUID.
+      const exists = await prisma.patient.findFirst({
+        where: { id: actualPatientId, tenantId: req.user.tenantId },
+        select: { id: true },
+      });
+      if (!exists) {
+        return res.status(404).json({ error: 'Patient not found' });
+      }
     }
 
     const patientInsurance = await prisma.patientInsurance.create({
@@ -8740,7 +8757,11 @@ app.post('/api/tpa/claims', authenticateToken, async (req: any, res: Response) =
 // Get pre-authorizations
 app.get('/api/tpa/pre-authorizations', authenticateToken, async (req: any, res: Response) => {
   try {
+    // PreAuthorization has no tenantId column; isolation walks through
+    // patient.tenantId. Without this filter, the dropdown listed every
+    // tenant's pre-auths.
     const preAuths = await prisma.preAuthorization.findMany({
+      where: { patient: { tenantId: req.user.tenantId } },
       include: {
         patient: { select: { name: true, mrn: true } },
         tpa: { select: { name: true } },
@@ -8773,11 +8794,22 @@ app.post('/api/tpa/pre-authorizations', authenticateToken, async (req: any, res:
   try {
     const { patientInsuranceId, procedure, estimatedAmount, patientId } = req.body;
 
-    // Get a patient if patientId not provided
+    // Tenant-scoped patient fallback + cross-tenant guard. Without these,
+    // the previous code (a) defaulted to the first patient in the global
+    // table when patientId was omitted, and (b) trusted whatever
+    // patientId the client posted — including UUIDs from other tenants.
     let actualPatientId = patientId;
     if (!actualPatientId) {
-      const patient = await prisma.patient.findFirst();
+      const patient = await prisma.patient.findFirst({ where: { tenantId: req.user.tenantId } });
       actualPatientId = patient?.id;
+    } else {
+      const exists = await prisma.patient.findFirst({
+        where: { id: actualPatientId, tenantId: req.user.tenantId },
+        select: { id: true },
+      });
+      if (!exists) {
+        return res.status(404).json({ error: 'Patient not found' });
+      }
     }
 
     if (!actualPatientId) {
@@ -8849,8 +8881,12 @@ app.get('/api/ipd-billing/:admissionId', authenticateToken, async (req: any, res
   try {
     const { admissionId } = req.params;
 
-    const admission = await prisma.admission.findUnique({
-      where: { id: admissionId },
+    // Tenant-scope through patient.tenantId — Admission has no tenantId
+    // column. findFirst (not findUnique) so the composite where works.
+    // A cross-tenant lookup gets a 404, identical to "no such admission",
+    // so the endpoint isn't an oracle for admission IDs in other tenants.
+    const admission = await prisma.admission.findFirst({
+      where: { id: admissionId, patient: { tenantId: req.user.tenantId } },
       include: {
         patient: { select: { name: true, mrn: true } },
         bed: true,
@@ -9000,8 +9036,10 @@ app.post('/api/ipd-billing', authenticateToken, async (req: any, res: Response) 
   try {
     const { admissionId, patientId, charges, subtotal, discount, discountPercent, tax, taxPercent, total, dischargePatient } = req.body;
 
-    const admission = await prisma.admission.findUnique({
-      where: { id: admissionId },
+    // Tenant-scope the admission lookup so a billing POST from tenant A
+    // can't create/update an invoice attached to tenant B's admission.
+    const admission = await prisma.admission.findFirst({
+      where: { id: admissionId, patient: { tenantId: req.user.tenantId } },
       include: {
         encounter: {
           include: {

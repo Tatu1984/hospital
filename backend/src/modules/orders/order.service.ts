@@ -4,8 +4,8 @@ import { OrderListItem, SubmitResultInput } from './order.model';
 export class OrderNotFoundError extends Error { constructor() { super('Order not found'); } }
 export class CrossTenantError extends Error { constructor() { super('Order belongs to a different tenant'); } }
 
-export async function listForPatient(patientId: string): Promise<OrderListItem[]> {
-  const rows = await repo.listForPatient(patientId);
+export async function listForPatient(patientId: string, tenantId: string): Promise<OrderListItem[]> {
+  const rows = await repo.listForPatient(patientId, tenantId);
   return rows.map((o: any) => ({
     id: o.id,
     orderType: o.orderType,

@@ -9,7 +9,7 @@ export async function listForPatient(req: AuthedReq, res: Response) {
   try {
     const { patientId } = req.params;
     if (!patientId) return res.status(400).json({ error: 'patientId is required' });
-    const items = await service.listForPatient(patientId);
+    const items = await service.listForPatient(patientId, req.user!.tenantId);
     res.json(items);
   } catch (err: any) {
     console.error('orders listForPatient error:', err);
