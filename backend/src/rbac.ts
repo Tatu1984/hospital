@@ -2,6 +2,7 @@ import { Response, NextFunction } from 'express';
 
 // Define all available roles
 export type Role =
+  // Line-staff roles (individual contributors)
   | 'ADMIN'
   | 'DOCTOR'
   | 'NURSE'
@@ -20,7 +21,26 @@ export type Role =
   | 'DIET'
   | 'AMBULANCE'
   | 'BLOOD_BANK'
-  | 'QUALITY';
+  | 'QUALITY'
+  // Executive / department leadership
+  | 'OPS_MANAGER'
+  | 'MEDICAL_DIRECTOR'
+  | 'NURSING_DIRECTOR'
+  // Mid-management (each is the senior of an existing line role)
+  | 'DEPARTMENT_HEAD'
+  | 'NURSE_MANAGER'
+  | 'LAB_MANAGER'
+  | 'RADIOLOGY_MANAGER'
+  | 'PHARMACY_MANAGER'
+  | 'OT_MANAGER'
+  | 'ER_INCHARGE'
+  | 'BILLING_MANAGER'
+  | 'FRONT_DESK_LEAD'
+  // Cross-cutting / specialty
+  | 'TEAM_LEAD'
+  | 'AUDITOR'
+  | 'TPA_COORDINATOR'
+  | 'PROCUREMENT_OFFICER';
 
 // Define permission categories
 export type Permission =
@@ -454,6 +474,327 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'quality:view', 'quality:manage',
     'reports:view', 'reports:export',
   ],
+
+  // ===========================================================================
+  // MANAGEMENT / SUPERVISORY ROLES
+  // ===========================================================================
+  // Each management role is named for its real-world equivalent in a hospital
+  // org chart. The permission lists below are conservative: managers get the
+  // VIEW of everything their line staff touches, plus targeted write perms
+  // appropriate to their authority (e.g. NURSE_MANAGER can approve leave;
+  // BILLING_MANAGER can apply discounts). Tighten or loosen per-user via the
+  // extra/revoked permissions feature on the User model. ADMIN remains the
+  // catch-all super-user; do not add ADMIN-level perms here.
+
+  // OPS_MANAGER (COO) — operations dashboard + cross-module visibility.
+  // No clinical writes. They run the hospital but don't practise medicine.
+  OPS_MANAGER: [
+    'dashboard:view', 'analytics:view', 'reports:view', 'reports:export',
+    'patients:view',
+    'appointments:view',
+    'encounters:view',
+    'opd:view',
+    'ipd:view', 'admissions:view', 'beds:view', 'nurse_station:view',
+    'emergency:view',
+    'icu:view',
+    'ot:view', 'surgery:view',
+    'lab:view', 'lab_orders:view', 'lab_results:view',
+    'radiology:view', 'radiology_orders:view',
+    'pharmacy:view',
+    'blood_bank:view', 'blood_donors:view', 'blood_requests:view',
+    'billing:view', 'invoices:view',
+    'accounts:view', 'commissions:view', 'doctor_revenue:view',
+    'hr:view', 'employees:view', 'attendance:view', 'leaves:view',
+    'inventory:view', 'purchase_orders:view',
+    'housekeeping:view', 'diet:view', 'ambulance:view', 'quality:view',
+    'health-checkup:view', 'phlebotomy:view',
+    'cssd:view', 'dialysis:view', 'mortuary:view', 'physio:view', 'pathology:view',
+    'master_data:view', 'system:view', 'users:view',
+  ],
+
+  // MEDICAL_DIRECTOR (CMO) — leads the doctor body. Full clinical view +
+  // targeted writes (review/cancel surgeries, approve doctor contracts).
+  MEDICAL_DIRECTOR: [
+    'dashboard:view', 'analytics:view', 'reports:view', 'reports:export',
+    'patients:view', 'patients:edit',
+    'appointments:view', 'appointments:edit',
+    'opd:view', 'opd:create', 'opd:edit',
+    'encounters:view', 'encounters:create',
+    'prescriptions:view', 'prescriptions:create',
+    'ipd:view', 'ipd:edit',
+    'admissions:view', 'admissions:discharge',
+    'beds:view',
+    'nurse_station:view',
+    'emergency:view', 'emergency:edit',
+    'icu:view', 'icu:edit',
+    'ot:view', 'ot:edit',
+    'surgery:view', 'surgery:schedule', 'surgery:complete', 'surgery:cancel',
+    'lab:view', 'lab_orders:view', 'lab_orders:create', 'lab_results:view',
+    'radiology:view', 'radiology_orders:view', 'radiology_orders:create',
+    'pharmacy:view',
+    'health-checkup:view', 'health-checkup:edit',
+    'dialysis:view', 'pathology:view', 'physio:view',
+    'doctor_revenue:view', 'doctor_revenue:manage',
+    'master_data:view', 'master_data:edit',
+    'users:view',
+  ],
+
+  // NURSING_DIRECTOR (CNO) — heads nursing across all wards. Full nursing
+  // perms + ward management + leave approval for nursing staff.
+  NURSING_DIRECTOR: [
+    'dashboard:view', 'analytics:view', 'reports:view', 'reports:export',
+    'patients:view', 'patients:edit',
+    'appointments:view',
+    'ipd:view', 'ipd:edit',
+    'admissions:view',
+    'beds:view', 'beds:manage',
+    'nurse_station:view', 'nurse_station:edit',
+    'emergency:view',
+    'icu:view', 'icu:edit',
+    'icu_vitals:view', 'icu_vitals:create',
+    'ot:view',
+    'diet:view', 'diet:manage',
+    'housekeeping:view',
+    'hr:view', 'employees:view', 'attendance:view', 'attendance:manage',
+    'leaves:view', 'leaves:approve',
+    'master_data:view',
+  ],
+
+  // DEPARTMENT_HEAD (HOD) — senior doctor with department-scoped management.
+  // Same clinical perms as DOCTOR plus team visibility + master data for
+  // their department's procedures.
+  DEPARTMENT_HEAD: [
+    'dashboard:view', 'reports:view', 'reports:export', 'analytics:view',
+    'patients:view', 'patients:edit',
+    'appointments:view', 'appointments:create', 'appointments:edit',
+    'opd:view', 'opd:create', 'opd:edit',
+    'encounters:view', 'encounters:create',
+    'prescriptions:view', 'prescriptions:create',
+    'ipd:view', 'ipd:create', 'ipd:edit',
+    'admissions:view', 'admissions:create', 'admissions:discharge',
+    'beds:view',
+    'emergency:view',
+    'icu:view',
+    'ot:view', 'surgery:view', 'surgery:schedule', 'surgery:complete',
+    'lab:view', 'lab_orders:view', 'lab_orders:create', 'lab_results:view',
+    'radiology:view', 'radiology_orders:view', 'radiology_orders:create',
+    'pharmacy:view',
+    'doctor_revenue:view',
+    'master_data:view', 'master_data:edit',
+    'hr:view', 'employees:view', 'attendance:view',
+    'leaves:view', 'leaves:approve',
+    'users:view',
+  ],
+
+  // NURSE_MANAGER / Ward In-charge — supervises a ward. All nurse perms
+  // plus bed management and leave approval for their team.
+  NURSE_MANAGER: [
+    'dashboard:view', 'reports:view',
+    'patients:view',
+    'appointments:view',
+    'ipd:view', 'ipd:edit',
+    'admissions:view', 'admissions:discharge',
+    'beds:view', 'beds:manage',
+    'nurse_station:view', 'nurse_station:edit',
+    'emergency:view',
+    'icu:view', 'icu_vitals:view', 'icu_vitals:create',
+    'ot:view',
+    'lab:view', 'lab_orders:view',
+    'radiology:view', 'radiology_orders:view',
+    'pharmacy:view',
+    'diet:view',
+    'hr:view', 'employees:view', 'attendance:view', 'attendance:manage',
+    'leaves:view', 'leaves:approve',
+    'master_data:view',
+  ],
+
+  // LAB_MANAGER — senior LAB_TECH; owns lab master data and reporting.
+  LAB_MANAGER: [
+    'dashboard:view', 'reports:view', 'reports:export', 'analytics:view',
+    'patients:view',
+    'lab:view', 'lab:create', 'lab:edit',
+    'lab_orders:view', 'lab_orders:create', 'lab_orders:update',
+    'lab_results:view', 'lab_results:create',
+    'phlebotomy:view', 'phlebotomy:create', 'phlebotomy:update',
+    'pathology:view', 'pathology:create', 'pathology:update',
+    'inventory:view',
+    'purchase_orders:view', 'purchase_orders:create',
+    'billing:view', 'invoices:view', 'invoices:create',
+    'master_data:view', 'master_data:edit',
+    'hr:view', 'employees:view', 'attendance:view',
+    'leaves:view', 'leaves:approve',
+  ],
+
+  // RADIOLOGY_MANAGER — senior RADIOLOGY_TECH.
+  RADIOLOGY_MANAGER: [
+    'dashboard:view', 'reports:view', 'reports:export', 'analytics:view',
+    'patients:view',
+    'radiology:view', 'radiology:create', 'radiology:edit',
+    'radiology_orders:view', 'radiology_orders:create', 'radiology_orders:update',
+    'inventory:view',
+    'purchase_orders:view', 'purchase_orders:create',
+    'billing:view', 'invoices:view', 'invoices:create',
+    'master_data:view', 'master_data:edit',
+    'hr:view', 'employees:view', 'attendance:view',
+    'leaves:view', 'leaves:approve',
+  ],
+
+  // PHARMACY_MANAGER — pharmacy ops + inventory + POs (approval authority).
+  PHARMACY_MANAGER: [
+    'dashboard:view', 'reports:view', 'reports:export', 'analytics:view',
+    'patients:view',
+    'prescriptions:view',
+    'pharmacy:view', 'pharmacy:dispense', 'pharmacy:manage',
+    'inventory:view', 'inventory:manage',
+    'purchase_orders:view', 'purchase_orders:create', 'purchase_orders:approve',
+    'billing:view', 'invoices:view', 'invoices:create',
+    'master_data:view', 'master_data:edit',
+    'hr:view', 'employees:view', 'attendance:view',
+    'leaves:view', 'leaves:approve',
+  ],
+
+  // OT_MANAGER / OT In-charge — runs the operation theatre rota.
+  OT_MANAGER: [
+    'dashboard:view', 'reports:view', 'reports:export', 'analytics:view',
+    'patients:view',
+    'ot:view', 'ot:create', 'ot:edit',
+    'surgery:view', 'surgery:schedule', 'surgery:start', 'surgery:complete', 'surgery:cancel',
+    'admissions:view', 'beds:view',
+    'cssd:view', 'cssd:manage',
+    'inventory:view',
+    'purchase_orders:view',
+    'billing:view',
+    'master_data:view',
+    'hr:view', 'employees:view', 'attendance:view',
+    'leaves:view', 'leaves:approve',
+  ],
+
+  // ER_INCHARGE — emergency department lead. All ER perms + admit/discharge
+  // authority + ability to admit to IPD or ICU directly.
+  ER_INCHARGE: [
+    'dashboard:view', 'reports:view',
+    'patients:view', 'patients:create', 'patients:edit',
+    'appointments:view', 'appointments:create',
+    'emergency:view', 'emergency:create', 'emergency:edit', 'emergency:admit', 'emergency:discharge',
+    'ipd:view', 'ipd:create',
+    'admissions:view', 'admissions:create',
+    'beds:view', 'beds:manage',
+    'icu:view', 'icu:create',
+    'lab:view', 'lab_orders:view', 'lab_orders:create',
+    'radiology:view', 'radiology_orders:view', 'radiology_orders:create',
+    'blood_bank:view', 'blood_requests:view', 'blood_requests:create',
+    'pharmacy:view',
+    'billing:view', 'billing:create',
+    'invoices:view', 'invoices:create',
+    'ambulance:view',
+    'hr:view', 'employees:view', 'attendance:view',
+    'leaves:view', 'leaves:approve',
+    'master_data:view',
+  ],
+
+  // BILLING_MANAGER — finance lead. Full billing perms incl. discount
+  // authority and analytics.
+  BILLING_MANAGER: [
+    'dashboard:view', 'reports:view', 'reports:export', 'analytics:view',
+    'patients:view',
+    'appointments:view',
+    'admissions:view',
+    'billing:view', 'billing:create', 'billing:edit', 'billing:payment',
+    'invoices:view', 'invoices:create', 'invoices:payment', 'invoices:discount',
+    'accounts:view', 'accounts:create', 'accounts:edit',
+    'accounting:view', 'accounting:create', 'accounting:edit',
+    'commissions:view', 'commissions:manage', 'commissions:payout',
+    'doctor_revenue:view', 'doctor_revenue:manage',
+    'master_data:view',
+    'hr:view', 'employees:view', 'attendance:view',
+    'leaves:view', 'leaves:approve',
+  ],
+
+  // FRONT_DESK_LEAD — reception supervisor. Front office perms + invoicing +
+  // visibility into their team's attendance.
+  FRONT_DESK_LEAD: [
+    'dashboard:view', 'reports:view',
+    'patients:view', 'patients:create', 'patients:edit',
+    'appointments:view', 'appointments:create', 'appointments:edit', 'appointments:delete',
+    'encounters:view', 'encounters:create',
+    'admissions:view',
+    'beds:view',
+    'billing:view', 'billing:create', 'billing:payment',
+    'invoices:view', 'invoices:create', 'invoices:payment',
+    'health-checkup:view', 'health-checkup:create',
+    'ambulance:view',
+    'master_data:view',
+    'hr:view', 'employees:view', 'attendance:view',
+    'leaves:view', 'leaves:approve',
+  ],
+
+  // TEAM_LEAD — generic team lead. Cross-module read + leave approval.
+  // Operationally, the per-user extra-permissions flow tops this up with
+  // whichever domain the lead actually owns.
+  TEAM_LEAD: [
+    'dashboard:view', 'reports:view', 'analytics:view',
+    'patients:view',
+    'hr:view', 'employees:view',
+    'attendance:view', 'attendance:manage',
+    'leaves:view', 'leaves:approve',
+    'master_data:view',
+  ],
+
+  // AUDITOR / COMPLIANCE — read-only across every clinical, financial, and
+  // ops module. Never grant any :create/:edit/:manage permission here; this
+  // is the safety guarantee of the role.
+  AUDITOR: [
+    'dashboard:view', 'analytics:view', 'reports:view', 'reports:export',
+    'patients:view',
+    'appointments:view',
+    'encounters:view',
+    'prescriptions:view',
+    'opd:view',
+    'ipd:view', 'admissions:view', 'beds:view', 'nurse_station:view',
+    'emergency:view',
+    'icu:view', 'icu_vitals:view',
+    'ot:view', 'surgery:view',
+    'lab:view', 'lab_orders:view', 'lab_results:view',
+    'radiology:view', 'radiology_orders:view',
+    'blood_bank:view', 'blood_donors:view', 'blood_requests:view',
+    'pharmacy:view',
+    'billing:view',
+    'invoices:view',
+    'accounts:view', 'accounting:view',
+    'commissions:view', 'doctor_revenue:view',
+    'hr:view', 'employees:view', 'attendance:view', 'leaves:view',
+    'payroll:view',
+    'inventory:view', 'purchase_orders:view',
+    'housekeeping:view', 'diet:view', 'ambulance:view', 'quality:view',
+    'health-checkup:view', 'phlebotomy:view',
+    'cssd:view', 'dialysis:view', 'mortuary:view', 'physio:view', 'pathology:view',
+    'master_data:view', 'system:view', 'users:view',
+  ],
+
+  // TPA_COORDINATOR — insurance + pre-auth + claims liaison.
+  TPA_COORDINATOR: [
+    'dashboard:view', 'reports:view',
+    'patients:view',
+    'appointments:view',
+    'admissions:view',
+    'opd:view', 'ipd:view',
+    'lab_results:view',
+    'radiology_orders:view',
+    'billing:view',
+    'invoices:view', 'invoices:create',
+    'accounts:view',
+    'master_data:view',
+  ],
+
+  // PROCUREMENT_OFFICER — vendor + PO lifecycle owner.
+  PROCUREMENT_OFFICER: [
+    'dashboard:view', 'reports:view', 'reports:export',
+    'inventory:view', 'inventory:manage',
+    'purchase_orders:view', 'purchase_orders:create', 'purchase_orders:approve',
+    'accounts:view',
+    'master_data:view', 'master_data:edit',
+    'hr:view', 'employees:view',
+  ],
 };
 
 // Route to module mapping for frontend navigation
@@ -557,6 +898,7 @@ export async function loadRoleCache(prisma: any): Promise<void> {
 // their changes (we only insert rows that are absent).
 export async function seedSystemRoles(prisma: any): Promise<void> {
   const SYSTEM_ROLE_LABELS: Record<string, string> = {
+    // Line staff
     ADMIN: 'Administrator',
     DOCTOR: 'Doctor',
     NURSE: 'Nurse',
@@ -576,6 +918,25 @@ export async function seedSystemRoles(prisma: any): Promise<void> {
     AMBULANCE: 'Ambulance',
     BLOOD_BANK: 'Blood Bank',
     QUALITY: 'Quality',
+    // Executive
+    OPS_MANAGER: 'Operations Manager (COO)',
+    MEDICAL_DIRECTOR: 'Medical Director (CMO)',
+    NURSING_DIRECTOR: 'Nursing Director (CNO)',
+    // Mid-management
+    DEPARTMENT_HEAD: 'Department Head (HOD)',
+    NURSE_MANAGER: 'Nurse Manager / Ward In-charge',
+    LAB_MANAGER: 'Laboratory Manager',
+    RADIOLOGY_MANAGER: 'Radiology Manager',
+    PHARMACY_MANAGER: 'Pharmacy Manager',
+    OT_MANAGER: 'OT Manager',
+    ER_INCHARGE: 'ER In-charge',
+    BILLING_MANAGER: 'Billing Manager',
+    FRONT_DESK_LEAD: 'Front Desk Lead',
+    // Cross-cutting
+    TEAM_LEAD: 'Team Lead',
+    AUDITOR: 'Auditor / Compliance',
+    TPA_COORDINATOR: 'TPA Coordinator',
+    PROCUREMENT_OFFICER: 'Procurement Officer',
   };
   for (const [id, perms] of Object.entries(ROLE_PERMISSIONS)) {
     const existing = await prisma.role.findUnique({ where: { id } });

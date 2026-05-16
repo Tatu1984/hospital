@@ -245,14 +245,27 @@ describe('RBAC System', () => {
       });
     });
 
-    it('should restrict master_data:edit to limited roles', () => {
+    it('should restrict master_data:edit to admin + management roles only', () => {
       const rolesWithMasterEdit = Object.entries(ROLE_PERMISSIONS)
         .filter(([_, perms]) => perms.includes('master_data:edit'))
         .map(([role]) => role);
 
-      // Only ADMIN should be able to edit master data
+      // ADMIN must always have it. Beyond that, only domain-management
+      // roles should — never line staff (DOCTOR/NURSE/LAB_TECH/etc.).
+      // This is the real security boundary: a nurse shouldn't be editing
+      // the drug master, but the pharmacy manager should.
       expect(rolesWithMasterEdit).toContain('ADMIN');
-      expect(rolesWithMasterEdit.length).toBeLessThanOrEqual(2);
+      const allowList = new Set([
+        'ADMIN',
+        'MEDICAL_DIRECTOR',
+        'DEPARTMENT_HEAD',
+        'LAB_MANAGER',
+        'RADIOLOGY_MANAGER',
+        'PHARMACY_MANAGER',
+        'PROCUREMENT_OFFICER',
+      ]);
+      const violations = rolesWithMasterEdit.filter((r) => !allowList.has(r));
+      expect(violations).toEqual([]);
     });
   });
 });
