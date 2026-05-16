@@ -25,6 +25,15 @@ export const searchSchema = z.object({
   search: z.string().max(100).optional(),
 }).merge(paginationSchema);
 
+// Patient list filter — superset of searchSchema with an admissionType
+// facet so the unified Patients list can scope to IPD/OPD/Dialysis/all.
+// `all` is equivalent to omitting the parameter; we accept it explicitly
+// so the FE can pass it verbatim without conditional URL building.
+export const patientsListSchema = z.object({
+  search: z.string().max(100).optional(),
+  admissionType: z.enum(['ipd', 'opd', 'dialysis', 'all']).optional(),
+}).merge(paginationSchema);
+
 // Auth validators
 export const loginSchema = z.object({
   username: z.string().min(3, 'Username must be at least 3 characters').max(50),
@@ -494,25 +503,36 @@ export const drugMasterSchema = z.object({
 });
 
 // Ambulance validators
+// Trip create — kept loose because the handler accepts trips with no
+// assigned vehicle (assigned later via /:id/assign) and walk-in patients
+// who don't yet exist as Patient rows. The matching enum list mirrors
+// what the dialog ships from the FE (Ambulance.tsx). Empty / missing
+// optional fields are tolerated.
 export const ambulanceTripSchema = z.object({
-  vehicleId: idSchema,
+  vehicleId: idSchema.optional(),
+  vehicleNumber: z.string().max(20).optional(),
   patientId: idSchema.optional(),
   patientName: z.string().max(100).optional(),
-  patientContact: z.string().regex(/^[+]?[\d\s-]{10,15}$/).optional(),
-  pickupLocation: z.string().min(5).max(500),
-  dropLocation: z.string().min(5).max(500),
-  tripType: z.enum(['EMERGENCY', 'TRANSFER', 'DISCHARGE', 'SCHEDULED']),
-  requestedTime: z.string().datetime().optional(),
-  estimatedDistance: z.number().min(0).max(10000).optional(),
+  patientPhone: z.string().max(20).optional(),
+  pickupLocation: z.string().min(1).max(500),
+  dropLocation: z.string().min(1).max(500),
+  tripType: z.enum(['EMERGENCY', 'TRANSFER', 'DISCHARGE', 'ROUTINE', 'SCHEDULED']).default('EMERGENCY'),
+  urgency: z.enum(['HIGH', 'MEDIUM', 'LOW']).optional(),
   notes: z.string().max(1000).optional(),
 });
 
+// Vehicle create — canonical types live in shared/ambulanceTypes.ts.
+// Keeping the enum loose (z.string()) here and validating server-side
+// against AMBULANCE_TYPE_CODES so adding a new type doesn't require
+// patching this schema. Equipment is a free-form string array; the FE
+// pre-fills it from the type's default kit but lets the operator edit.
 export const ambulanceVehicleSchema = z.object({
-  vehicleNumber: z.string().min(4).max(20),
-  vehicleType: z.enum(['ALS', 'BLS', 'PATIENT_TRANSPORT', 'NEONATAL', 'CARDIAC']),
-  driverName: z.string().max(100),
-  driverContact: z.string().regex(/^[+]?[\d\s-]{10,15}$/),
-  status: z.enum(['AVAILABLE', 'ON_TRIP', 'MAINTENANCE', 'OUT_OF_SERVICE']).default('AVAILABLE'),
+  vehicleNumber: z.string().min(1).max(20),
+  type: z.string().min(2).max(40),
+  driverName: z.string().max(100).optional().nullable(),
+  driverPhone: z.string().max(20).optional().nullable(),
+  equipment: z.array(z.string().max(40)).optional(),
+  notes: z.string().max(1000).optional().nullable(),
 });
 
 // Housekeeping validators

@@ -1804,12 +1804,22 @@ model AmbulanceVehicle {
   id              String    @id @default(uuid())
   tenantId        String
   vehicleNumber   String
-  type            String // ALS, BLS, patient_transport
+  // Canonical types live in shared/ambulanceTypes.ts. Values:
+  //   BLS, ALS, ICU, CARDIAC, NEONATAL, BARIATRIC, PATIENT_TRANSPORT, MORTUARY
+  // Stored as the canonical string so the FE can map back to a label.
+  type            String
   driverName      String?
   driverPhone     String?
   status          String    @default("available") // available, on_trip, maintenance, out_of_service
   lastMaintenance DateTime?
   currentLocation String?
+  // Per-vehicle equipment manifest. Free-form JSON array of equipment
+  // codes the vehicle is fitted with (defibrillator, ventilator, ecmo,
+  // incubator, monitor, oxygen, suction, …). The canonical set + the
+  // default per ambulance-type live in shared/ambulanceTypes.ts so
+  // dispatch can match "trip needs ECMO" against "vehicle has ECMO".
+  equipment       Json?
+  notes           String?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 

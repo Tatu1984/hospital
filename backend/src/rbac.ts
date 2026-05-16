@@ -71,6 +71,10 @@ export type Permission =
   // Billing & Finance
   | 'billing:view' | 'billing:create' | 'billing:edit' | 'billing:payment'
   | 'invoices:view' | 'invoices:create' | 'invoices:payment'
+  // Applying discounts (percent or flat) on an invoice. Gated separately
+  // from invoices:create/edit so the hospital can grant create-bills to
+  // front-desk staff but reserve discounting to a smaller approver group.
+  | 'invoices:discount'
   | 'accounts:view' | 'accounts:create' | 'accounts:edit'
   | 'commissions:view' | 'commissions:manage' | 'commissions:payout'
   | 'doctor_revenue:view' | 'doctor_revenue:manage'
@@ -165,7 +169,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'blood_requests:view', 'blood_requests:create', 'blood_requests:issue',
     'pharmacy:view', 'pharmacy:dispense', 'pharmacy:manage',
     'billing:view', 'billing:create', 'billing:edit', 'billing:payment',
-    'invoices:view', 'invoices:create', 'invoices:payment',
+    'invoices:view', 'invoices:create', 'invoices:payment', 'invoices:discount',
     'accounts:view', 'accounts:create', 'accounts:edit',
     'commissions:view', 'commissions:manage', 'commissions:payout',
     'doctor_revenue:view', 'doctor_revenue:manage',
@@ -263,8 +267,12 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'encounters:view', 'encounters:create',
     'admissions:view',
     'beds:view',
-    'billing:view', 'billing:create',
-    'invoices:view', 'invoices:create',
+    'billing:view', 'billing:create', 'billing:payment',
+    // Front desk accepts part-payments on the IPD running invoice
+    // during a stay — the family typically settles in instalments
+    // before discharge. Discount authority is deliberately withheld
+    // here (BILLING + ADMIN only).
+    'invoices:view', 'invoices:create', 'invoices:payment',
     'health-checkup:view', 'health-checkup:create',
   ],
 
@@ -275,7 +283,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'appointments:view',
     'admissions:view',
     'billing:view', 'billing:create', 'billing:edit', 'billing:payment',
-    'invoices:view', 'invoices:create', 'invoices:payment',
+    'invoices:view', 'invoices:create', 'invoices:payment', 'invoices:discount',
     'accounts:view', 'accounts:create',
     'accounting:view', 'accounting:create', 'accounting:edit',
     'commissions:view', 'commissions:manage', 'commissions:payout',

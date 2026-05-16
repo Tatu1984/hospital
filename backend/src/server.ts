@@ -3,6 +3,8 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { prisma } from './shared/prisma';
+import { autoBillLabTests, autoBillRadiologyTests, autoBillPrescription, MissingPriceError } from './shared/ipdBilling';
+import { AMBULANCE_TYPES, AMBULANCE_EQUIPMENT, AMBULANCE_TYPE_CODES, isAmbulanceTypeCode, getAmbulanceType } from './shared/ambulanceTypes';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import swaggerUi from 'swagger-ui-express';
@@ -59,6 +61,7 @@ import {
   createPatientSchema,
   updatePatientSchema,
   searchSchema,
+  patientsListSchema,
   idParamSchema,
   createAppointmentSchema,
   updateAppointmentSchema,
@@ -1125,9 +1128,9 @@ app.get('/api/auth/me', authenticateToken, async (req: any, res: Response) => {
 });
 
 // Patient routes - with validation and RBAC
-app.get('/api/patients', authenticateToken, requirePermission('patients:view'), validateQuery(searchSchema), async (req: any, res: Response) => {
+app.get('/api/patients', authenticateToken, requirePermission('patients:view'), validateQuery(patientsListSchema), async (req: any, res: Response) => {
   try {
-    const { search, limit = 50, page = 1 } = (req as any).validatedQuery || req.query;
+    const { search, admissionType, limit = 50, page = 1 } = (req as any).validatedQuery || req.query;
 
     const where: any = {
       tenantId: req.user.tenantId,
@@ -1141,17 +1144,118 @@ app.get('/api/patients', authenticateToken, requirePermission('patients:view'), 
       ];
     }
 
+    // Admission-type filter. We scope on the presence of a related row so
+    // the same Patient table backs every facet (IPD = has admission, OPD
+    // = has encounter of type opd, Dialysis = has dialysisSession).
+    // `all` and missing both behave the same way.
+    if (admissionType === 'ipd') {
+      where.admissions = { some: {} };
+    } else if (admissionType === 'opd') {
+      where.encounters = { some: { type: { in: ['opd', 'OPD', 'consultation'] } } };
+    } else if (admissionType === 'dialysis') {
+      where.dialysisSessions = { some: {} };
+    }
+
+    const take = parseInt(limit as string);
+    const skip = (parseInt(page as string) - 1) * take;
+
     const patients = await prisma.patient.findMany({
       where,
-      take: parseInt(limit as string),
-      skip: (parseInt(page as string) - 1) * parseInt(limit as string),
+      take,
+      skip,
       orderBy: { createdAt: 'desc' },
       include: {
         branch: { select: { name: true } },
+        // Single-row look-ups keyed off the most recent date in each
+        // clinical relation, so the list can render "last visit", "last
+        // admission", and "active admission" without a per-row N+1.
+        admissions: {
+          orderBy: { admissionDate: 'desc' },
+          take: 1,
+          select: {
+            id: true,
+            admissionDate: true,
+            dischargeDate: true,
+            status: true,
+            diagnosis: true,
+            admittingDoctor: { select: { id: true, name: true } },
+          },
+        },
+        encounters: {
+          orderBy: { visitDate: 'desc' },
+          take: 1,
+          select: {
+            id: true,
+            visitDate: true,
+            type: true,
+            status: true,
+            doctor: { select: { id: true, name: true } },
+          },
+        },
+        dialysisSessions: {
+          orderBy: { scheduledDate: 'desc' },
+          take: 1,
+          select: { id: true, scheduledDate: true, status: true },
+        },
+        _count: {
+          select: { admissions: true, encounters: true, dialysisSessions: true },
+        },
       },
     });
 
-    res.json(patients);
+    // Shape into a stable DTO so the FE doesn't depend on Prisma's
+    // include-key naming. The fields are flat — easier to render in a
+    // table and to filter/sort client-side.
+    const dto = patients.map((p) => {
+      const lastAdmission = p.admissions?.[0];
+      const lastEncounter = p.encounters?.[0];
+      const lastDialysis = p.dialysisSessions?.[0];
+      // "Last activity" picks the most recent of the three dates so the
+      // list defaults to a meaningful chronological order regardless of
+      // which type of visit it was.
+      const candidates: Array<{ kind: string; when: Date | null }> = [
+        { kind: 'IPD', when: lastAdmission?.admissionDate || null },
+        { kind: 'OPD', when: lastEncounter?.visitDate || null },
+        { kind: 'Dialysis', when: lastDialysis?.scheduledDate || null },
+      ];
+      const valid = candidates.filter((c) => c.when) as Array<{ kind: string; when: Date }>;
+      valid.sort((a, b) => b.when.getTime() - a.when.getTime());
+      const last = valid[0] || null;
+
+      return {
+        id: p.id,
+        mrn: p.mrn,
+        name: p.name,
+        dob: p.dob,
+        gender: p.gender,
+        contact: p.contact,
+        email: p.email,
+        bloodGroup: p.bloodGroup,
+        purpose: p.purpose,
+        address: p.address,
+        branchName: p.branch?.name || null,
+        createdAt: p.createdAt,
+        counts: {
+          admissions: p._count.admissions,
+          encounters: p._count.encounters,
+          dialysisSessions: p._count.dialysisSessions,
+        },
+        lastActivityType: last?.kind || null,
+        lastActivityAt: last?.when?.toISOString() || null,
+        lastDoctorName: lastAdmission?.admittingDoctor?.name
+          || lastEncounter?.doctor?.name
+          || null,
+        activeAdmission: lastAdmission && lastAdmission.status === 'active'
+          ? {
+              id: lastAdmission.id,
+              admissionDate: lastAdmission.admissionDate.toISOString(),
+              diagnosis: lastAdmission.diagnosis,
+            }
+          : null,
+      };
+    });
+
+    res.json(dto);
   } catch (error) {
     logger.error('Get patients error:', error);
     res.status(500).json({
@@ -1428,32 +1532,51 @@ app.post('/api/opd-notes', authenticateToken, async (req: any, res: Response) =>
       prescription,
     } = req.body;
 
-    const opdNote = await prisma.oPDNote.create({
-      data: {
-        encounterId,
-        patientId,
-        doctorId: req.user.userId,
-        chiefComplaint,
-        history,
-        vitals,
-        examination,
-        assessment,
-        plan,
-      },
-    });
-
-    // Create prescription if provided
-    if (prescription && prescription.drugs && prescription.drugs.length > 0) {
-      await prisma.prescription.create({
+    // OPD note + prescription + auto-bill share a transaction so a
+    // crash mid-way doesn't leave a prescription unbilled (or an
+    // unbilled prescription pointing at a half-created note). If any
+    // drug lacks a master-data price the entire create is rolled back
+    // and the FE gets a 422 with the offending drug name.
+    const opdNote = await prisma.$transaction(async (tx) => {
+      const note = await tx.oPDNote.create({
         data: {
-          opdNoteId: opdNote.id,
-          patientId,
           encounterId,
+          patientId,
           doctorId: req.user.userId,
-          drugs: prescription.drugs,
+          chiefComplaint,
+          history,
+          vitals,
+          examination,
+          assessment,
+          plan,
         },
       });
-    }
+
+      if (prescription && prescription.drugs && prescription.drugs.length > 0) {
+        const rx = await tx.prescription.create({
+          data: {
+            opdNoteId: note.id,
+            patientId,
+            encounterId,
+            doctorId: req.user.userId,
+            drugs: prescription.drugs,
+          },
+        });
+        // Drugs are auto-billed only when the patient is currently
+        // admitted (helper short-circuits otherwise). OPD prescriptions
+        // for walk-ins continue to flow through the pharmacy
+        // dispensing process for billing, unchanged.
+        await autoBillPrescription(tx, {
+          tenantId: req.user.tenantId,
+          patientId,
+          prescriptionId: rx.id,
+          drugs: Array.isArray(prescription.drugs) ? prescription.drugs : [],
+          issuedAt: rx.createdAt,
+        });
+      }
+
+      return note;
+    });
 
     const result = await prisma.oPDNote.findUnique({
       where: { id: opdNote.id },
@@ -1464,7 +1587,10 @@ app.post('/api/opd-notes', authenticateToken, async (req: any, res: Response) =>
     });
 
     res.status(201).json(result);
-  } catch (error) {
+  } catch (error: any) {
+    if (error instanceof MissingPriceError) {
+      return res.status(422).json({ error: error.message, code: error.code, itemType: error.itemType, itemRef: error.itemRef });
+    }
     console.error('Create OPD note error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -1809,6 +1935,110 @@ app.post('/api/invoices/:id/payment', authenticateToken, async (req: any, res: R
     res.json(payment);
   } catch (error) {
     console.error('Create payment error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Apply a discount to an invoice. Two modes:
+//   - { type: 'percent', value: 10 }  → 10% off the subtotal
+//   - { type: 'flat',    value: 500 } → ₹500 off the subtotal
+// The discount column on Invoice is the ABSOLUTE amount in currency, even
+// when the operator picked a percent (we compute and store the resulting
+// rupee value). total = subtotal + tax - discount; balance is then derived
+// against any payments already received. Already-paid invoices are rejected
+// because adjusting the bill after settlement would require a separate
+// refund/credit-note flow, which lives outside this endpoint.
+//
+// Gated on the dedicated `invoices:discount` permission so the hospital can
+// grant create/edit on invoices to front-desk staff without granting price
+// authority. Per-user extra/revoked permissions still work on top of this.
+app.post('/api/invoices/:id/discount', authenticateToken, requirePermission('invoices:discount'), async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { type, value, reason } = (req.body || {}) as { type?: string; value?: number | string; reason?: string };
+
+    if (type !== 'percent' && type !== 'flat') {
+      return res.status(400).json({ error: 'type must be "percent" or "flat"' });
+    }
+    const numericValue = typeof value === 'string' ? parseFloat(value) : value;
+    if (typeof numericValue !== 'number' || !Number.isFinite(numericValue) || numericValue < 0) {
+      return res.status(400).json({ error: 'value must be a non-negative number' });
+    }
+    if (type === 'percent' && numericValue > 100) {
+      return res.status(400).json({ error: 'percent discount cannot exceed 100' });
+    }
+
+    const invoice = await prisma.invoice.findFirst({
+      where: { id, patient: { tenantId: req.user.tenantId } },
+    });
+    if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+
+    const subtotal = parseFloat(invoice.subtotal.toString());
+    const tax = parseFloat(invoice.tax.toString());
+    const paid = parseFloat(invoice.paid.toString());
+
+    if (paid > 0 && invoice.status === 'paid') {
+      return res.status(409).json({ error: 'Invoice is already fully paid; raise a credit note instead.' });
+    }
+
+    // Convert percent → absolute amount and clamp to the subtotal so a 100%
+    // discount lands at exactly subtotal (avoids floating-point negative
+    // totals from 100.0000001%).
+    let discountAmount = type === 'percent'
+      ? Math.min(subtotal, +(subtotal * (numericValue / 100)).toFixed(2))
+      : Math.min(subtotal, +numericValue.toFixed(2));
+
+    if (discountAmount > subtotal) {
+      return res.status(400).json({ error: 'discount cannot exceed subtotal' });
+    }
+
+    const newTotal = +(subtotal + tax - discountAmount).toFixed(2);
+    const newBalance = +(newTotal - paid).toFixed(2);
+    // If a partial payment has already covered the new total, mark paid; if
+    // payments now exceed the new total (e.g. operator over-discounted),
+    // surface that as `overpaid` so the billing team can issue a refund.
+    let newStatus = invoice.status;
+    if (newBalance <= 0 && paid > 0) newStatus = paid > newTotal ? 'overpaid' : 'paid';
+    else if (paid > 0) newStatus = 'final';
+    else newStatus = invoice.status === 'draft' ? 'draft' : 'final';
+
+    const updated = await prisma.invoice.update({
+      where: { id },
+      data: {
+        discount: discountAmount,
+        total: newTotal,
+        balance: newBalance,
+        status: newStatus,
+      },
+    });
+
+    void writeAudit({
+      prisma,
+      req,
+      action: 'INVOICE_DISCOUNT_APPLY',
+      resource: 'Invoice',
+      resourceId: id,
+      oldValue: {
+        discount: parseFloat(invoice.discount.toString()),
+        total: parseFloat(invoice.total.toString()),
+        balance: parseFloat(invoice.balance.toString()),
+        status: invoice.status,
+      },
+      newValue: {
+        discount: discountAmount,
+        total: newTotal,
+        balance: newBalance,
+        status: newStatus,
+        // Keep the original input (percent vs flat) and the operator's
+        // reason so the audit trail explains how the discount was decided,
+        // not just what the final number was.
+        appliedAs: { type, value: numericValue, reason: reason || null },
+      },
+    });
+
+    res.json(updated);
+  } catch (error) {
+    console.error('Apply discount error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -2958,20 +3188,38 @@ app.post('/api/lab-orders', authenticateToken, async (req: any, res: Response) =
   try {
     const { patientId, encounterId, tests } = req.body;
 
-    const order = await prisma.order.create({
-      data: {
+    // Order creation + auto-billing share a transaction so a crash
+    // between the two can't leave the order without its bill line, or
+    // vice versa. If any test lacks a master-data price the whole
+    // transaction aborts and the order is never persisted (per the
+    // 'reject the order' decision in scoping).
+    const order = await prisma.$transaction(async (tx) => {
+      const created = await tx.order.create({
+        data: {
+          patientId,
+          encounterId,
+          orderType: 'lab',
+          orderedBy: req.user.userId,
+          priority: req.body.priority || 'routine',
+          details: { tests },
+          status: 'pending',
+        },
+      });
+      await autoBillLabTests(tx, {
+        tenantId: req.user.tenantId,
         patientId,
-        encounterId,
-        orderType: 'lab',
-        orderedBy: req.user.userId,
-        priority: req.body.priority || 'routine',
-        details: { tests },
-        status: 'pending',
-      },
+        orderId: created.id,
+        tests: Array.isArray(tests) ? tests : [],
+        orderedAt: created.orderedAt,
+      });
+      return created;
     });
 
     res.status(201).json(order);
-  } catch (error) {
+  } catch (error: any) {
+    if (error instanceof MissingPriceError) {
+      return res.status(422).json({ error: error.message, code: error.code, itemType: error.itemType, itemRef: error.itemRef });
+    }
     console.error('Create lab order error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -3056,20 +3304,33 @@ app.post('/api/radiology-orders', authenticateToken, async (req: any, res: Respo
   try {
     const { patientId, encounterId, tests } = req.body;
 
-    const order = await prisma.order.create({
-      data: {
+    const order = await prisma.$transaction(async (tx) => {
+      const created = await tx.order.create({
+        data: {
+          patientId,
+          encounterId,
+          orderType: 'radiology',
+          orderedBy: req.user.userId,
+          priority: req.body.priority || 'routine',
+          details: { tests },
+          status: 'pending',
+        },
+      });
+      await autoBillRadiologyTests(tx, {
+        tenantId: req.user.tenantId,
         patientId,
-        encounterId,
-        orderType: 'radiology',
-        orderedBy: req.user.userId,
-        priority: req.body.priority || 'routine',
-        details: { tests },
-        status: 'pending',
-      },
+        orderId: created.id,
+        tests: Array.isArray(tests) ? tests : [],
+        orderedAt: created.orderedAt,
+      });
+      return created;
     });
 
     res.status(201).json(order);
-  } catch (error) {
+  } catch (error: any) {
+    if (error instanceof MissingPriceError) {
+      return res.status(422).json({ error: error.message, code: error.code, itemType: error.itemType, itemRef: error.itemRef });
+    }
     console.error('Create radiology order error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -5775,7 +6036,21 @@ app.get('/api/ambulance/vehicles', authenticateToken, async (req: any, res: Resp
 
 app.post('/api/ambulance/vehicles', authenticateToken, async (req: any, res: Response) => {
   try {
-    const { vehicleNumber, type, driverName, driverPhone } = req.body;
+    const { vehicleNumber, type, driverName, driverPhone, equipment, notes } = req.body;
+
+    if (!vehicleNumber || typeof vehicleNumber !== 'string') {
+      return res.status(400).json({ error: 'vehicleNumber is required' });
+    }
+    if (!isAmbulanceTypeCode(type)) {
+      return res.status(400).json({ error: `type must be one of: ${AMBULANCE_TYPE_CODES.join(', ')}` });
+    }
+
+    const def = getAmbulanceType(type);
+    // If the caller didn't supply an equipment list, default to whatever
+    // ships standard with this type (see shared/ambulanceTypes.ts). They
+    // can edit later — this just avoids forcing dispatch to tick 15
+    // boxes for every new BLS van.
+    const equipmentList = Array.isArray(equipment) ? equipment : def?.defaultEquipment || [];
 
     const vehicle = await prisma.ambulanceVehicle.create({
       data: {
@@ -5784,6 +6059,8 @@ app.post('/api/ambulance/vehicles', authenticateToken, async (req: any, res: Res
         type,
         driverName,
         driverPhone,
+        equipment: equipmentList,
+        notes: notes || null,
       },
     });
 
@@ -5792,6 +6069,51 @@ app.post('/api/ambulance/vehicles', authenticateToken, async (req: any, res: Res
     console.error('Add vehicle error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
+});
+
+// Edit basic fields of an existing vehicle. Useful when an unit goes out
+// for refit / installs new equipment, or for fixing driver assignment.
+// Same permission as create (ambulance:manage); status transitions go
+// through the trip-assign / trip-complete endpoints so we don't expose
+// it here — letting dispatch click 'available' on an actively-on-trip
+// vehicle would corrupt the fleet state.
+app.patch('/api/ambulance/vehicles/:id', authenticateToken, requirePermission('ambulance:manage'), async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { type, driverName, driverPhone, equipment, notes, currentLocation, lastMaintenance } = req.body || {};
+
+    const owned = await prisma.ambulanceVehicle.findFirst({ where: { id, tenantId: req.user.tenantId } });
+    if (!owned) return res.status(404).json({ error: 'Vehicle not found' });
+
+    if (type !== undefined && !isAmbulanceTypeCode(type)) {
+      return res.status(400).json({ error: `type must be one of: ${AMBULANCE_TYPE_CODES.join(', ')}` });
+    }
+
+    const updated = await prisma.ambulanceVehicle.update({
+      where: { id },
+      data: {
+        ...(type !== undefined && { type }),
+        ...(driverName !== undefined && { driverName }),
+        ...(driverPhone !== undefined && { driverPhone }),
+        ...(equipment !== undefined && { equipment: Array.isArray(equipment) ? equipment : [] }),
+        ...(notes !== undefined && { notes }),
+        ...(currentLocation !== undefined && { currentLocation }),
+        ...(lastMaintenance !== undefined && { lastMaintenance: lastMaintenance ? new Date(lastMaintenance) : null }),
+      },
+    });
+
+    res.json(updated);
+  } catch (error) {
+    console.error('Update vehicle error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Public catalogue of canonical types + equipment. FE renders the
+// vehicle-add form off this so the type names + default kit lists stay
+// in sync with the backend single source of truth.
+app.get('/api/ambulance/types', authenticateToken, (_req: any, res: Response) => {
+  res.json({ types: AMBULANCE_TYPES, equipment: AMBULANCE_EQUIPMENT });
 });
 
 app.get('/api/ambulance/trips', authenticateToken, async (req: any, res: Response) => {
