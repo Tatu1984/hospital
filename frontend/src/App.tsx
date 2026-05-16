@@ -40,6 +40,8 @@ const WebsiteContact = lazy(() => import('./website/pages/Contact'));
 // you click a sidebar item, that page's chunk fetches; subsequent visits are
 // cached. Login and NewDashboard stay eager — they're the entry points.
 const PatientRegistration = lazy(() => import('./pages/PatientRegistration'));
+const PatientsList = lazy(() => import('./pages/PatientsList'));
+const PatientProfile = lazy(() => import('./pages/PatientProfile'));
 const Appointment = lazy(() => import('./pages/Appointment'));
 const OPD = lazy(() => import('./pages/OPD'));
 const Laboratory = lazy(() => import('./pages/Laboratory'));
@@ -223,7 +225,13 @@ const AppRoutes = () => {
         <Route path="dialysis" element={<RoleProtectedRoute path="dialysis"><Dialysis /></RoleProtectedRoute>} />
 
         {/* Core Clinical Modules */}
-        <Route path="patients" element={<RoleProtectedRoute path="patients"><PatientRegistration /></RoleProtectedRoute>} />
+        {/* Unified patient directory. Replaces the older list section that
+            lived inside PatientRegistration; the form itself is still
+            reachable at /app/patient-registration. Profile is a dynamic
+            child route so list rows can navigate straight to the chart. */}
+        <Route path="patients" element={<RoleProtectedRoute path="patients"><PatientsList /></RoleProtectedRoute>} />
+        <Route path="patients/:patientId" element={<RoleProtectedRoute path="patients"><PatientProfile /></RoleProtectedRoute>} />
+        <Route path="patient-registration" element={<RoleProtectedRoute path="patients"><PatientRegistration /></RoleProtectedRoute>} />
         <Route path="appointment" element={<RoleProtectedRoute path="appointment"><Appointment /></RoleProtectedRoute>} />
         <Route path="opd" element={<RoleProtectedRoute path="opd"><OPD /></RoleProtectedRoute>} />
         <Route path="health-checkup" element={<RoleProtectedRoute path="health-checkup"><HealthCheckup /></RoleProtectedRoute>} />

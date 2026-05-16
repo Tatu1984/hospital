@@ -104,13 +104,22 @@ export async function chartFor(tenantId: string, patientId: string) {
   });
   if (!patient) return null;
 
-  const [admissions, encounters, orders, prescriptions, invoices, surgeries] = await Promise.all([
+  const [admissions, encounters, orders, prescriptions, invoices, surgeries, dialysisSessions] = await Promise.all([
     prisma.admission.findMany({
       where: { patientId, patient: { tenantId } },
       orderBy: { admissionDate: 'desc' },
       include: {
         bed: { select: { bedNumber: true, wardId: true } },
         admittingDoctor: { select: { id: true, name: true } },
+        // IPD nursing/doctor notes are appended to each admission. Pulling
+        // the full log per admission lets the profile page show a
+        // chronological "doctor updates" timeline. 50 per admission is a
+        // generous cap for even long stays.
+        ipdNotes: {
+          orderBy: { createdAt: 'desc' },
+          take: 50,
+          select: { id: true, noteType: true, note: true, authorId: true, createdAt: true },
+        },
       },
       take: 30,
     }),
@@ -145,6 +154,9 @@ export async function chartFor(tenantId: string, patientId: string) {
         id: true,
         doctorId: true,
         drugs: true,
+        notes: true,
+        instructions: true,
+        status: true,
         createdAt: true,
         doctor: { select: { id: true, name: true } },
       },
@@ -153,11 +165,23 @@ export async function chartFor(tenantId: string, patientId: string) {
       where: { patientId },
       orderBy: { createdAt: 'desc' },
       take: 50,
+      // Payments are pulled inline so the bills tab can show the
+      // running part-payment history per invoice without a second
+      // round-trip. Capped per-invoice because a single bill rarely
+      // has more than a handful of settlements.
+      include: {
+        payments: { orderBy: { paidAt: 'desc' }, take: 50 },
+      },
     }),
     prisma.surgery.findMany({
       where: { tenantId, patientId },
       orderBy: { scheduledDate: 'desc' },
       take: 30,
+    }),
+    prisma.dialysisSession.findMany({
+      where: { tenantId, patientId },
+      orderBy: { scheduledDate: 'desc' },
+      take: 100,
     }),
   ]);
 
@@ -173,6 +197,24 @@ export async function chartFor(tenantId: string, patientId: string) {
     : [];
   const wardName: Record<string, string> = Object.fromEntries(wards.map((w) => [w.id, w.name]));
 
+  // Resolve display names for any user FK referenced by IPD notes or
+  // dialysis sessions so the UI doesn't have to fan out a second round of
+  // requests. Single batched query per fk-set.
+  const ipdAuthorIds = Array.from(new Set(
+    admissions.flatMap((a) => (a as any).ipdNotes || [])
+      .map((n: any) => n.authorId)
+      .filter(Boolean),
+  )) as string[];
+  const dialysisStaffIds = Array.from(new Set([
+    ...dialysisSessions.map((d) => d.nephrologistId).filter(Boolean),
+    ...dialysisSessions.map((d) => d.nurseId).filter(Boolean),
+  ])) as string[];
+  const userIds = Array.from(new Set([...ipdAuthorIds, ...dialysisStaffIds]));
+  const users = userIds.length
+    ? await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } })
+    : [];
+  const userName: Record<string, string> = Object.fromEntries(users.map((u) => [u.id, u.name]));
+
   return {
     patient,
     admissions,
@@ -181,6 +223,8 @@ export async function chartFor(tenantId: string, patientId: string) {
     prescriptions,
     invoices,
     surgeries,
+    dialysisSessions,
     wardName,
+    userName,
   };
 }
