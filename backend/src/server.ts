@@ -2076,43 +2076,131 @@ app.get('/api/dashboard/stats', authenticateToken, async (req: any, res: Respons
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
+    const tenantId: string = req.user.tenantId;
+    const branchId: string = req.user.branchId;
+
+    // The live dashboard reads ~12 distinct fields. We fan out one
+    // count/aggregate per tile in parallel; a single missing relation
+    // (e.g. no ICU beds seeded yet) shouldn't fail the whole call, so
+    // each promise is wrapped in .catch(() => 0) and the response uses
+    // the fallback. Tenant + branch scoping is applied where the model
+    // carries those FKs; models without them (BloodInventory, Bed.via
+    // branch) fall back to branch-only scoping.
+    const safe = <T>(p: Promise<T>): Promise<T | number> => p.catch((e) => {
+      console.warn('[dashboard] sub-query failed:', (e as Error)?.message);
+      return 0;
+    });
+
     const [
-      todayPatients,
-      todayEncounters,
-      activeAdmissions,
-      todayRevenue,
+      todayOPD,
+      todayIPD,
+      todayAdmissionsCount,
+      todayDischargesCount,
+      bedsOccupied,
+      bedsAvailable,
+      emergencyCasesCount,
+      icuOccupiedCount,
+      pharmacyDispensedCount,
+      bloodBankUnitsCount,
+      todayRevenueAgg,
+      pendingInvoicesCount,
+      // Always-populated current-state metrics. Without these the dash
+      // looks empty on any morning with no fresh activity. These should
+      // always have non-zero values once the hospital is live.
+      totalPatientsCount,
+      activeAdmissionsCount,
+      todayRegistrationsCount,
+      outstandingBalanceAgg,
+      activeDialysisToday,
     ] = await Promise.all([
-      prisma.patient.count({
-        where: {
-          branchId: req.user.branchId,
-          createdAt: { gte: today },
-        },
-      }),
-      prisma.encounter.count({
-        where: {
-          branchId: req.user.branchId,
-          visitDate: { gte: today },
-        },
-      }),
-      prisma.admission.count({
-        where: {
-          status: 'active',
-        },
-      }),
-      prisma.invoice.aggregate({
-        where: {
-          createdAt: { gte: today },
-          status: { in: ['final', 'paid'] },
-        },
+      // OPD vs IPD split by Encounter.type. The seed uses 'opd' for
+      // out-patient visits; some legacy rows may carry 'OPD' so we
+      // accept either via insensitive comparison through `in`.
+      safe(prisma.encounter.count({
+        where: { branchId, visitDate: { gte: today }, type: { in: ['opd', 'OPD', 'consultation'] } },
+      })),
+      safe(prisma.encounter.count({
+        where: { branchId, visitDate: { gte: today }, type: { in: ['ipd', 'IPD', 'admission'] } },
+      })),
+      safe(prisma.admission.count({
+        where: { admissionDate: { gte: today }, patient: { tenantId } },
+      })),
+      safe(prisma.admission.count({
+        where: { dischargeDate: { gte: today }, patient: { tenantId } },
+      })),
+      safe(prisma.bed.count({ where: { branchId, status: 'occupied' } })),
+      safe(prisma.bed.count({ where: { branchId, status: { in: ['vacant', 'available'] } } })),
+      safe(prisma.emergencyCase.count({
+        where: { tenantId, arrivalTime: { gte: today } },
+      })),
+      safe(prisma.iCUBed.count({ where: { tenantId, status: 'occupied' } })),
+      // No dedicated DrugDispense model yet — prescriptions issued
+      // today is the closest proxy. Will switch to a real dispense
+      // count once the pharmacy module ships.
+      safe(prisma.prescription.count({
+        where: { createdAt: { gte: today }, patient: { tenantId } },
+      })),
+      // Each BloodInventory row is one bag; available bags = units on
+      // hand for the live tile. Tenant-scoped because the model carries
+      // tenantId (verified in schema.prisma).
+      safe(prisma.bloodInventory.count({ where: { tenantId, status: 'available' } })),
+      safe(prisma.invoice.aggregate({
+        where: { createdAt: { gte: today }, status: { in: ['final', 'paid'] }, patient: { tenantId } },
         _sum: { total: true },
-      }),
+      })),
+      safe(prisma.invoice.count({
+        where: { status: { in: ['draft', 'pending', 'partial', 'final'] }, balance: { gt: 0 }, patient: { tenantId } },
+      })),
+      // Current-state metrics (no date filter).
+      safe(prisma.patient.count({ where: { tenantId } })),
+      safe(prisma.admission.count({
+        where: {
+          dischargeDate: null,
+          status: { in: ['active', 'admitted', 'in_progress'] },
+          patient: { tenantId },
+        },
+      })),
+      safe(prisma.patient.count({ where: { tenantId, createdAt: { gte: today } } })),
+      safe(prisma.invoice.aggregate({
+        where: { balance: { gt: 0 }, patient: { tenantId } },
+        _sum: { balance: true },
+      })),
+      // Dialysis sessions scheduled for today (rolling-window snapshot).
+      safe(prisma.dialysisSession.count({
+        where: { tenantId, scheduledDate: { gte: today } },
+      })),
     ]);
 
+    // Aggregate query result is an object; coerce to a number, falling
+    // back to 0 when the .catch() handler returned 0.
+    const todayRevenue = typeof todayRevenueAgg === 'number'
+      ? todayRevenueAgg
+      : Number(todayRevenueAgg._sum?.total || 0);
+    const outstandingBalance = typeof outstandingBalanceAgg === 'number'
+      ? outstandingBalanceAgg
+      : Number(outstandingBalanceAgg._sum?.balance || 0);
+    const bloodBankUnits = typeof bloodBankUnitsCount === 'number' ? bloodBankUnitsCount : 0;
+
     res.json({
-      todayPatients,
-      todayEncounters,
-      activeAdmissions,
-      todayRevenue: todayRevenue._sum.total || 0,
+      // Current-state (always populated once the hospital is live)
+      totalPatients: totalPatientsCount,
+      activeAdmissions: activeAdmissionsCount,
+      bedsOccupied,
+      bedsAvailable,
+      icuOccupancy: icuOccupiedCount,
+      bloodBankUnits,
+      outstandingBalance,
+      pendingInvoices: pendingInvoicesCount,
+      activeDialysisToday,
+      // Today's activity (zero when nothing has happened yet)
+      todayRegistrations: todayRegistrationsCount,
+      todayOPD,
+      todayIPD,
+      todayAdmissions: todayAdmissionsCount,
+      todayDischarges: todayDischargesCount,
+      emergencyCases: emergencyCasesCount,
+      pharmacyDispensed: pharmacyDispensedCount,
+      todayRevenue,
     });
   } catch (error) {
     console.error('Get dashboard stats error:', error);
