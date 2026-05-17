@@ -8906,6 +8906,258 @@ app.get('/api/audit-logs', authenticateToken, async (req: any, res: Response) =>
   }
 });
 
+// ===========================================================================
+// ACTIVITY MONITOR
+// ===========================================================================
+// Derives a live "who's logged in / what are they doing" view from the
+// existing AuditLog table. No new schema — we just slice the audit feed
+// three ways:
+//   - Active sessions = users with a LOGIN_SUCCESS event in the last 24h
+//     AND any audit event in the last 15 min, keyed by (userId, ip).
+//   - Failed logins  = LOGIN_FAILED counts over the last 24h, grouped by
+//     IP and target username.
+//   - Per-user timeline = paginated audit history for one user.
+//
+// IP addresses are enriched with country/city/ISP via shared/ipGeo.ts.
+// Lookups are cached 24h and rate-limited; private/loopback IPs never
+// hit the upstream API.
+//
+// All three endpoints sit behind `system:manage` — same level as the
+// audit-logs-by-ip endpoint. Only admins + auditors should see this.
+
+const ACTIVE_SESSION_WINDOW_MS = 15 * 60 * 1000; // 15 min idle = "still logged in"
+const ACTIVITY_LOOKBACK_MS = 24 * 60 * 60 * 1000; // 24h scan window for sessions + failures
+
+app.get('/api/admin/activity/overview', authenticateToken, requirePermission('system:manage'), async (req: any, res: Response) => {
+  try {
+    const tenantId: string = req.user.tenantId;
+    const now = Date.now();
+    const since = new Date(now - ACTIVITY_LOOKBACK_MS);
+    const activeCutoff = new Date(now - ACTIVE_SESSION_WINDOW_MS);
+
+    // Pull recent audit events in one query — both successful logins
+    // (anchor for sessions) and all events (recent-activity timestamps).
+    // Keeping the column set small so the row count can grow without
+    // blowing out the response.
+    const recent = await prisma.auditLog.findMany({
+      where: { tenantId, timestamp: { gte: since } },
+      select: {
+        userId: true,
+        action: true,
+        resource: true,
+        resourceId: true,
+        ipAddress: true,
+        userAgent: true,
+        timestamp: true,
+        user: { select: { id: true, name: true, username: true, email: true } },
+      },
+      orderBy: { timestamp: 'desc' },
+      take: 5000,
+    });
+
+    // ---- Sessions ----
+    // Key on userId+ip+userAgent so a single user logging in from two
+    // devices (e.g. mobile + desktop) shows as two sessions. Each
+    // session's "lastSeenAt" is the most recent audit event from that
+    // tuple; "loginAt" is the latest LOGIN_SUCCESS.
+    type SessionAcc = {
+      userId: string | null;
+      userName: string;
+      username: string | null;
+      email: string | null;
+      ipAddress: string | null;
+      userAgent: string | null;
+      loginAt: Date | null;
+      lastSeenAt: Date;
+      lastAction: string;
+      lastResource: string | null;
+    };
+    const sessions = new Map<string, SessionAcc>();
+    for (const r of recent) {
+      const key = `${r.userId || 'anon'}::${r.ipAddress || 'noip'}::${r.userAgent || 'noua'}`;
+      const existing = sessions.get(key);
+      if (existing) {
+        if (r.timestamp > existing.lastSeenAt) {
+          existing.lastSeenAt = r.timestamp;
+          existing.lastAction = r.action;
+          existing.lastResource = r.resource;
+        }
+        if (r.action === 'LOGIN_SUCCESS' && (!existing.loginAt || r.timestamp > existing.loginAt)) {
+          existing.loginAt = r.timestamp;
+        }
+      } else {
+        sessions.set(key, {
+          userId: r.userId,
+          userName: r.user?.name || r.user?.username || 'Unknown',
+          username: r.user?.username || null,
+          email: r.user?.email || null,
+          ipAddress: r.ipAddress,
+          userAgent: r.userAgent,
+          loginAt: r.action === 'LOGIN_SUCCESS' ? r.timestamp : null,
+          lastSeenAt: r.timestamp,
+          lastAction: r.action,
+          lastResource: r.resource,
+        });
+      }
+    }
+    // Filter to sessions still considered "active" — anything older than
+    // ACTIVE_SESSION_WINDOW_MS is treated as logged out (JWT may still
+    // be technically valid; this is a UX heuristic). Also drop sessions
+    // with no anchoring LOGIN_SUCCESS in the window — those are likely
+    // pre-existing tokens from before audit started.
+    const activeSessions = Array.from(sessions.values())
+      .filter((s) => s.lastSeenAt >= activeCutoff && s.loginAt !== null && s.userId)
+      .sort((a, b) => b.lastSeenAt.getTime() - a.lastSeenAt.getTime());
+
+    // ---- Failed logins ----
+    type FailedAcc = { ipAddress: string; count: number; lastAt: Date; usernames: Set<string> };
+    const failedByIp = new Map<string, FailedAcc>();
+    let totalFailures = 0;
+    for (const r of recent) {
+      if (r.action !== 'LOGIN_FAILED') continue;
+      totalFailures += 1;
+      const ip = r.ipAddress || 'unknown';
+      const target = r.resourceId || ''; // login endpoint stores attempted username here
+      const acc = failedByIp.get(ip);
+      if (acc) {
+        acc.count += 1;
+        if (r.timestamp > acc.lastAt) acc.lastAt = r.timestamp;
+        if (target) acc.usernames.add(target);
+      } else {
+        failedByIp.set(ip, {
+          ipAddress: ip,
+          count: 1,
+          lastAt: r.timestamp,
+          usernames: new Set(target ? [target] : []),
+        });
+      }
+    }
+    const failedLogins = Array.from(failedByIp.values())
+      .sort((a, b) => b.count - a.count || b.lastAt.getTime() - a.lastAt.getTime())
+      .slice(0, 50);
+
+    // ---- IP geo enrichment ----
+    const allIps = [
+      ...activeSessions.map((s) => s.ipAddress),
+      ...failedLogins.map((f) => f.ipAddress),
+    ];
+    const { lookupIps } = await import('./shared/ipGeo');
+    const geoMap = await lookupIps(allIps);
+
+    function describeGeo(ip: string | null): { kind: string; label: string } {
+      if (!ip || ip === 'unknown') return { kind: 'unknown', label: '—' };
+      const g = geoMap.get(ip);
+      if (!g) return { kind: 'unknown', label: '—' };
+      if (g.kind === 'private') return { kind: 'private', label: 'Internal network' };
+      if (g.kind === 'loopback') return { kind: 'loopback', label: 'Localhost' };
+      if (g.kind === 'resolved') {
+        const parts = [g.city, g.region, g.country].filter(Boolean);
+        return { kind: 'resolved', label: parts.join(', ') || g.country || '—' };
+      }
+      return { kind: 'unknown', label: '—' };
+    }
+
+    res.json({
+      activeSessions: activeSessions.map((s) => ({
+        userId: s.userId,
+        userName: s.userName,
+        username: s.username,
+        email: s.email,
+        ipAddress: s.ipAddress || null,
+        geo: describeGeo(s.ipAddress),
+        userAgent: s.userAgent,
+        loginAt: s.loginAt?.toISOString() || null,
+        lastSeenAt: s.lastSeenAt.toISOString(),
+        idleSeconds: Math.max(0, Math.round((now - s.lastSeenAt.getTime()) / 1000)),
+        lastAction: s.lastAction,
+        lastResource: s.lastResource,
+      })),
+      failedLogins: failedLogins.map((f) => ({
+        ipAddress: f.ipAddress,
+        geo: describeGeo(f.ipAddress),
+        count: f.count,
+        lastAt: f.lastAt.toISOString(),
+        usernamesTried: Array.from(f.usernames).slice(0, 10),
+      })),
+      summary: {
+        activeSessions: activeSessions.length,
+        uniqueUsers: new Set(activeSessions.map((s) => s.userId)).size,
+        failedLogins24h: totalFailures,
+        failedSourceIps: failedByIp.size,
+        windowStart: since.toISOString(),
+        generatedAt: new Date(now).toISOString(),
+      },
+    });
+  } catch (error) {
+    console.error('Activity overview error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/admin/activity/timeline/:userId', authenticateToken, requirePermission('system:manage'), async (req: any, res: Response) => {
+  try {
+    const tenantId: string = req.user.tenantId;
+    const { userId } = req.params;
+    const limit = Math.min(parseInt((req.query.limit as string) || '100', 10) || 100, 500);
+
+    const events = await prisma.auditLog.findMany({
+      where: { tenantId, userId },
+      orderBy: { timestamp: 'desc' },
+      take: limit,
+      select: {
+        id: true,
+        action: true,
+        resource: true,
+        resourceId: true,
+        ipAddress: true,
+        userAgent: true,
+        oldValue: true,
+        newValue: true,
+        timestamp: true,
+      },
+    });
+
+    const { lookupIps } = await import('./shared/ipGeo');
+    const geoMap = await lookupIps(events.map((e) => e.ipAddress));
+
+    const user = await prisma.user.findFirst({
+      where: { id: userId, tenantId },
+      select: { id: true, name: true, username: true, email: true },
+    });
+
+    res.json({
+      user: user || { id: userId, name: 'Unknown', username: null, email: null },
+      events: events.map((e) => {
+        const g = e.ipAddress ? geoMap.get(e.ipAddress) : undefined;
+        let geoLabel = '—';
+        if (g) {
+          if (g.kind === 'private') geoLabel = 'Internal network';
+          else if (g.kind === 'loopback') geoLabel = 'Localhost';
+          else if (g.kind === 'resolved') {
+            geoLabel = [g.city, g.region, g.country].filter(Boolean).join(', ') || g.country || '—';
+          }
+        }
+        return {
+          id: e.id,
+          action: e.action,
+          resource: e.resource,
+          resourceId: e.resourceId,
+          ipAddress: e.ipAddress,
+          geoLabel,
+          userAgent: e.userAgent,
+          timestamp: e.timestamp.toISOString(),
+          summary: e.resourceId
+            ? `${e.resource} · ${e.resourceId}`
+            : (e.newValue ? JSON.stringify(e.newValue).slice(0, 200) : ''),
+        };
+      }),
+    });
+  } catch (error) {
+    console.error('Activity timeline error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Get system settings
 app.get('/api/settings', authenticateToken, async (req: any, res: Response) => {
   try {

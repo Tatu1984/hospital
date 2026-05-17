@@ -153,7 +153,7 @@ export const rolePermissions: Record<Role, string[]> = {
 
   // QUALITY - Quality management
   QUALITY: [
-    '/', 'quality', 'mis-report', 'audit-log'
+    '/', 'quality', 'mis-report', 'audit-log', 'activity-monitor'
   ],
 };
 

@@ -171,6 +171,8 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   'GET /api/audit-logs': ['system:manage'],
   // Activity-by-IP rollup — top IPs with event count + unique users.
   'GET /api/audit-logs/by-ip': ['system:manage'],
+  'GET /api/admin/activity/overview': ['system:manage'],
+  'GET /api/admin/activity/timeline/:userId': ['system:manage'],
   'GET /api/settings': ['system:view'],
   'POST /api/settings/hospital': ['system:manage'],
   'POST /api/settings/email': ['system:manage'],
