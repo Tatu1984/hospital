@@ -3568,27 +3568,30 @@ app.post('/api/admissions', authenticateToken, async (req: any, res: Response) =
 
     // The bed dropdown on /app/inpatient is fed by /api/beds, which
     // returns rows from TWO tables — `beds` (regular ward) and
-    // `icu_beds` (ICU/HDU/ITU/CCU). Admission has a FK only to `beds`,
-    // so an ICU bed id will fail the FK with a 500 if we pass it
-    // straight through. Resolve the supplied id up front and either
-    // route it correctly OR return a clear 400. Admit-to-ICU is a
-    // separate workflow in the ICU module; we don't fall back here.
+    // `icu_beds` (ICU/HDU/ITU/CCU). Admission has a FK only to `beds`;
+    // we DON'T pass an icu bed id straight to admissions.bedId. Instead
+    // we recognise the id's source up front, leave admissions.bedId
+    // null when it's an ICU bed, and link the relationship the other
+    // way via ICUBed.admissionId (already typed in Prisma). Result:
+    // one Admission row + the right bed table marked occupied + a
+    // discoverable back-reference for the ICU module.
+    let icuBedToOccupy: string | null = null;
     if (bedId) {
       const ward = await prisma.bed.findFirst({ where: { id: bedId, branchId: patient.branchId }, select: { id: true } });
       if (!ward) {
         const icu = await prisma.iCUBed.findFirst({ where: { id: bedId, tenantId: req.user.tenantId }, select: { id: true } });
-        if (icu) {
+        if (!icu) {
           return res.status(400).json({
-            error: 'ICU/HDU beds are admitted via the ICU module — pick a regular ward bed here, or use /app/icu',
-            code: 'WRONG_BED_KIND',
+            error: 'Selected bed does not exist (try refreshing the bed list)',
+            code: 'BED_NOT_FOUND',
           });
         }
-        return res.status(400).json({
-          error: 'Selected bed does not exist (try refreshing the bed list)',
-          code: 'BED_NOT_FOUND',
-        });
+        icuBedToOccupy = icu.id;
       }
     }
+    // Effective bedId we actually pass to admissions.bedId — null
+    // when the operator picked an ICU bed (handled separately below).
+    const effectiveBedId = icuBedToOccupy ? null : (bedId || null);
 
     // Admission requires a unique 1-to-1 Encounter row. The frontend
     // doesn't create one separately — we open the encounter here in the
@@ -3614,7 +3617,7 @@ app.post('/api/admissions', authenticateToken, async (req: any, res: Response) =
         data: {
           encounterId: encounter.id,
           patientId: patient.id,
-          bedId: bedId || null,
+          bedId: effectiveBedId,
           admittingDoctorId: admittingDoctorId || req.user.userId || null,
           diagnosis: diagnosis || null,
           status: 'active',
@@ -3626,8 +3629,20 @@ app.post('/api/admissions', authenticateToken, async (req: any, res: Response) =
         },
       });
 
-      if (bedId) {
-        await tx.bed.update({ where: { id: bedId }, data: { status: 'occupied' } });
+      if (effectiveBedId) {
+        await tx.bed.update({ where: { id: effectiveBedId }, data: { status: 'occupied' } });
+      } else if (icuBedToOccupy) {
+        // Mark the ICU bed occupied AND back-reference this admission.
+        // ICU module reads icu_beds.admissionId to surface the current
+        // occupant; this is the typed-Prisma side of the relation.
+        await tx.iCUBed.update({
+          where: { id: icuBedToOccupy },
+          data: {
+            status: 'occupied',
+            admissionId: created.id,
+            currentPatient: patient.id,
+          },
+        });
       }
 
       return created;

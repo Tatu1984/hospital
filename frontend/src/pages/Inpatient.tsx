@@ -405,23 +405,29 @@ export default function Inpatient() {
 
               <div className="space-y-2">
                 <Label htmlFor="bed">Bed Assignment</Label>
-                {/* Exclude ICU beds from the dropdown — admit-to-ICU is
-                    a different workflow handled by the ICU module.
-                    Mixing them here caused FK violations on POST
-                    /api/admissions (icu_beds.id is not a valid
-                    beds.id). The /api/beds endpoint tags ICU rows
-                    with __source='icubed'. */}
+                {/* Ward beds + ICU beds (MICU / SICU / NICU / PICU /
+                    CCU / HDU / ITU) are both selectable. The backend
+                    auto-routes ICU bed selections through the right
+                    table (icu_beds.admissionId back-reference) so the
+                    operator doesn't have to know which is which. ICU
+                    rows are tagged __source='icubed' by /api/beds and
+                    we badge them in the option label so they're
+                    visually distinct. */}
                 <Select value={admitFormData.bedId} onValueChange={(value) => setAdmitFormData(prev => ({ ...prev, bedId: value }))}>
                   <SelectTrigger>
-                    <SelectValue placeholder={availableBeds.filter((b: any) => b.__source !== 'icubed').length ? 'Select bed (optional)' : 'No vacant ward beds — admit first, assign later'} />
+                    <SelectValue placeholder={availableBeds.length ? 'Select bed (optional)' : 'No vacant beds — admit first, assign later'} />
                   </SelectTrigger>
                   <SelectContent>
-                    {availableBeds.filter((b: any) => b.__source !== 'icubed').map((bed) => (
-                      <SelectItem key={bed.id} value={bed.id}>
-                        {(bed.ward?.name || 'Ward')} — {bed.bedNumber}
-                        {bed.category ? ` · ${bed.category}` : ''}
-                      </SelectItem>
-                    ))}
+                    {availableBeds.map((bed: any) => {
+                      const isIcu = bed.__source === 'icubed';
+                      return (
+                        <SelectItem key={bed.id} value={bed.id}>
+                          {isIcu ? '⚕ ' : ''}{(bed.ward?.name || (isIcu ? bed.category : 'Ward'))} — {bed.bedNumber}
+                          {bed.category && !isIcu ? ` · ${bed.category}` : ''}
+                          {isIcu ? ` · Critical care` : ''}
+                        </SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
               </div>
