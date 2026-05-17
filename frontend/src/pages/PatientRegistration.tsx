@@ -81,86 +81,12 @@ function toArray<T>(data: unknown): T[] {
   return [];
 }
 
-// Three-select date-of-birth picker. Year range covers 1900 → current
-// year so a centenarian can register without an ad-hoc workaround.
-// Day list is clamped to the actual length of the chosen month/year so
-// you can't pick Feb 30. Emits the canonical YYYY-MM-DD string the
-// backend expects (or '' when any part is missing).
-const MONTH_NAMES = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
-function daysInMonth(year: number, month1: number): number {
-  // month1 is 1-indexed. new Date(y, m, 0) gives last day of month m.
-  if (!year || !month1) return 31;
-  return new Date(year, month1, 0).getDate();
-}
-function DateOfBirthPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  // Parse the incoming YYYY-MM-DD (or '') into y/m/d locally so the
-  // three selects render with the right initial selection.
-  const parts = (value || '').split('-');
-  const y = parts[0] ? parseInt(parts[0], 10) || 0 : 0;
-  const m = parts[1] ? parseInt(parts[1], 10) || 0 : 0;
-  const d = parts[2] ? parseInt(parts[2], 10) || 0 : 0;
-
-  const thisYear = new Date().getFullYear();
-  const years: number[] = [];
-  for (let yy = thisYear; yy >= 1900; yy--) years.push(yy);
-  const maxDay = daysInMonth(y, m);
-
-  function emit(ny: number, nm: number, nd: number) {
-    if (!ny || !nm || !nd) {
-      onChange('');
-      return;
-    }
-    // Clamp the day if the new month doesn't have it (e.g. switching
-    // from Jan 31 to Feb).
-    const safeDay = Math.min(nd, daysInMonth(ny, nm));
-    const yyyy = String(ny).padStart(4, '0');
-    const mm = String(nm).padStart(2, '0');
-    const dd = String(safeDay).padStart(2, '0');
-    onChange(`${yyyy}-${mm}-${dd}`);
-  }
-
-  const baseCls = 'w-full px-3 py-2 border border-slate-200 rounded-md bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500';
-  return (
-    <div className="grid grid-cols-3 gap-2">
-      <select
-        aria-label="Day"
-        className={baseCls}
-        value={d || ''}
-        onChange={(e) => emit(y, m, parseInt(e.target.value, 10) || 0)}
-      >
-        <option value="">Day</option>
-        {Array.from({ length: maxDay }, (_, i) => i + 1).map((day) => (
-          <option key={day} value={day}>{day}</option>
-        ))}
-      </select>
-      <select
-        aria-label="Month"
-        className={baseCls}
-        value={m || ''}
-        onChange={(e) => emit(y, parseInt(e.target.value, 10) || 0, d)}
-      >
-        <option value="">Month</option>
-        {MONTH_NAMES.map((name, i) => (
-          <option key={name} value={i + 1}>{name}</option>
-        ))}
-      </select>
-      <select
-        aria-label="Year"
-        className={baseCls}
-        value={y || ''}
-        onChange={(e) => emit(parseInt(e.target.value, 10) || 0, m, d)}
-      >
-        <option value="">Year</option>
-        {years.map((yy) => (
-          <option key={yy} value={yy}>{yy}</option>
-        ))}
-      </select>
-    </div>
-  );
-}
+// Today's date in YYYY-MM-DD — used as the `max` on the DOB input so
+// users can't accidentally enter a future birth date. 1900-01-01 is
+// the floor: any record older than that is almost certainly a typo,
+// and bounding the year here also helps the browser's year spinner.
+const TODAY_YMD = new Date().toISOString().slice(0, 10);
+const MIN_DOB = '1900-01-01';
 
 export default function PatientRegistration() {
   const navigate = useNavigate();
@@ -389,21 +315,35 @@ export default function PatientRegistration() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="dateOfBirth">Date of Birth *</Label>
-                {/* Three selects beat the browser's native <input type="date">
-                    for DOB capture — Safari/Chrome's year spinner clamps
-                    partial input ("2" -> 0002, "20" -> 0020) which is
-                    unusable when typing a 4-digit year. Selects are also
-                    nicer for elderly patients born in the 1930s where a
-                    spinner would take 90+ clicks. */}
-                <DateOfBirthPicker
-                  value={formData.dateOfBirth}
-                  onChange={(yyyymmdd) =>
+                {/* Native browser date input. Two fixes vs. the earlier
+                    behaviour:
+                    1. min/max bound the year picker to 1900..today, so
+                       the spinner can't wander into year 0 / future.
+                    2. State commits on BLUR, not on every keystroke.
+                       The year segment of <input type="date"> is a
+                       4-digit slot — when you type "2" the browser
+                       interprets it as year 0002 mid-keystroke. With
+                       onChange we'd echo "0002" back to React, which
+                       re-renders the input and traps the user there.
+                       Committing on blur lets the browser hold its
+                       own partial state until you tab/click away. */}
+                <Input
+                  id="dateOfBirth"
+                  name="dateOfBirth"
+                  type="date"
+                  min={MIN_DOB}
+                  max={TODAY_YMD}
+                  defaultValue={formData.dateOfBirth}
+                  key={formData.dateOfBirth /* re-mount when form reset */}
+                  onBlur={(e) => {
+                    const value = e.target.value;
                     setFormData((prev) => ({
                       ...prev,
-                      dateOfBirth: yyyymmdd,
-                      age: ageFromDateString(yyyymmdd),
-                    }))
-                  }
+                      dateOfBirth: value,
+                      age: ageFromDateString(value),
+                    }));
+                  }}
+                  required
                 />
               </div>
               <div className="space-y-2">
