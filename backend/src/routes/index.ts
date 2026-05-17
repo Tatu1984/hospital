@@ -173,6 +173,11 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   'GET /api/audit-logs/by-ip': ['system:manage'],
   'GET /api/admin/activity/overview': ['system:manage'],
   'GET /api/admin/activity/timeline/:userId': ['system:manage'],
+  'GET /api/admin/activity/page-stats': ['system:manage'],
+  // PAGE_VIEW logger — every authenticated user posts here on route
+  // change. The endpoint is dashboard:view-gated (a permission every
+  // role has) so it doesn't break for any logged-in user.
+  'POST /api/internal/page-view': ['dashboard:view'],
   'GET /api/settings': ['system:view'],
   'POST /api/settings/hospital': ['system:manage'],
   'POST /api/settings/email': ['system:manage'],

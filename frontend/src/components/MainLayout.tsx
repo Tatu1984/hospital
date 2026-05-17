@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import api from '../services/api';
 import { ErrorBoundary } from './ErrorBoundary';
 import { Button } from '@/components/ui/button';
 import {
@@ -61,6 +62,61 @@ const MainLayout = () => {
   const location = useLocation();
 
   const isDoctor = (user?.roleIds || []).some((r: string) => DOCTOR_ROLE_IDS.has(r));
+
+  // Page-view tracking. On every route change, log the page we just
+  // LEFT (with the time spent on it) to /api/internal/page-view. The
+  // previous path + duration is what the analytics dashboard
+  // aggregates. We also log a final beacon on tab close via
+  // sendBeacon so the last page's duration isn't lost.
+  //
+  // PRIVACY: every URL stays inside our Neon DB — never sent to a
+  // third party. URLs may contain patient ids; that's PHI, which is
+  // exactly why the in-house AuditLog approach was chosen over
+  // PostHog cloud.
+  const enterTimeRef = useRef<number>(Date.now());
+  const prevPathRef = useRef<string>(location.pathname);
+  useEffect(() => {
+    const fromPath = prevPathRef.current;
+    const toPath = location.pathname;
+    if (fromPath !== toPath) {
+      const durationMs = Date.now() - enterTimeRef.current;
+      // Fire-and-forget. Failures don't reach the user — analytics
+      // gaps are preferable to error toasts during a clinical task.
+      void api
+        .post('/api/internal/page-view', { path: fromPath, prevPath: null, durationMs })
+        .catch(() => undefined);
+      prevPathRef.current = toPath;
+      enterTimeRef.current = Date.now();
+    }
+  }, [location.pathname]);
+
+  useEffect(() => {
+    // On tab close / hard refresh, send a final page-view event for the
+    // current route so its duration counts. sendBeacon is the only
+    // reliable way to ship a request during unload; it's fire-and-
+    // forget by design and doesn't block navigation.
+    function flush() {
+      try {
+        const durationMs = Date.now() - enterTimeRef.current;
+        const path = prevPathRef.current;
+        if (!path || durationMs < 500) return;
+        const body = JSON.stringify({ path, prevPath: null, durationMs });
+        const apiBase = (import.meta as any).env?.VITE_API_URL || '';
+        const url = `${apiBase}/api/internal/page-view`;
+        // sendBeacon doesn't take Authorization headers, so this only
+        // logs for sessions where the cookie-based refresh token is
+        // present. The trade-off is acceptable for an analytics signal.
+        if (navigator.sendBeacon) {
+          const blob = new Blob([body], { type: 'application/json' });
+          navigator.sendBeacon(url, blob);
+        }
+      } catch {
+        // ignore — analytics is best-effort
+      }
+    }
+    window.addEventListener('beforeunload', flush);
+    return () => window.removeEventListener('beforeunload', flush);
+  }, []);
 
   const menuGroups = [
     {

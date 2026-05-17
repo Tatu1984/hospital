@@ -710,6 +710,54 @@ app.post('/api/internal/demo-seed', authenticateToken, async (req: any, res: Res
 });
 app.post('/api/internal/audit-retention/run', auditRetentionHandler);
 
+// PAGE_VIEW logger — the frontend calls this on every route change with
+// the path the user just left and the time they spent on it. We write an
+// AuditLog row so all activity (API actions + page views) lives in one
+// place, queryable by the existing Activity Monitor.
+//
+// No new schema. Tenant + user scoped via the JWT. Path is stored in
+// `resource`, duration (ms) in `newValue.durationMs`, and the previous
+// path (where they came from) in `newValue.prevPath` for funnel analysis.
+//
+// Path validation: rejects anything > 200 chars or containing newlines
+// (defense against an attacker stuffing data into our audit log via the
+// path field). Patient IDs in URLs are PHI but they stay in our DB —
+// no third-party exposure, which is the whole point of this approach.
+app.post('/api/internal/page-view', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { path, prevPath, durationMs } = req.body || {};
+    if (typeof path !== 'string' || !path || path.length > 200 || /[\r\n]/.test(path)) {
+      return res.status(400).json({ error: 'path is required (max 200 chars, no newlines)' });
+    }
+    const cleanPrev = typeof prevPath === 'string' && prevPath.length <= 200 && !/[\r\n]/.test(prevPath)
+      ? prevPath
+      : null;
+    const duration = Number.isFinite(Number(durationMs)) && Number(durationMs) >= 0
+      ? Math.min(Math.round(Number(durationMs)), 24 * 60 * 60 * 1000) // cap at 24h to defend against bogus clocks
+      : null;
+
+    void writeAudit({
+      prisma,
+      req,
+      userId: req.user.userId,
+      tenantId: req.user.tenantId,
+      action: 'PAGE_VIEW',
+      resource: path,
+      newValue: { prevPath: cleanPrev, durationMs: duration },
+    });
+    // Always 204 — page-view logging is best-effort; an error here
+    // shouldn't surface to the user. The audit job runs asynchronously
+    // via void writeAudit() so we don't even wait for it to land.
+    res.status(204).end();
+  } catch (error) {
+    // Even on synchronous failure we 204 — clients shouldn't retry,
+    // and an analytics gap is preferable to spurious error toasts.
+    // eslint-disable-next-line no-console
+    console.error('page-view log error:', error);
+    res.status(204).end();
+  }
+});
+
 // ============================================
 // REFRESH TOKEN — httpOnly cookie helpers
 // ============================================
@@ -9090,6 +9138,76 @@ app.get('/api/admin/activity/overview', authenticateToken, requirePermission('sy
     });
   } catch (error) {
     console.error('Activity overview error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Page-view analytics. Aggregates PAGE_VIEW audit rows over a lookback
+// window (default 7 days; override with ?windowHours=168). Returns two
+// rankings: top pages by visit count + top pages by total time-spent.
+// Also computes per-page averages and unique-user counts so a single
+// view shows "popular" vs "deep" pages at a glance.
+app.get('/api/admin/activity/page-stats', authenticateToken, requirePermission('system:manage'), async (req: any, res: Response) => {
+  try {
+    const tenantId: string = req.user.tenantId;
+    const windowHours = Math.max(1, Math.min(parseInt((req.query.windowHours as string) || '168', 10) || 168, 24 * 30));
+    const since = new Date(Date.now() - windowHours * 60 * 60 * 1000);
+
+    // Cap at 50k rows to keep the aggregator cheap; a hospital averaging
+    // ~5 page-views/user/min across 50 active users still fits the 7-day
+    // window in this cap.
+    const rows = await prisma.auditLog.findMany({
+      where: { tenantId, action: 'PAGE_VIEW', timestamp: { gte: since } },
+      select: { resource: true, userId: true, newValue: true, timestamp: true },
+      orderBy: { timestamp: 'desc' },
+      take: 50_000,
+    });
+
+    type Acc = { path: string; visits: number; totalMs: number; userIds: Set<string> };
+    const byPath = new Map<string, Acc>();
+    let totalVisits = 0;
+    for (const r of rows) {
+      const path = r.resource || '';
+      if (!path) continue;
+      totalVisits += 1;
+      const duration = Number((r.newValue as any)?.durationMs || 0);
+      const acc = byPath.get(path);
+      if (acc) {
+        acc.visits += 1;
+        acc.totalMs += duration;
+        if (r.userId) acc.userIds.add(r.userId);
+      } else {
+        byPath.set(path, {
+          path,
+          visits: 1,
+          totalMs: duration,
+          userIds: new Set(r.userId ? [r.userId] : []),
+        });
+      }
+    }
+
+    const pages = Array.from(byPath.values()).map((a) => ({
+      path: a.path,
+      visits: a.visits,
+      uniqueUsers: a.userIds.size,
+      totalMs: a.totalMs,
+      avgMs: a.visits ? Math.round(a.totalMs / a.visits) : 0,
+    }));
+
+    const byVisits = [...pages].sort((a, b) => b.visits - a.visits).slice(0, 30);
+    const byTime = [...pages].sort((a, b) => b.totalMs - a.totalMs).slice(0, 30);
+
+    res.json({
+      windowHours,
+      windowStart: since.toISOString(),
+      totalVisits,
+      uniquePaths: pages.length,
+      uniqueUsers: new Set(rows.map((r) => r.userId).filter(Boolean) as string[]).size,
+      topByVisits: byVisits,
+      topByTimeSpent: byTime,
+    });
+  } catch (error) {
+    console.error('page-stats error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

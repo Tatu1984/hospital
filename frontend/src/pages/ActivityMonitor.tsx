@@ -23,6 +23,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import {
   RefreshCw, Activity as ActivityIcon, AlertTriangle, Clock,
   Users as UsersIcon, MapPin, Monitor, Network, ChevronLeft,
+  Eye, Timer,
 } from 'lucide-react';
 import api from '../services/api';
 
@@ -81,6 +82,23 @@ interface TimelineResponse {
   events: TimelineEvent[];
 }
 
+interface PageStat {
+  path: string;
+  visits: number;
+  uniqueUsers: number;
+  totalMs: number;
+  avgMs: number;
+}
+interface PageStatsResponse {
+  windowHours: number;
+  windowStart: string;
+  totalVisits: number;
+  uniquePaths: number;
+  uniqueUsers: number;
+  topByVisits: PageStat[];
+  topByTimeSpent: PageStat[];
+}
+
 const REFRESH_MS = 30_000;
 
 function fmtRel(seconds: number): string {
@@ -94,6 +112,15 @@ function fmtRel(seconds: number): string {
 function fmtDateTime(iso: string | null): string {
   if (!iso) return '—';
   return new Date(iso).toLocaleString();
+}
+function fmtDuration(ms: number): string {
+  if (!ms || ms < 1000) return `${ms}ms`;
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
 }
 function geoBadgeClass(g: Geo): string {
   if (g.kind === 'resolved') return 'bg-purple-100 text-purple-800';
@@ -193,6 +220,7 @@ export default function ActivityMonitor() {
         <TabsList>
           <TabsTrigger value="sessions">Active Sessions ({data?.activeSessions.length ?? 0})</TabsTrigger>
           <TabsTrigger value="failed">Failed Logins ({data?.failedLogins.length ?? 0})</TabsTrigger>
+          <TabsTrigger value="pages">Page Analytics</TabsTrigger>
         </TabsList>
 
         <TabsContent value="sessions">
@@ -269,6 +297,10 @@ export default function ActivityMonitor() {
           </Card>
         </TabsContent>
 
+        <TabsContent value="pages">
+          <PageAnalytics />
+        </TabsContent>
+
         <TabsContent value="failed">
           <Card>
             <CardHeader>
@@ -343,6 +375,160 @@ function SummaryTile({ label, icon: Icon, value, tone }: { label: string; icon: 
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function PageAnalytics() {
+  const [data, setData] = useState<PageStatsResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [windowHours, setWindowHours] = useState(168); // 7 days
+
+  useEffect(() => {
+    (async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const r = await api.get(`/api/admin/activity/page-stats?windowHours=${windowHours}`);
+        setData(r.data);
+      } catch (e: any) {
+        setError(e?.response?.data?.error || e?.message || 'Failed to load page stats');
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [windowHours]);
+
+  const windowOptions = [
+    { hours: 24, label: 'Last 24h' },
+    { hours: 24 * 7, label: 'Last 7d' },
+    { hours: 24 * 30, label: 'Last 30d' },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <CardTitle>Page Analytics</CardTitle>
+              <CardDescription>
+                Where users spend their time. Built from PAGE_VIEW audit events — your data never leaves this DB.
+                {data && (
+                  <span className="ml-2">
+                    {data.totalVisits.toLocaleString()} visits · {data.uniquePaths} pages · {data.uniqueUsers} users
+                  </span>
+                )}
+              </CardDescription>
+            </div>
+            <div className="flex gap-1">
+              {windowOptions.map((opt) => (
+                <button
+                  key={opt.hours}
+                  type="button"
+                  onClick={() => setWindowHours(opt.hours)}
+                  className={
+                    'text-xs px-3 py-1 rounded-full border transition ' +
+                    (windowHours === opt.hours
+                      ? 'bg-slate-900 text-white border-slate-900'
+                      : 'bg-white text-slate-700 border-slate-200 hover:border-slate-400')
+                  }
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </CardHeader>
+      </Card>
+
+      {loading && <Card><CardContent className="p-8 text-center text-slate-500">Loading…</CardContent></Card>}
+      {error && <Card className="border-red-200 bg-red-50"><CardContent className="p-4 text-red-700">{error}</CardContent></Card>}
+
+      {!loading && !error && data && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Eye className="w-4 h-4 text-blue-600" /> Top pages by visits
+              </CardTitle>
+              <CardDescription>
+                Most popular routes. Useful for prioritising UX improvements.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Path</TableHead>
+                    <TableHead className="text-right">Visits</TableHead>
+                    <TableHead className="text-right">Users</TableHead>
+                    <TableHead className="text-right">Avg time</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.topByVisits.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-center py-6 text-slate-500">
+                        No page views recorded yet. Navigate around the app and refresh.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {data.topByVisits.map((p) => (
+                    <TableRow key={p.path}>
+                      <TableCell className="font-mono text-xs max-w-xs truncate" title={p.path}>{p.path}</TableCell>
+                      <TableCell className="text-right font-medium">{p.visits.toLocaleString()}</TableCell>
+                      <TableCell className="text-right text-slate-600">{p.uniqueUsers}</TableCell>
+                      <TableCell className="text-right text-slate-600">{fmtDuration(p.avgMs)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Timer className="w-4 h-4 text-purple-600" /> Top pages by time-spent
+              </CardTitle>
+              <CardDescription>
+                Where focus is going. High average time can mean valuable workflow — or a confusing one.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Path</TableHead>
+                    <TableHead className="text-right">Total time</TableHead>
+                    <TableHead className="text-right">Avg time</TableHead>
+                    <TableHead className="text-right">Visits</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.topByTimeSpent.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-center py-6 text-slate-500">
+                        No page views recorded yet.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {data.topByTimeSpent.map((p) => (
+                    <TableRow key={p.path}>
+                      <TableCell className="font-mono text-xs max-w-xs truncate" title={p.path}>{p.path}</TableCell>
+                      <TableCell className="text-right font-medium">{fmtDuration(p.totalMs)}</TableCell>
+                      <TableCell className="text-right text-slate-600">{fmtDuration(p.avgMs)}</TableCell>
+                      <TableCell className="text-right text-slate-600">{p.visits.toLocaleString()}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+    </div>
   );
 }
 
