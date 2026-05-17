@@ -42,6 +42,8 @@ import {
   Wrench,
   Star,
   Wallet,
+  Search,
+  Network,
 } from 'lucide-react';
 
 // Roles for which the "My Earnings" finance entry shows in the sidebar.
@@ -50,6 +52,10 @@ const DOCTOR_ROLE_IDS = new Set(['DOCTOR', 'CONSULTANT', 'SURGEON']);
 
 const MainLayout = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Search filter for the sidebar. Matches against item.label OR item.path
+  // case-insensitively; an empty string shows everything. Groups with no
+  // matching items collapse out so the user sees a tight result list.
+  const [search, setSearch] = useState('');
   const { user, logout, hasAccess } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -121,6 +127,10 @@ const MainLayout = () => {
         { path: '/quality', icon: Star, label: 'Quality' },
         { path: '/master-data', icon: Settings, label: 'Master Data' },
         { path: '/audit-log', icon: ShieldCheck, label: 'Audit Log' },
+        // "Who logged in from where, doing what" — built on AuditLog with
+        // session derivation, failed-login dashboard, and per-user timeline.
+        // Gated to ADMIN / QUALITY / management roles via rolePermissions.
+        { path: '/activity-monitor', icon: Network, label: 'Activity Monitor' },
         { path: '/system-control', icon: ShieldCheck, label: 'System Control' },
       ]
     }
@@ -162,15 +172,58 @@ const MainLayout = () => {
               </Button>
             </div>
 
-            <nav className="flex-1 overflow-y-auto p-4 space-y-6 bg-white">
-              {menuGroups.map((group, idx) => {
-                // Filter items based on user permissions
-                const accessibleItems = group.items.filter((item) =>
-                  hasAccess(item.path.replace(/^\//, '') || '/')
-                );
+            {/* Sidebar search — filters the nav items below by label
+                or route. Lives between the brand strip and the nav so
+                it's always visible while the list scrolls. */}
+            <div className="px-4 pt-4 pb-2 bg-white border-b border-slate-100">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search menu…"
+                  className="w-full pl-9 pr-8 py-2 text-sm border border-slate-200 rounded-md bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                {search && (
+                  <button
+                    type="button"
+                    onClick={() => setSearch('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                    aria-label="Clear search"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
 
-                // Don't render the group if no accessible items
-                if (accessibleItems.length === 0) return null;
+            <nav className="flex-1 overflow-y-auto p-4 space-y-6 bg-white">
+              {(() => {
+                // Pre-pass: filter every group by RBAC + the search term,
+                // then check whether ANY group has matches. If not, show
+                // a "no results" message instead of an empty scroll area.
+                const q = search.trim().toLowerCase();
+                const matchesSearch = (item: { label: string; path: string }) =>
+                  !q || item.label.toLowerCase().includes(q) || item.path.toLowerCase().includes(q);
+                const filteredGroups = menuGroups
+                  .map((g) => ({
+                    ...g,
+                    items: g.items.filter((it) =>
+                      hasAccess(it.path.replace(/^\//, '') || '/') && matchesSearch(it),
+                    ),
+                  }))
+                  .filter((g) => g.items.length > 0);
+
+                if (q && filteredGroups.length === 0) {
+                  return (
+                    <div className="text-center text-sm text-slate-400 py-8">
+                      No menu items match "{search}"
+                    </div>
+                  );
+                }
+                return filteredGroups.map((group, idx) => {
+                const accessibleItems = group.items;
 
                 return (
                   <div key={idx}>
@@ -203,7 +256,8 @@ const MainLayout = () => {
                     </div>
                   </div>
                 );
-              })}
+                });
+              })()}
             </nav>
           </>
         )}
