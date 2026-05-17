@@ -3566,6 +3566,30 @@ app.post('/api/admissions', authenticateToken, async (req: any, res: Response) =
     });
     if (!patient) return res.status(404).json({ error: 'Patient not found' });
 
+    // The bed dropdown on /app/inpatient is fed by /api/beds, which
+    // returns rows from TWO tables — `beds` (regular ward) and
+    // `icu_beds` (ICU/HDU/ITU/CCU). Admission has a FK only to `beds`,
+    // so an ICU bed id will fail the FK with a 500 if we pass it
+    // straight through. Resolve the supplied id up front and either
+    // route it correctly OR return a clear 400. Admit-to-ICU is a
+    // separate workflow in the ICU module; we don't fall back here.
+    if (bedId) {
+      const ward = await prisma.bed.findFirst({ where: { id: bedId, branchId: patient.branchId }, select: { id: true } });
+      if (!ward) {
+        const icu = await prisma.iCUBed.findFirst({ where: { id: bedId, tenantId: req.user.tenantId }, select: { id: true } });
+        if (icu) {
+          return res.status(400).json({
+            error: 'ICU/HDU beds are admitted via the ICU module — pick a regular ward bed here, or use /app/icu',
+            code: 'WRONG_BED_KIND',
+          });
+        }
+        return res.status(400).json({
+          error: 'Selected bed does not exist (try refreshing the bed list)',
+          code: 'BED_NOT_FOUND',
+        });
+      }
+    }
+
     // Admission requires a unique 1-to-1 Encounter row. The frontend
     // doesn't create one separately — we open the encounter here in the
     // same transaction so:
@@ -3603,10 +3627,7 @@ app.post('/api/admissions', authenticateToken, async (req: any, res: Response) =
       });
 
       if (bedId) {
-        await tx.bed.update({
-          where: { id: bedId },
-          data: { status: 'occupied' },
-        });
+        await tx.bed.update({ where: { id: bedId }, data: { status: 'occupied' } });
       }
 
       return created;

@@ -84,9 +84,15 @@ export default function Inpatient() {
   const [admitFormData, setAdmitFormData] = useState({
     patientId: '',
     bedId: '',
+    admittingDoctorId: '',
     diagnosis: '',
     admissionNotes: ''
   });
+  // Populated from /api/doctors — used by the doctor-allocation
+  // dropdown in the Admit Patient dialog so the operator can pick the
+  // attending consultant at admit time rather than having to edit
+  // later. Falls back to the logged-in user if left blank.
+  const [doctors, setDoctors] = useState<Array<{ id: string; name: string; departments?: string[] }>>([]);
 
   const [dischargeFormData, setDischargeFormData] = useState({
     dischargeSummary: '',
@@ -98,7 +104,20 @@ export default function Inpatient() {
     fetchAdmissions();
     fetchBeds();
     fetchPatients();
+    fetchDoctors();
   }, []);
+
+  const fetchDoctors = async () => {
+    try {
+      const response = await api.get('/api/doctors');
+      // Backend returns { id, name, ... } per row. Keep just what the
+      // dropdown needs to render — no further normalisation.
+      setDoctors(toArray<any>(response.data));
+    } catch (error) {
+      console.error('Error fetching doctors:', error);
+      setDoctors([]);
+    }
+  };
 
   const fetchAdmissions = async () => {
     try {
@@ -199,6 +218,7 @@ export default function Inpatient() {
       await api.post('/api/admissions', {
         patientId: admitFormData.patientId,
         bedId: admitFormData.bedId || null,
+        admittingDoctorId: admitFormData.admittingDoctorId || null,
         diagnosis: admitFormData.diagnosis || undefined,
         admissionNotes: admitFormData.admissionNotes || undefined,
       });
@@ -206,7 +226,7 @@ export default function Inpatient() {
       await fetchAdmissions();
       await fetchBeds();
       setIsAdmitDialogOpen(false);
-      setAdmitFormData({ patientId: '', bedId: '', diagnosis: '', admissionNotes: '' });
+      setAdmitFormData({ patientId: '', bedId: '', admittingDoctorId: '', diagnosis: '', admissionNotes: '' });
       toast.success('Patient admitted');
     } catch (error: any) {
       console.error('Error admitting patient:', error);
@@ -385,15 +405,42 @@ export default function Inpatient() {
 
               <div className="space-y-2">
                 <Label htmlFor="bed">Bed Assignment</Label>
+                {/* Exclude ICU beds from the dropdown — admit-to-ICU is
+                    a different workflow handled by the ICU module.
+                    Mixing them here caused FK violations on POST
+                    /api/admissions (icu_beds.id is not a valid
+                    beds.id). The /api/beds endpoint tags ICU rows
+                    with __source='icubed'. */}
                 <Select value={admitFormData.bedId} onValueChange={(value) => setAdmitFormData(prev => ({ ...prev, bedId: value }))}>
                   <SelectTrigger>
-                    <SelectValue placeholder={availableBeds.length ? 'Select bed (optional)' : 'No vacant beds — admit first, assign later'} />
+                    <SelectValue placeholder={availableBeds.filter((b: any) => b.__source !== 'icubed').length ? 'Select bed (optional)' : 'No vacant ward beds — admit first, assign later'} />
                   </SelectTrigger>
                   <SelectContent>
-                    {availableBeds.map((bed) => (
+                    {availableBeds.filter((b: any) => b.__source !== 'icubed').map((bed) => (
                       <SelectItem key={bed.id} value={bed.id}>
                         {(bed.ward?.name || 'Ward')} — {bed.bedNumber}
                         {bed.category ? ` · ${bed.category}` : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="admittingDoctor">Admitting Doctor</Label>
+                {/* Optional — defaults to the logged-in user on the
+                    backend if left blank. Useful when a non-doctor
+                    (front-desk / IPD coordinator) is registering the
+                    admission on behalf of a consultant. */}
+                <Select value={admitFormData.admittingDoctorId} onValueChange={(value) => setAdmitFormData(prev => ({ ...prev, admittingDoctorId: value }))}>
+                  <SelectTrigger>
+                    <SelectValue placeholder={doctors.length ? 'Select admitting doctor' : 'No doctors found — defaults to current user'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {doctors.map((d) => (
+                      <SelectItem key={d.id} value={d.id}>
+                        Dr. {d.name}
+                        {d.departments && d.departments.length > 0 ? ` · ${d.departments.join(', ')}` : ''}
                       </SelectItem>
                     ))}
                   </SelectContent>
