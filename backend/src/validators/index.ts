@@ -162,13 +162,15 @@ export const createPrescriptionSchema = z.object({
 
 // Admission validators. Optional fields tolerate `null` because the frontend
 // forms send blank slots as null rather than omitting the key.
+// Aligned with the real /api/admissions handler. Older shape used
+// wardId / admissionType / provisionalDiagnosis fields that no caller
+// sent; the FE posts patientId + bedId + diagnosis + admissionNotes
+// and the handler now also accepts an explicit admittingDoctorId.
 export const createAdmissionSchema = z.object({
   patientId: idSchema,
-  wardId: idSchema.optional().nullable(),
   bedId: idSchema.optional().nullable(),
   admittingDoctorId: idSchema.optional().nullable(),
-  admissionType: z.enum(['EMERGENCY', 'ELECTIVE', 'TRANSFER']).default('ELECTIVE'),
-  provisionalDiagnosis: z.string().max(1000).optional().nullable(),
+  diagnosis: z.string().max(1000).optional().nullable(),
   admissionNotes: z.string().max(5000).optional().nullable(),
 });
 

@@ -3551,24 +3551,54 @@ app.get('/api/pharmacy/pending-prescriptions', authenticateToken, async (req: an
 
 app.post('/api/admissions', authenticateToken, async (req: any, res: Response) => {
   try {
-    const { encounterId, patientId, bedId, diagnosis } = req.body;
+    const { patientId, bedId, diagnosis, admissionNotes, admittingDoctorId } = req.body || {};
 
-    // Admission + bed status flip in a single transaction so we can never
-    // end up with an active admission whose bed is still marked vacant
-    // (or vice versa) if the second write fails.
+    if (!patientId) {
+      return res.status(400).json({ error: 'patientId is required' });
+    }
+
+    // Look up the patient first to capture the canonical branchId for
+    // the encounter row, and to confirm the patient is in this tenant
+    // (cross-tenant admit attempts return 404, not 500).
+    const patient = await prisma.patient.findFirst({
+      where: { id: patientId, tenantId: req.user.tenantId },
+      select: { id: true, branchId: true },
+    });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+
+    // Admission requires a unique 1-to-1 Encounter row. The frontend
+    // doesn't create one separately — we open the encounter here in the
+    // same transaction so:
+    //  (a) every admission has its IPD encounter (FK guarantee), and
+    //  (b) a crash between the two writes can't leave a dangling
+    //      encounter or an admission with no parent.
+    // The bed flip is in the same transaction for the same reason —
+    // never leave an active admission pointing at a "vacant" bed.
     const admission = await prisma.$transaction(async (tx) => {
+      const encounter = await tx.encounter.create({
+        data: {
+          patientId: patient.id,
+          branchId: patient.branchId,
+          type: 'ipd',
+          status: 'active',
+          doctorId: admittingDoctorId || req.user.userId || null,
+          chiefComplaint: admissionNotes || null,
+        },
+      });
+
       const created = await tx.admission.create({
         data: {
-          encounterId,
-          patientId,
-          bedId,
-          admittingDoctorId: req.user.userId,
-          diagnosis,
+          encounterId: encounter.id,
+          patientId: patient.id,
+          bedId: bedId || null,
+          admittingDoctorId: admittingDoctorId || req.user.userId || null,
+          diagnosis: diagnosis || null,
           status: 'active',
         },
         include: {
           patient: { select: { name: true, mrn: true } },
           bed: { select: { bedNumber: true, category: true } },
+          admittingDoctor: { select: { id: true, name: true } },
         },
       });
 
@@ -3582,10 +3612,16 @@ app.post('/api/admissions', authenticateToken, async (req: any, res: Response) =
       return created;
     });
 
+    void writeAudit({
+      prisma, req,
+      action: 'ADMISSION_CREATE', resource: 'Admission', resourceId: admission.id,
+      newValue: { patientId: admission.patientId, bedId: admission.bedId, diagnosis: admission.diagnosis },
+    });
+
     res.status(201).json(admission);
-  } catch (error) {
-    console.error('Create admission error:', error);
-    res.status(500).json({ error: 'Internal server error' });
+  } catch (error: any) {
+    console.error('Create admission error:', error?.message || error);
+    res.status(500).json({ error: 'Internal server error', detail: error?.message });
   }
 });
 
