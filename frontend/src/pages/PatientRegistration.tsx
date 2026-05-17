@@ -1,13 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Badge } from '@/components/ui/badge';
-import { Search, Plus, Edit, FileText, Fingerprint, Eye } from 'lucide-react';
+import { Plus, Fingerprint } from 'lucide-react';
 import api from '../services/api';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '../components/Toast';
@@ -167,13 +164,12 @@ function DateOfBirthPicker({ value, onChange }: { value: string; onChange: (v: s
 
 export default function PatientRegistration() {
   const navigate = useNavigate();
-  const [patients, setPatients] = useState<Patient[]>([]);
+  // patients + referralSources state stays because fetchPatients()
+  // and fetchReferralSources() still run on mount; the latter
+  // populates the referring-doctor dropdown inside the dialog.
+  const [, setPatients] = useState<Patient[]>([]);
   const [referralSources, setReferralSources] = useState<any[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
-  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
-  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [loading, setLoading] = useState(false);
   const toast = useToast();
   const [formData, setFormData] = useState({
@@ -210,6 +206,12 @@ export default function PatientRegistration() {
       await fetchReferralSources();
       await fetchPatients();
     })();
+    // Auto-open the registration dialog the moment this page mounts —
+    // the page's only purpose now is to host the registration form
+    // (the canonical patient list lives at /app/patients). The old
+    // list section that used to sit underneath has been removed to
+    // avoid showing two different lists in the app.
+    setIsDialogOpen(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -313,8 +315,12 @@ export default function PatientRegistration() {
       };
 
       const created = await api.post('/api/patients', payload);
-      await fetchPatients(); // Refresh the list
+      // After a successful registration, jump straight to the canonical
+      // patient list so the operator sees their new row land. The
+      // wrapping handleDialogChange would do the same, but skipping it
+      // here lets us land BEFORE running the state resets below.
       setIsDialogOpen(false);
+      navigate('/app/patients');
       setFormData({
         mrn: '', firstName: '', lastName: '', dateOfBirth: '', age: '', gender: '',
         phone: '', email: '', address: '', city: '', state: '', zipCode: '', country: '',
@@ -334,90 +340,27 @@ export default function PatientRegistration() {
     }
   };
 
-  const handleViewPatient = (patient: Patient) => {
-    setSelectedPatient(patient);
-    setIsViewDialogOpen(true);
+  // View / Edit / Create-Invoice handlers were dropped along with the
+  // in-page patient list (that lives at /app/patients now). The
+  // canonical list page handles those flows. Search-filter helper is
+  // unused for the same reason.
+
+  // When the registration dialog closes (Cancel, ✕, or successful
+  // Register), bounce to /app/patients — that's the canonical list. We
+  // never want the user stranded on this page with the form closed.
+  const handleDialogChange = (open: boolean) => {
+    setIsDialogOpen(open);
+    if (!open) navigate('/app/patients');
   };
-
-  const handleEditPatient = (patient: Patient) => {
-    setSelectedPatient(patient);
-    const [firstName, ...lastNameParts] = patient.name.split(' ');
-    setFormData({
-      mrn: patient.mrn,
-      firstName: firstName || '',
-      lastName: lastNameParts.join(' ') || '',
-      dateOfBirth: patient.dob ? new Date(patient.dob).toISOString().slice(0, 10) : '',
-      age: String(patient.age || ''),
-      gender: patient.gender,
-      phone: patient.phone,
-      email: patient.email,
-      address: patient.address,
-      city: '',
-      state: '',
-      zipCode: '',
-      country: '',
-      bloodGroup: patient.bloodGroup,
-      emergencyContact: '',
-      emergencyPhone: '',
-      idProofType: '',
-      idProofNumber: '',
-      insuranceProvider: '',
-      insuranceNumber: '',
-      allergies: '',
-      chronicConditions: '',
-      purpose: patient.purpose || '',
-      referralSourceId: patient.referralSourceId || ''
-    });
-    setIsEditDialogOpen(true);
-  };
-
-  const handleUpdatePatient = async () => {
-    if (!selectedPatient) return;
-    setLoading(true);
-    try {
-      const payload = {
-        name: `${formData.firstName} ${formData.lastName}`.trim(),
-        dob: formData.dateOfBirth || null,
-        gender: formData.gender ? formData.gender.toUpperCase() : null,
-        contact: formData.phone,
-        email: formData.email || null,
-        address: formData.address || null,
-        bloodGroup: formData.bloodGroup || null,
-        allergies: buildNotes(),
-        purpose: formData.purpose || null,
-        referralSourceId: formData.referralSourceId || null,
-      };
-
-      await api.put(`/api/patients/${selectedPatient.id}`, payload);
-      await fetchPatients();
-      setIsEditDialogOpen(false);
-      setSelectedPatient(null);
-    } catch (error) {
-      console.error('Error updating patient:', error);
-      toast.error('Could not update patient', 'Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleCreateInvoice = (patient: Patient) => {
-    navigate(`/billing?patientId=${patient.id}&patientMRN=${patient.mrn}&patientName=${encodeURIComponent(patient.name)}`);
-  };
-
-  const filteredPatients = patients.filter(patient =>
-    patient.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    patient.mrn.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    patient.phone.includes(searchTerm)
-  );
 
   return (
     <div className="p-6 space-y-6 bg-white min-h-full">
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold text-slate-900">Patient Registration</h1>
-          <p className="text-slate-600">Register new patients and manage demographics</p>
+          <p className="text-slate-600">Register a new patient. The full list lives at /app/patients.</p>
         </div>
-        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <Dialog open={isDialogOpen} onOpenChange={handleDialogChange}>
           <DialogTrigger asChild>
             <Button className="gap-2">
               <Plus className="w-4 h-4" />
@@ -603,7 +546,7 @@ export default function PatientRegistration() {
               </div>
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={loading}>Cancel</Button>
+              <Button variant="outline" onClick={() => handleDialogChange(false)} disabled={loading}>Cancel</Button>
               <Button onClick={handleSubmit} disabled={loading}>
                 {loading ? 'Registering...' : 'Register Patient'}
               </Button>
@@ -615,214 +558,7 @@ export default function PatientRegistration() {
           </DialogContent>
         </Dialog>
       </div>
-
-      <Card>
-        <CardHeader>
-          <div className="flex justify-between items-center">
-            <div>
-              <CardTitle>Registered Patients</CardTitle>
-              <CardDescription>Search and manage patient records</CardDescription>
-            </div>
-            <div className="flex gap-2 items-center">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <Input
-                  placeholder="Search by name, MRN, or phone..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10 w-80"
-                />
-              </div>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>MRN</TableHead>
-                <TableHead>Name</TableHead>
-                <TableHead>Age/Gender</TableHead>
-                <TableHead>Phone</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead>Doctor</TableHead>
-                <TableHead>Purpose</TableHead>
-                <TableHead>Blood Group</TableHead>
-                <TableHead>Registered</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredPatients.map((patient) => (
-                <TableRow key={patient.id}>
-                  <TableCell className="font-medium">{patient.mrn}</TableCell>
-                  <TableCell>{patient.name}</TableCell>
-                  <TableCell>
-                    {patient.age ? `${patient.age}Y` : '—'} / {patient.gender ? patient.gender.charAt(0) + patient.gender.slice(1).toLowerCase() : '—'}
-                  </TableCell>
-                  <TableCell>{patient.phone || '—'}</TableCell>
-                  <TableCell className="text-slate-600">{patient.email || '—'}</TableCell>
-                  <TableCell className="text-slate-600">{patient.referralDoctor || '—'}</TableCell>
-                  <TableCell className="text-slate-600 max-w-[180px] truncate" title={patient.purpose}>
-                    {patient.purpose || '—'}
-                  </TableCell>
-                  <TableCell>{patient.bloodGroup || '—'}</TableCell>
-                  <TableCell>{patient.registrationDate || '—'}</TableCell>
-                  <TableCell>
-                    <Badge variant={patient.status === 'Active' ? 'default' : 'secondary'}>
-                      {patient.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex gap-2">
-                      <Button variant="outline" size="sm" onClick={() => handleViewPatient(patient)} title="View Details">
-                        <Eye className="w-4 h-4" />
-                      </Button>
-                      <Button variant="outline" size="sm" onClick={() => handleEditPatient(patient)} title="Edit Patient">
-                        <Edit className="w-4 h-4" />
-                      </Button>
-                      <Button variant="outline" size="sm" onClick={() => handleCreateInvoice(patient)} title="Create Invoice">
-                        <FileText className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-
-      {/* View Patient Dialog */}
-      <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Patient Details</DialogTitle>
-            <DialogDescription>Complete patient information</DialogDescription>
-          </DialogHeader>
-          {selectedPatient && (
-            <div className="grid grid-cols-2 gap-4 py-4">
-              <div>
-                <Label className="text-sm font-semibold">MRN</Label>
-                <p className="text-sm">{selectedPatient.mrn}</p>
-              </div>
-              <div>
-                <Label className="text-sm font-semibold">Name</Label>
-                <p className="text-sm">{selectedPatient.name}</p>
-              </div>
-              <div>
-                <Label className="text-sm font-semibold">Age</Label>
-                <p className="text-sm">{selectedPatient.age} years</p>
-              </div>
-              <div>
-                <Label className="text-sm font-semibold">Gender</Label>
-                <p className="text-sm">{selectedPatient.gender}</p>
-              </div>
-              <div>
-                <Label className="text-sm font-semibold">Phone</Label>
-                <p className="text-sm">{selectedPatient.phone}</p>
-              </div>
-              <div>
-                <Label className="text-sm font-semibold">Email</Label>
-                <p className="text-sm">{selectedPatient.email || 'N/A'}</p>
-              </div>
-              <div className="col-span-2">
-                <Label className="text-sm font-semibold">Address</Label>
-                <p className="text-sm">{selectedPatient.address || 'N/A'}</p>
-              </div>
-              <div>
-                <Label className="text-sm font-semibold">Blood Group</Label>
-                <p className="text-sm">{selectedPatient.bloodGroup || 'N/A'}</p>
-              </div>
-              <div>
-                <Label className="text-sm font-semibold">Registration Date</Label>
-                <p className="text-sm">{selectedPatient.registrationDate}</p>
-              </div>
-              <div>
-                <Label className="text-sm font-semibold">Referring Doctor</Label>
-                <p className="text-sm">{selectedPatient.referralDoctor || 'N/A'}</p>
-              </div>
-              <div className="col-span-2">
-                <Label className="text-sm font-semibold">Purpose of Visit</Label>
-                <p className="text-sm whitespace-pre-line">{selectedPatient.purpose || 'N/A'}</p>
-              </div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsViewDialogOpen(false)}>Close</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Edit Patient Dialog */}
-      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Edit Patient Information</DialogTitle>
-            <DialogDescription>Update patient demographics</DialogDescription>
-          </DialogHeader>
-          <div className="grid grid-cols-2 gap-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit-firstName">First Name *</Label>
-              <Input id="edit-firstName" name="firstName" value={formData.firstName} onChange={handleInputChange} required />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-lastName">Last Name *</Label>
-              <Input id="edit-lastName" name="lastName" value={formData.lastName} onChange={handleInputChange} required />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-gender">Gender *</Label>
-              <Select value={formData.gender} onValueChange={(value) => setFormData(prev => ({ ...prev, gender: value }))}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select gender" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="MALE">Male</SelectItem>
-                  <SelectItem value="FEMALE">Female</SelectItem>
-                  <SelectItem value="OTHER">Other</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-phone">Phone Number *</Label>
-              <Input id="edit-phone" name="phone" type="tel" value={formData.phone} onChange={handleInputChange} required />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-email">Email</Label>
-              <Input id="edit-email" name="email" type="email" value={formData.email} onChange={handleInputChange} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-bloodGroup">Blood Group</Label>
-              <Select value={formData.bloodGroup} onValueChange={(value) => setFormData(prev => ({ ...prev, bloodGroup: value }))}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select blood group" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="A+">A+</SelectItem>
-                  <SelectItem value="A-">A-</SelectItem>
-                  <SelectItem value="B+">B+</SelectItem>
-                  <SelectItem value="B-">B-</SelectItem>
-                  <SelectItem value="AB+">AB+</SelectItem>
-                  <SelectItem value="AB-">AB-</SelectItem>
-                  <SelectItem value="O+">O+</SelectItem>
-                  <SelectItem value="O-">O-</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="col-span-2 space-y-2">
-              <Label htmlFor="edit-address">Address</Label>
-              <Input id="edit-address" name="address" value={formData.address} onChange={handleInputChange} />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsEditDialogOpen(false)} disabled={loading}>Cancel</Button>
-            <Button onClick={handleUpdatePatient} disabled={loading}>
-              {loading ? 'Updating...' : 'Update Patient'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
+
