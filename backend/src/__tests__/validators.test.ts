@@ -141,45 +141,51 @@ describe('Patient Validators', () => {
 
 describe('Appointment Validators', () => {
   describe('createAppointmentSchema', () => {
+    // Schema was realigned with the real handler at server.ts: payload
+    // is { patientId, doctorId, appointmentDate (YYYY-MM-DD or ISO),
+    // appointmentTime (HH:MM), type? (free string), reason?, notes?,
+    // department? }. The earlier scheduledAt / duration / uppercase
+    // enum shape was aspirational and rejected every live caller.
     it('should validate correct appointment data', () => {
       const result = createAppointmentSchema.safeParse({
         patientId: '550e8400-e29b-41d4-a716-446655440000',
-        doctorId: '550e8400-e29b-41d4-a716-446655440001',
-        scheduledAt: '2024-12-20T10:00:00.000Z',
-        type: 'NEW',
-        duration: 30,
+        doctorId: 'user-doctor1', // seed users have slug-style IDs
+        appointmentDate: '2024-12-20',
+        appointmentTime: '10:30',
+        type: 'consultation',
+        reason: 'Follow-up',
       });
       expect(result.success).toBe(true);
     });
 
-    it('should reject invalid UUIDs', () => {
+    it('should accept slug-style IDs (seeded users)', () => {
       const result = createAppointmentSchema.safeParse({
-        patientId: 'invalid-uuid',
-        doctorId: '550e8400-e29b-41d4-a716-446655440001',
-        scheduledAt: '2024-12-20T10:00:00.000Z',
-      });
-      expect(result.success).toBe(false);
-    });
-
-    it('should reject invalid datetime format', () => {
-      const result = createAppointmentSchema.safeParse({
-        patientId: '550e8400-e29b-41d4-a716-446655440000',
-        doctorId: '550e8400-e29b-41d4-a716-446655440001',
-        scheduledAt: 'invalid-date',
-      });
-      expect(result.success).toBe(false);
-    });
-
-    it('should use default type if not provided', () => {
-      const result = createAppointmentSchema.safeParse({
-        patientId: '550e8400-e29b-41d4-a716-446655440000',
-        doctorId: '550e8400-e29b-41d4-a716-446655440001',
-        scheduledAt: '2024-12-20T10:00:00.000Z',
+        patientId: 'patient-1',
+        doctorId: 'user-doctor1',
+        appointmentDate: '2024-12-20',
+        appointmentTime: '10:30',
       });
       expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data.type).toBe('NEW');
-      }
+    });
+
+    it('should reject empty appointment time', () => {
+      const result = createAppointmentSchema.safeParse({
+        patientId: '550e8400-e29b-41d4-a716-446655440000',
+        doctorId: 'user-doctor1',
+        appointmentDate: '2024-12-20',
+        appointmentTime: '',
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject invalid id format (control chars)', () => {
+      const result = createAppointmentSchema.safeParse({
+        patientId: 'bad id with space',
+        doctorId: 'user-doctor1',
+        appointmentDate: '2024-12-20',
+        appointmentTime: '10:30',
+      });
+      expect(result.success).toBe(false);
     });
   });
 });

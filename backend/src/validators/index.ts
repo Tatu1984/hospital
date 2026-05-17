@@ -5,7 +5,21 @@ const phoneRegex = /^[+]?[\d\s-]{10,15}$/;
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Reusable validators
-export const idSchema = z.string().uuid('Invalid ID format');
+//
+// idSchema is intentionally LOOSE: many Prisma models use String @id with
+// uuid() default, but seed-time and migration-era rows use slug-style IDs
+// like 'user-admin', 'branch-1', 'tenant-1'. Strict uuid() validation
+// rejected every seeded foreign key in app payloads (appointment.doctorId,
+// commission.patientId, …) even though the DB foreign-key constraint was
+// happy to take them. We delegate "does this row exist" to the DB and use
+// this schema only to guard against trivially-bad input (empty / huge /
+// control chars). Whitespace-trimmed length 1–80, character class kept
+// permissive enough for UUIDs (with dashes), slugs, and any future opaque
+// token style without changes here.
+export const idSchema = z.string().trim().min(1).max(80).regex(
+  /^[A-Za-z0-9_\-:.]+$/,
+  'Invalid ID format',
+);
 export const dateSchema = z.string().datetime().or(z.string().regex(/^\d{4}-\d{2}-\d{2}$/));
 export const optionalDateSchema = dateSchema.optional().nullable();
 
@@ -76,19 +90,30 @@ export const createPatientSchema = z.object({
 export const updatePatientSchema = createPatientSchema.partial();
 
 // Appointment validators
+// Aligned with the live handler at server.ts and the Prisma Appointment
+// model. The earlier shape (scheduledAt / duration / uppercase enum) was
+// aspirational — every real caller sends appointmentDate + appointmentTime
+// + lowercase type, and the schema's mismatch caused every POST to bounce
+// with 400 'Invalid request data'.
 export const createAppointmentSchema = z.object({
   patientId: idSchema,
   doctorId: idSchema,
-  scheduledAt: z.string().datetime('Invalid date/time format'),
-  type: z.enum(['NEW', 'FOLLOW_UP', 'EMERGENCY', 'CONSULTATION']).default('NEW'),
-  notes: z.string().max(1000).optional(),
-  duration: z.number().int().min(5).max(240).default(30),
+  appointmentDate: z.string().min(1, 'appointmentDate is required'),
+  appointmentTime: z.string().min(1, 'appointmentTime is required'),
+  type: z.string().max(50).optional().nullable(),
+  reason: z.string().max(1000).optional().nullable(),
+  notes: z.string().max(1000).optional().nullable(),
+  department: z.string().max(100).optional().nullable(),
 });
 
 export const updateAppointmentSchema = z.object({
-  scheduledAt: z.string().datetime().optional(),
-  status: z.enum(['SCHEDULED', 'CONFIRMED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'NO_SHOW']).optional(),
-  notes: z.string().max(1000).optional(),
+  appointmentDate: z.string().optional(),
+  appointmentTime: z.string().optional(),
+  type: z.string().max(50).optional().nullable(),
+  reason: z.string().max(1000).optional().nullable(),
+  notes: z.string().max(1000).optional().nullable(),
+  department: z.string().max(100).optional().nullable(),
+  status: z.string().max(50).optional(),
 });
 
 // Encounter/OPD validators

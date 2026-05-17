@@ -8,6 +8,7 @@ import { Plus, Fingerprint } from 'lucide-react';
 import api from '../services/api';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '../components/Toast';
+import { INDIA_STATES, INDIA_CITIES_BY_STATE, INDIA_ID_PROOF_TYPES, INDIA_INSURANCE_PROVIDERS } from '../config/india';
 
 interface Patient {
   id: string;
@@ -419,20 +420,92 @@ export default function PatientRegistration() {
                 <Input id="address" name="address" value={formData.address} onChange={handleInputChange} />
               </div>
               <div className="space-y-2">
+                <Label htmlFor="state">State *</Label>
+                {/* State is a Select of all 28 states + 8 UTs. Choosing
+                    a state populates the City combobox below with that
+                    state's major cities; we also clear City if the new
+                    state doesn't include the previously-selected city
+                    (prevents impossible state/city pairs sneaking
+                    through). */}
+                <Select
+                  value={formData.state}
+                  onValueChange={(value) => setFormData((prev) => {
+                    const cities = INDIA_CITIES_BY_STATE[value] || [];
+                    const stillValid = cities.includes(prev.city);
+                    return { ...prev, state: value, city: stillValid ? prev.city : '' };
+                  })}
+                >
+                  <SelectTrigger><SelectValue placeholder="Select state / UT" /></SelectTrigger>
+                  <SelectContent>
+                    {INDIA_STATES.map((s) => (
+                      <SelectItem key={s.name} value={s.name}>
+                        {s.name}{s.isUT ? ' (UT)' : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
                 <Label htmlFor="city">City</Label>
-                <Input id="city" name="city" value={formData.city} onChange={handleInputChange} />
+                {/* City is a free text input with a <datalist> for type-
+                    ahead — the major-city list per state is finite but
+                    Indian patients come from thousands of towns, so we
+                    don't gate the field strictly. Datalist gives the
+                    convenience of a dropdown without locking the user
+                    out of typing an obscure town name. */}
+                <Input
+                  id="city"
+                  name="city"
+                  list="cityOptions"
+                  value={formData.city}
+                  onChange={handleInputChange}
+                  placeholder={formData.state ? 'Pick or type a city' : 'Select state first'}
+                  disabled={!formData.state}
+                />
+                <datalist id="cityOptions">
+                  {(INDIA_CITIES_BY_STATE[formData.state] || []).map((c) => (
+                    <option key={c} value={c} />
+                  ))}
+                </datalist>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="state">State</Label>
-                <Input id="state" name="state" value={formData.state} onChange={handleInputChange} />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="zipCode">Zip Code</Label>
-                <Input id="zipCode" name="zipCode" value={formData.zipCode} onChange={handleInputChange} />
+                <Label htmlFor="zipCode">PIN Code</Label>
+                <Input
+                  id="zipCode"
+                  name="zipCode"
+                  inputMode="numeric"
+                  maxLength={6}
+                  pattern="\d{6}"
+                  placeholder="6-digit PIN"
+                  value={formData.zipCode}
+                  onChange={handleInputChange}
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="country">Country</Label>
-                <Input id="country" name="country" value={formData.country} onChange={handleInputChange} />
+                {/* Defaults to India because that's the entire hospital
+                    catchment; included as a Select with a few common
+                    foreign options for medical-tourism / NRI patients.
+                    Any other country can be free-typed via 'Other' →
+                    the dialog still accepts the string. */}
+                <Select
+                  value={formData.country || 'India'}
+                  onValueChange={(value) => setFormData((prev) => ({ ...prev, country: value }))}
+                >
+                  <SelectTrigger><SelectValue placeholder="Select country" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="India">India</SelectItem>
+                    <SelectItem value="Nepal">Nepal</SelectItem>
+                    <SelectItem value="Bangladesh">Bangladesh</SelectItem>
+                    <SelectItem value="Sri Lanka">Sri Lanka</SelectItem>
+                    <SelectItem value="Bhutan">Bhutan</SelectItem>
+                    <SelectItem value="Maldives">Maldives</SelectItem>
+                    <SelectItem value="United Arab Emirates">United Arab Emirates</SelectItem>
+                    <SelectItem value="United Kingdom">United Kingdom</SelectItem>
+                    <SelectItem value="United States">United States</SelectItem>
+                    <SelectItem value="Other">Other (international)</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="bloodGroup">Blood Group</Label>
@@ -492,10 +565,13 @@ export default function PatientRegistration() {
                     <SelectValue placeholder="Select ID type" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="passport">Passport</SelectItem>
-                    <SelectItem value="drivers-license">Driver's License</SelectItem>
-                    <SelectItem value="national-id">National ID</SelectItem>
-                    <SelectItem value="ssn">SSN</SelectItem>
+                    {/* India-specific ID list (Aadhaar, PAN, Voter ID,
+                        Driving Licence, Passport, Ration card, CGHS,
+                        Employee/Student/Other). The earlier US list
+                        (SSN etc.) wasn't relevant here. */}
+                    {INDIA_ID_PROOF_TYPES.map((t) => (
+                      <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -505,7 +581,23 @@ export default function PatientRegistration() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="insuranceProvider">Insurance Provider</Label>
-                <Input id="insuranceProvider" name="insuranceProvider" value={formData.insuranceProvider} onChange={handleInputChange} />
+                {/* Datalist combobox — 25+ common Indian insurers (PSU,
+                    private, govt schemes incl. Ayushman Bharat) listed
+                    as suggestions, but the field accepts free text for
+                    any insurer outside the list. */}
+                <Input
+                  id="insuranceProvider"
+                  name="insuranceProvider"
+                  list="insuranceOptions"
+                  value={formData.insuranceProvider}
+                  onChange={handleInputChange}
+                  placeholder="Pick or type insurer"
+                />
+                <datalist id="insuranceOptions">
+                  {INDIA_INSURANCE_PROVIDERS.map((p) => (
+                    <option key={p} value={p} />
+                  ))}
+                </datalist>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="insuranceNumber">Insurance Number</Label>
