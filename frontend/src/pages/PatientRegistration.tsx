@@ -81,12 +81,41 @@ function toArray<T>(data: unknown): T[] {
   return [];
 }
 
-// Today's date in YYYY-MM-DD — used as the `max` on the DOB input so
-// users can't accidentally enter a future birth date. 1900-01-01 is
-// the floor: any record older than that is almost certainly a typo,
-// and bounding the year here also helps the browser's year spinner.
-const TODAY_YMD = new Date().toISOString().slice(0, 10);
-const MIN_DOB = '1900-01-01';
+// DOB helpers — we render a plain text DD/MM/YYYY input instead of the
+// browser's native <input type="date"> because that control's 4-digit
+// year segment auto-clamps partial input ("2" -> 0002), which is
+// unusable when typing 2026. A text input lets the operator type
+// freely; we auto-insert slashes, then validate + convert to the
+// canonical YYYY-MM-DD on blur.
+function dmyToYmd(dmy: string): string | null {
+  // Accepts DD/MM/YYYY or DD-MM-YYYY. Returns YYYY-MM-DD if it parses
+  // to a real calendar date, else null.
+  const m = dmy.trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (!m) return null;
+  const d = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10);
+  const y = parseInt(m[3], 10);
+  if (y < 1900 || y > new Date().getFullYear()) return null;
+  if (mo < 1 || mo > 12) return null;
+  // new Date(y, mo-1, d).getDate() === d catches Feb 30 / Apr 31 etc.
+  const dt = new Date(y, mo - 1, d);
+  if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;
+  return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+function ymdToDmy(ymd: string): string {
+  if (!ymd) return '';
+  const m = ymd.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return '';
+  return `${m[3]}/${m[2]}/${m[1]}`;
+}
+// As the user types digits we auto-insert slashes so DDMMYYYY reads
+// as DD/MM/YYYY. Strips non-digit + non-slash; caps at 10 chars.
+function autoFormatDob(raw: string): string {
+  const digits = raw.replace(/[^\d]/g, '').slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+}
 
 export default function PatientRegistration() {
   const navigate = useNavigate();
@@ -315,36 +344,42 @@ export default function PatientRegistration() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="dateOfBirth">Date of Birth *</Label>
-                {/* Native browser date input. Two fixes vs. the earlier
-                    behaviour:
-                    1. min/max bound the year picker to 1900..today, so
-                       the spinner can't wander into year 0 / future.
-                    2. State commits on BLUR, not on every keystroke.
-                       The year segment of <input type="date"> is a
-                       4-digit slot — when you type "2" the browser
-                       interprets it as year 0002 mid-keystroke. With
-                       onChange we'd echo "0002" back to React, which
-                       re-renders the input and traps the user there.
-                       Committing on blur lets the browser hold its
-                       own partial state until you tab/click away. */}
+                {/* Plain text input — DD/MM/YYYY — instead of the
+                    browser's native date control. The native one's
+                    year segment auto-clamps partial digits ("2" ->
+                    0002, "20" -> 0020) which made typing 2026
+                    impossible. A text input has no segments and no
+                    clamping, so digits go in at whatever speed.
+                    Slashes are auto-inserted as you type so the
+                    operator sees DD/MM/YYYY without typing them. */}
                 <Input
                   id="dateOfBirth"
                   name="dateOfBirth"
-                  type="date"
-                  min={MIN_DOB}
-                  max={TODAY_YMD}
-                  defaultValue={formData.dateOfBirth}
-                  key={formData.dateOfBirth /* re-mount when form reset */}
-                  onBlur={(e) => {
-                    const value = e.target.value;
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="DD/MM/YYYY"
+                  maxLength={10}
+                  value={ymdToDmy(formData.dateOfBirth) || (formData as any).dobRaw || ''}
+                  onChange={(e) => {
+                    const formatted = autoFormatDob(e.target.value);
+                    // Stash the in-flight text in `dobRaw` so the input
+                    // can still render partial entries (e.g. "12/05/")
+                    // before the date is complete. The canonical YMD
+                    // commits only when parsing succeeds.
+                    const ymd = dmyToYmd(formatted);
                     setFormData((prev) => ({
                       ...prev,
-                      dateOfBirth: value,
-                      age: ageFromDateString(value),
-                    }));
+                      dobRaw: formatted,
+                      // Only overwrite the committed YMD when we have a
+                      // parseable date — keeps prior valid values from
+                      // clearing while the user edits.
+                      ...(ymd ? { dateOfBirth: ymd, age: ageFromDateString(ymd) }
+                              : { dateOfBirth: '', age: '' }),
+                    } as any));
                   }}
                   required
                 />
+                <p className="text-xs text-slate-500">Type day, month, then 4-digit year — e.g. 25/12/2026</p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="age">Age (auto)</Label>
