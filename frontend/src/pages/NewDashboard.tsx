@@ -1,7 +1,7 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '../contexts/AuthContext';
-import { Lock } from 'lucide-react';
+import { Lock, ChevronDown } from 'lucide-react';
 import {
   Calendar,
   Users,
@@ -321,60 +321,176 @@ const modules = [
   }
 ];
 
+// Group tile keys into logical categories. Anything not listed falls
+// into "Other modules". Keeps the dashboard scannable instead of being
+// a 30-tile carpet.
+const CATEGORIES: Array<{ title: string; ids: string[]; dot: string }> = [
+  { title: 'Patient flow',     dot: 'bg-blue-400',    ids: ['appointment', 'patient-registration', 'outpatient', 'health-checkup', 'inpatient', 'emergency', 'icu', 'operation-theatre', 'birth-records'] },
+  { title: 'Diagnostics',      dot: 'bg-violet-400',  ids: ['laboratory', 'radiology', 'pathology', 'blood-bank', 'phlebotomy', 'dicom-pacs'] },
+  { title: 'Support',          dot: 'bg-emerald-400', ids: ['pharmacy', 'nurse-station', 'ambulance', 'housekeeping', 'diet', 'physiotherapy', 'dialysis', 'mortuary', 'cssd'] },
+  { title: 'Finance',          dot: 'bg-amber-400',   ids: ['inpatient-billing', 'billing', 'tpa', 'referral-commission', 'doctor-accounting', 'tally'] },
+  { title: 'Operations',       dot: 'bg-indigo-400',  ids: ['hr', 'payroll', 'biometric-attendance', 'inventory', 'store-management', 'asset-management', 'equipment-maintenance', 'doctor-registration'] },
+  { title: 'Insights & admin', dot: 'bg-rose-400',    ids: ['mis-report', 'master-data', 'system-control', 'audit-log', 'activity-monitor', 'quality'] },
+];
+
+// Per-module pastel tint. bg-*-50 + text-*-600 gives the soft "iOS / Notion"
+// pastel look without being noisy. Modules without an entry fall back to
+// neutral slate. Add new modules here as we ship them.
+const TINTS: Record<string, { bg: string; text: string; ring: string }> = {
+  // Patient flow
+  appointment:           { bg: 'bg-blue-50',     text: 'text-blue-600',     ring: 'ring-blue-100' },
+  'patient-registration':{ bg: 'bg-cyan-50',     text: 'text-cyan-600',     ring: 'ring-cyan-100' },
+  outpatient:            { bg: 'bg-violet-50',   text: 'text-violet-600',   ring: 'ring-violet-100' },
+  'health-checkup':      { bg: 'bg-emerald-50',  text: 'text-emerald-600',  ring: 'ring-emerald-100' },
+  inpatient:             { bg: 'bg-emerald-50',  text: 'text-emerald-600',  ring: 'ring-emerald-100' },
+  emergency:             { bg: 'bg-red-50',      text: 'text-red-600',      ring: 'ring-red-100' },
+  icu:                   { bg: 'bg-orange-50',   text: 'text-orange-600',   ring: 'ring-orange-100' },
+  'operation-theatre':   { bg: 'bg-amber-50',    text: 'text-amber-600',    ring: 'ring-amber-100' },
+  'birth-records':       { bg: 'bg-pink-50',     text: 'text-pink-600',     ring: 'ring-pink-100' },
+  // Diagnostics
+  laboratory:            { bg: 'bg-pink-50',     text: 'text-pink-600',     ring: 'ring-pink-100' },
+  radiology:             { bg: 'bg-indigo-50',   text: 'text-indigo-600',   ring: 'ring-indigo-100' },
+  pathology:             { bg: 'bg-fuchsia-50',  text: 'text-fuchsia-600',  ring: 'ring-fuchsia-100' },
+  'blood-bank':          { bg: 'bg-red-50',      text: 'text-red-600',      ring: 'ring-red-100' },
+  phlebotomy:            { bg: 'bg-rose-50',     text: 'text-rose-600',     ring: 'ring-rose-100' },
+  'dicom-pacs':          { bg: 'bg-sky-50',      text: 'text-sky-600',      ring: 'ring-sky-100' },
+  // Support
+  pharmacy:              { bg: 'bg-teal-50',     text: 'text-teal-600',     ring: 'ring-teal-100' },
+  'nurse-station':       { bg: 'bg-emerald-50',  text: 'text-emerald-600',  ring: 'ring-emerald-100' },
+  ambulance:             { bg: 'bg-orange-50',   text: 'text-orange-600',   ring: 'ring-orange-100' },
+  housekeeping:          { bg: 'bg-yellow-50',   text: 'text-yellow-700',   ring: 'ring-yellow-100' },
+  diet:                  { bg: 'bg-lime-50',     text: 'text-lime-700',     ring: 'ring-lime-100' },
+  physiotherapy:         { bg: 'bg-cyan-50',     text: 'text-cyan-600',     ring: 'ring-cyan-100' },
+  dialysis:              { bg: 'bg-rose-50',     text: 'text-rose-600',     ring: 'ring-rose-100' },
+  mortuary:              { bg: 'bg-slate-100',   text: 'text-slate-700',    ring: 'ring-slate-200' },
+  cssd:                  { bg: 'bg-sky-50',      text: 'text-sky-600',      ring: 'ring-sky-100' },
+  // Finance
+  billing:               { bg: 'bg-emerald-50',  text: 'text-emerald-600',  ring: 'ring-emerald-100' },
+  'inpatient-billing':   { bg: 'bg-emerald-50',  text: 'text-emerald-600',  ring: 'ring-emerald-100' },
+  tpa:                   { bg: 'bg-blue-50',     text: 'text-blue-600',     ring: 'ring-blue-100' },
+  'referral-commission': { bg: 'bg-violet-50',   text: 'text-violet-600',   ring: 'ring-violet-100' },
+  'doctor-accounting':   { bg: 'bg-amber-50',    text: 'text-amber-700',    ring: 'ring-amber-100' },
+  tally:                 { bg: 'bg-indigo-50',   text: 'text-indigo-600',   ring: 'ring-indigo-100' },
+  // Operations
+  hr:                    { bg: 'bg-violet-50',   text: 'text-violet-600',   ring: 'ring-violet-100' },
+  payroll:               { bg: 'bg-green-50',    text: 'text-green-700',    ring: 'ring-green-100' },
+  'biometric-attendance':{ bg: 'bg-indigo-50',   text: 'text-indigo-600',   ring: 'ring-indigo-100' },
+  inventory:             { bg: 'bg-amber-50',    text: 'text-amber-700',    ring: 'ring-amber-100' },
+  'store-management':    { bg: 'bg-amber-50',    text: 'text-amber-700',    ring: 'ring-amber-100' },
+  'asset-management':    { bg: 'bg-orange-50',   text: 'text-orange-700',   ring: 'ring-orange-100' },
+  'equipment-maintenance': { bg: 'bg-yellow-50', text: 'text-yellow-700',   ring: 'ring-yellow-100' },
+  'doctor-registration': { bg: 'bg-cyan-50',     text: 'text-cyan-600',     ring: 'ring-cyan-100' },
+  // Insights & admin
+  'mis-report':          { bg: 'bg-blue-50',     text: 'text-blue-600',     ring: 'ring-blue-100' },
+  'master-data':         { bg: 'bg-slate-100',   text: 'text-slate-700',    ring: 'ring-slate-200' },
+  'system-control':      { bg: 'bg-slate-100',   text: 'text-slate-700',    ring: 'ring-slate-200' },
+  'audit-log':           { bg: 'bg-slate-100',   text: 'text-slate-700',    ring: 'ring-slate-200' },
+  'activity-monitor':    { bg: 'bg-indigo-50',   text: 'text-indigo-600',   ring: 'ring-indigo-100' },
+  quality:               { bg: 'bg-emerald-50',  text: 'text-emerald-600',  ring: 'ring-emerald-100' },
+};
+const NEUTRAL_TINT = { bg: 'bg-slate-100', text: 'text-slate-700', ring: 'ring-slate-200' };
+
+// Persist which sections the user collapsed. Keyed by title.
+const COLLAPSE_KEY = 'hms.dash.collapsed';
+function loadCollapsed(): Record<string, boolean> {
+  try { return JSON.parse(localStorage.getItem(COLLAPSE_KEY) || '{}'); } catch { return {}; }
+}
+function saveCollapsed(v: Record<string, boolean>) {
+  try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify(v)); } catch { /* quota / privacy mode */ }
+}
+
 export default function NewDashboard() {
   const navigate = useNavigate();
-  const { hasAccess } = useAuth();
+  const { hasAccess, user } = useAuth();
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const firstName = (user?.name || 'there').split(' ')[0];
 
-  // Build the visible list once. Tiles the user can't reach are still
-  // shown but visually muted + disabled (lock icon overlay) so they
-  // know the module exists but their role doesn't grant access — which
-  // is more useful than silently hiding modules they could request.
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => loadCollapsed());
+  function toggle(title: string) {
+    setCollapsed((prev) => {
+      const next = { ...prev, [title]: !prev[title] };
+      saveCollapsed(next);
+      return next;
+    });
+  }
+
   const tiles = modules.map((m) => ({ ...m, allowed: hasAccess(m.path.replace(/^\//, '')) }));
+  const tileById = Object.fromEntries(tiles.map((t) => [t.id, t]));
+  const grouped = CATEGORIES.map((c) => ({
+    title: c.title,
+    dot: c.dot,
+    items: c.ids.map((id) => tileById[id]).filter(Boolean),
+  })).filter((g) => g.items.length > 0);
+  const grouped_ids = new Set(CATEGORIES.flatMap((c) => c.ids));
+  const others = tiles.filter((t) => !grouped_ids.has(t.id));
+  if (others.length) grouped.push({ title: 'Other modules', dot: 'bg-slate-300', items: others });
 
   return (
-    <div className="p-6 bg-white min-h-full">
-      <div className="mb-8">
-        <h1 className="text-4xl font-bold text-slate-900 mb-2">Hospital Management System</h1>
-        <p className="text-slate-600 text-lg">Comprehensive ERP for Healthcare Excellence</p>
-      </div>
+    <div className="min-h-full">
+      <div className="p-6 lg:p-8 max-w-[1400px] mx-auto space-y-7">
+        {/* Hero */}
+        <div className="space-y-1">
+          <h1 className="text-[28px] font-semibold text-slate-900 tracking-tight">
+            {greeting}, {firstName}.
+          </h1>
+          <p className="text-slate-500 text-[15px]">
+            {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} · Jump back in below or use the sidebar search.
+          </p>
+        </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-        {tiles.map((module) => {
-          const Icon = module.icon;
-          // Module paths are stored without the /app prefix so they
-          // double as RBAC keys for hasAccess(). The authenticated
-          // portal is mounted at /app/*, so prefix at navigation time
-          // — without this the route doesn't match and the user lands
-          // on a blank page.
-          const onClick = module.allowed
-            ? () => navigate(`/app${module.path}`)
-            : undefined;
+        {/* Module grid, grouped + collapsible. State persists in localStorage so
+            the user's preferred view survives reloads. */}
+        {grouped.map((group) => {
+          const isCollapsed = !!collapsed[group.title];
           return (
-            <Card
-              key={module.id}
-              className={`relative overflow-hidden group border-2 transition-all duration-300 ${
-                module.allowed
-                  ? 'cursor-pointer hover:shadow-2xl transform hover:-translate-y-1 border-slate-200 hover:border-blue-400 bg-white'
-                  : 'cursor-not-allowed opacity-50 border-slate-200 bg-slate-50'
-              }`}
-              onClick={onClick}
-              title={module.allowed ? undefined : 'Your role does not have access to this module'}
-            >
-              {!module.allowed && (
-                <div className="absolute top-3 right-3 bg-slate-200 rounded-full p-1.5 z-10">
-                  <Lock className="w-3 h-3 text-slate-600" />
+            <section key={group.title}>
+              <button
+                onClick={() => toggle(group.title)}
+                className="group flex items-center gap-2 mb-3 py-1 pr-2 rounded-md hover:bg-slate-100/60 transition-colors"
+              >
+                <ChevronDown
+                  className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-150 ${isCollapsed ? '-rotate-90' : ''}`}
+                />
+                <span className={`w-1.5 h-1.5 rounded-full ${group.dot}`} />
+                <h2 className="text-[11px] font-semibold text-slate-500 uppercase tracking-[0.1em] group-hover:text-slate-700 transition-colors">
+                  {group.title}
+                </h2>
+                <span className="text-[10px] text-slate-400 font-medium tabular-nums">{group.items.length}</span>
+              </button>
+
+              {!isCollapsed && (
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 animate-in fade-in slide-in-from-top-1 duration-200">
+                  {group.items.map((m) => {
+                    const Icon = m.icon;
+                    const tint = TINTS[m.id] || NEUTRAL_TINT;
+                    const onClick = m.allowed ? () => navigate(`/app${m.path}`) : undefined;
+                    return (
+                      <button
+                        key={m.id}
+                        onClick={onClick}
+                        disabled={!m.allowed}
+                        title={m.allowed ? undefined : 'Your role does not have access to this module'}
+                        className={
+                          m.allowed
+                            ? 'group relative text-left bg-white border border-slate-200/70 rounded-xl p-4 hover:border-slate-300 hover:-translate-y-0.5 hover:shadow-[0_4px_12px_rgb(0_0_0_/_0.05)] transition-all duration-150'
+                            : 'group relative text-left bg-slate-50/60 border border-slate-200/70 rounded-xl p-4 cursor-not-allowed opacity-60'
+                        }
+                      >
+                        {!m.allowed && (
+                          <Lock className="absolute top-3 right-3 w-3 h-3 text-slate-400" />
+                        )}
+                        <div className={`w-10 h-10 rounded-xl ${tint.bg} ring-1 ${tint.ring} flex items-center justify-center mb-3 transition-transform group-hover:scale-[1.04]`}>
+                          <Icon className={`w-[18px] h-[18px] ${m.allowed ? tint.text : 'text-slate-400'}`} />
+                        </div>
+                        <div className="text-[13px] font-medium text-slate-900 leading-snug">{m.title}</div>
+                        <div className="text-[11px] text-slate-500 mt-0.5 line-clamp-2 leading-snug">{m.description}</div>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
-              <CardHeader className="pb-4">
-                <div className={`w-16 h-16 bg-gradient-to-br ${module.color} rounded-xl flex items-center justify-center mb-4 shadow-lg ${
-                  module.allowed ? 'group-hover:scale-110 transition-transform duration-300' : 'grayscale'
-                }`}>
-                  <Icon className="w-8 h-8 text-white" />
-                </div>
-                <CardTitle className="text-lg text-slate-900">{module.title}</CardTitle>
-                <CardDescription className="text-sm text-slate-600">{module.description}</CardDescription>
-              </CardHeader>
-            </Card>
+            </section>
           );
         })}
       </div>
