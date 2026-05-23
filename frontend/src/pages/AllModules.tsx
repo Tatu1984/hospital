@@ -30,7 +30,7 @@
 
 import ResourceListPage, { StatusBadge, fmtDate } from '../components/modules/ResourceListPage';
 import {
-  Syringe, Wind, Wrench, Cross, Microscope,
+  Syringe, Wind, Wrench, Microscope,
   Calculator, Video, ImageIcon, Monitor, FileText, ClipboardList,
   UserCog, HeartPulse, UserPlus, Wallet, Fingerprint, CreditCard,
 } from 'lucide-react';
@@ -130,51 +130,11 @@ export function CSSD() {
   );
 }
 
-export function Mortuary() {
-  return (
-    <ResourceListPage
-      title="Mortuary"
-      description="Deceased registry, body storage, autopsy + release tracking"
-      icon={Cross}
-      iconTint="bg-slate-700"
-      api="/api/mortuary"
-      stats={[
-        { label: 'Total cases', compute: (r) => r.length },
-        { label: 'In storage', compute: (r) => r.filter((x: any) => x.status === 'stored').length },
-        { label: 'Released', compute: (r) => r.filter((x: any) => x.status === 'released').length },
-        { label: 'Pending autopsy', compute: (r) => r.filter((x: any) => x.autopsyRequired && !x.autopsyAt).length },
-      ]}
-      columns={[
-        { key: 'bodyNumber', label: 'Body #' },
-        { key: 'deceasedName', label: 'Name' },
-        { key: 'age', label: 'Age' },
-        { key: 'gender', label: 'Gender' },
-        { key: 'dateOfDeath', label: 'Date of death', render: (r: any) => fmtDate(r.dateOfDeath) },
-        { key: 'fridgeUnit', label: 'Fridge / Shelf', render: (r: any) => `${r.fridgeUnit || '—'} / ${r.shelfNumber || '—'}` },
-        { key: 'status', label: 'Status', render: (r: any) => <StatusBadge value={r.status} /> },
-      ]}
-      formFields={[
-        { name: 'bodyNumber', label: 'Body # (auto if blank)', type: 'text' },
-        { name: 'deceasedName', label: 'Deceased name', type: 'text', required: true },
-        { name: 'age', label: 'Age', type: 'number' },
-        { name: 'gender', label: 'Gender', type: 'select', options: ['Male','Female','Other'].map(v => ({ value: v, label: v })) },
-        { name: 'contact', label: 'Family contact', type: 'text' },
-        { name: 'dateOfDeath', label: 'Date of death', type: 'datetime', required: true },
-        { name: 'causeOfDeath', label: 'Cause of death', type: 'text' },
-        { name: 'doctorOnDuty', label: 'Doctor on duty', type: 'text' },
-        { name: 'fridgeUnit', label: 'Fridge unit', type: 'text' },
-        { name: 'shelfNumber', label: 'Shelf #', type: 'text' },
-        { name: 'storedAt', label: 'Stored at', type: 'datetime' },
-        { name: 'releasedAt', label: 'Released at', type: 'datetime' },
-        { name: 'releasedTo', label: 'Released to', type: 'text', placeholder: 'Family member name + relationship' },
-        { name: 'releaseAuthBy', label: 'Release authorised by', type: 'text' },
-        { name: 'autopsyRequired', label: 'Autopsy required', type: 'select', options: [{ value: 'true', label: 'Yes' }, { value: 'false', label: 'No' }], default: 'false' },
-        { name: 'status', label: 'Status', type: 'select', options: ['stored','released','autopsy','transferred'].map(v => ({ value: v, label: v })), default: 'stored' },
-        { name: 'remarks', label: 'Remarks', type: 'textarea', span: 2 },
-      ]}
-    />
-  );
-}
+// Mortuary moved to its own page so we can add the India Form-4
+// (Medical Certificate of Cause of Death) issue flow alongside the
+// body-storage register. AllModules.tsx re-exports it for back-compat
+// with the lazy importer in App.tsx (m.Mortuary).
+export { default as Mortuary } from './Mortuary';
 
 export function Pathology() {
   return (

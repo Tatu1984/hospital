@@ -76,6 +76,7 @@ const PatientChart = lazy(() => import('./pages/PatientChart'));
 const DoctorFinance = lazy(() => import('./pages/DoctorFinance'));
 const Dialysis = lazy(() => import('./pages/Dialysis'));
 const ActivityMonitor = lazy(() => import('./pages/ActivityMonitor'));
+const BirthRecords = lazy(() => import('./pages/BirthRecords'));
 
 // Some smaller modules still live in AllModules.tsx — split that into one
 // async chunk. Each named import resolves once the chunk loads.
@@ -250,6 +251,7 @@ const AppRoutes = () => {
         <Route path="emergency" element={<RoleProtectedRoute path="emergency"><Emergency /></RoleProtectedRoute>} />
         <Route path="icu" element={<RoleProtectedRoute path="icu"><ICU /></RoleProtectedRoute>} />
         <Route path="operation-theatre" element={<RoleProtectedRoute path="operation-theatre"><OperationTheatre /></RoleProtectedRoute>} />
+        <Route path="birth-records" element={<RoleProtectedRoute path="birth-records"><BirthRecords /></RoleProtectedRoute>} />
 
         {/* Support Services */}
         <Route path="blood-bank" element={<RoleProtectedRoute path="blood-bank"><BloodBank /></RoleProtectedRoute>} />

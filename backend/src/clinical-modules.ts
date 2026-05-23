@@ -12,6 +12,7 @@
 import { Request, Response, Router, RequestHandler } from 'express';
 import { prisma } from './shared/prisma';
 import { authenticateToken } from './middleware';
+import { writeAudit } from './utils/audit';
 
 type AuthedReq = Request & { user?: { userId: string; tenantId: string; branchId?: string } };
 
@@ -404,6 +405,352 @@ clinicalModulesRouter.delete('/mortuary/:id', auth, async (req: AuthedReq, res: 
   } catch (e) {
     console.error('delete mortuary', e);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// =============== DEATH CERTIFICATE (India Form-4) ===============
+// Issue / re-issue the Medical Certificate of Cause of Death for an
+// existing mortuary record. The PDF itself is generated client-side
+// (jspdf) — this endpoint records the certificate metadata, audits the
+// issuance, and returns the row so the FE can hand it straight to the
+// generator. Civil registration with the municipal registrar is the
+// next-of-kin's responsibility; we provide the medical certificate
+// the registrar requires.
+clinicalModulesRouter.post('/mortuary/:id/issue-certificate', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const owned = await prisma.mortuaryRecord.findFirst({
+      where: { id: req.params.id, tenantId: req.user!.tenantId },
+    });
+    if (!owned) return res.status(404).json({ error: 'Record not found' });
+
+    const {
+      address,
+      placeOfDeath,
+      immediateCause,
+      immediateInterval,
+      antecedentCause1,
+      antecedent1Interval,
+      antecedentCause2,
+      antecedent2Interval,
+      contributingCauses,
+      mannerOfDeath,
+      modeOfDeath,
+      certifyingDoctorId,
+      certifyingDoctorName,
+      certifyingDoctorReg,
+    } = req.body || {};
+
+    if (!immediateCause) {
+      return res.status(400).json({ error: 'Immediate cause of death is required' });
+    }
+    if (!certifyingDoctorName) {
+      return res.status(400).json({ error: 'Certifying doctor name is required' });
+    }
+
+    // Issue a sequential certificate number scoped to tenant +
+    // calendar year so different branches don't collide. Form: DC-YYYY-NNNN.
+    const year = new Date().getFullYear();
+    const prefix = `DC-${year}-`;
+    const existing = await prisma.mortuaryRecord.findMany({
+      where: { tenantId: req.user!.tenantId, certificateNumber: { startsWith: prefix } },
+      select: { certificateNumber: true },
+    });
+    const maxN = existing.reduce((m, r) => {
+      const n = parseInt(String(r.certificateNumber || '').replace(prefix, ''), 10);
+      return Number.isFinite(n) && n > m ? n : m;
+    }, 0);
+    const certificateNumber = owned.certificateNumber || `${prefix}${String(maxN + 1).padStart(4, '0')}`;
+
+    const updated = await prisma.mortuaryRecord.update({
+      where: { id: owned.id },
+      data: {
+        address: address ?? owned.address,
+        placeOfDeath: placeOfDeath ?? owned.placeOfDeath,
+        immediateCause,
+        immediateInterval: immediateInterval ?? null,
+        antecedentCause1: antecedentCause1 ?? null,
+        antecedent1Interval: antecedent1Interval ?? null,
+        antecedentCause2: antecedentCause2 ?? null,
+        antecedent2Interval: antecedent2Interval ?? null,
+        contributingCauses: contributingCauses ?? null,
+        mannerOfDeath: mannerOfDeath ?? null,
+        modeOfDeath: modeOfDeath ?? null,
+        certifyingDoctorId: certifyingDoctorId ?? null,
+        certifyingDoctorName,
+        certifyingDoctorReg: certifyingDoctorReg ?? null,
+        certificateNumber,
+        certificateIssuedAt: new Date(),
+        certificateIssuedBy: req.user!.userId,
+      },
+    });
+
+    void writeAudit({
+      prisma, req,
+      action: 'DEATH_CERTIFICATE_ISSUE',
+      resource: 'MortuaryRecord',
+      resourceId: owned.id,
+      newValue: { certificateNumber, certifyingDoctorName },
+    });
+
+    res.json(updated);
+  } catch (e: any) {
+    console.error('issue death certificate', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+// =============== BIRTH RECORDS ===============
+// Captures the delivery event. Creates the newborn's Patient row in
+// the same transaction (unless one was passed in) so the baby has an
+// MRN immediately and downstream OPD / paediatric workflows can attach
+// notes to a real patient. Certificate PDF is generated client-side;
+// issue-certificate stamps the row with cert # + timestamp + issuer.
+
+clinicalModulesRouter.get('/birth-records', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const { search } = req.query as { search?: string };
+    const where: any = { tenantId: req.user!.tenantId };
+    if (search && search.trim()) {
+      const q = search.trim();
+      where.OR = [
+        { babyName: { contains: q, mode: 'insensitive' } },
+        { motherPatient: { name: { contains: q, mode: 'insensitive' } } },
+        { motherPatient: { mrn: { contains: q, mode: 'insensitive' } } },
+        { certificateNumber: { contains: q, mode: 'insensitive' } },
+      ];
+    }
+    const items = await prisma.birthRecord.findMany({
+      where,
+      orderBy: { birthDate: 'desc' },
+      take: 200,
+      include: {
+        motherPatient: { select: { id: true, name: true, mrn: true, contact: true, address: true } },
+        babyPatient: { select: { id: true, name: true, mrn: true, gender: true, dob: true } },
+        attendingDoctor: { select: { id: true, name: true } },
+      },
+    });
+    res.json(items);
+  } catch (e) {
+    console.error('list birth records', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+clinicalModulesRouter.get('/birth-records/:id', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const item = await prisma.birthRecord.findFirst({
+      where: { id: req.params.id, tenantId: req.user!.tenantId },
+      include: {
+        motherPatient: { select: { id: true, name: true, mrn: true, contact: true, address: true, dob: true } },
+        babyPatient: { select: { id: true, name: true, mrn: true, gender: true, dob: true } },
+        attendingDoctor: { select: { id: true, name: true } },
+        branch: { select: { id: true, name: true, address: true } },
+      },
+    });
+    if (!item) return res.status(404).json({ error: 'Birth record not found' });
+    res.json(item);
+  } catch (e) {
+    console.error('get birth record', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+clinicalModulesRouter.post('/birth-records', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const b = req.body || {};
+    if (!b.motherPatientId) return res.status(400).json({ error: 'motherPatientId is required' });
+    if (!b.birthDate) return res.status(400).json({ error: 'birthDate is required' });
+    if (!b.babyGender) return res.status(400).json({ error: 'babyGender is required' });
+    if (!b.deliveryType) return res.status(400).json({ error: 'deliveryType is required' });
+
+    // Confirm mother belongs to this tenant.
+    const mother = await prisma.patient.findFirst({
+      where: { id: b.motherPatientId, tenantId: req.user!.tenantId },
+      select: { id: true, branchId: true, name: true, mrn: true, address: true },
+    });
+    if (!mother) return res.status(404).json({ error: 'Mother patient not found' });
+
+    const branchId = b.branchId || mother.branchId;
+    const birthDate = new Date(b.birthDate);
+
+    // Auto-register the newborn as a Patient unless babyPatientId
+    // was supplied (re-using an existing row, e.g. an antenatally
+    // registered baby).
+    const created = await prisma.$transaction(async (tx) => {
+      let babyPatientId: string | null = b.babyPatientId || null;
+
+      if (!babyPatientId && b.liveBirth !== false) {
+        // Mint a new MRN scoped to tenant. Same algorithm as the
+        // POST /api/patients handler — read last MRN, increment.
+        const lastPatient = await tx.patient.findFirst({
+          where: { tenantId: req.user!.tenantId },
+          orderBy: { createdAt: 'desc' },
+          select: { mrn: true },
+        });
+        let mrnNumber = 1;
+        if (lastPatient) {
+          const n = parseInt(lastPatient.mrn.replace(/\D/g, ''));
+          if (Number.isFinite(n)) mrnNumber = n + 1;
+        }
+        const mrn = `MRN${mrnNumber.toString().padStart(6, '0')}`;
+        const babyName = (b.babyName && b.babyName.trim()) || `Baby of ${mother.name}`;
+        const baby = await tx.patient.create({
+          data: {
+            tenantId: req.user!.tenantId,
+            branchId,
+            mrn,
+            name: babyName,
+            dob: birthDate,
+            gender: b.babyGender,
+            address: b.parentsAddress || mother.address || null,
+            purpose: `Newborn — mother MRN ${mother.mrn}`,
+          },
+        });
+        babyPatientId = baby.id;
+      }
+
+      const rec = await tx.birthRecord.create({
+        data: {
+          tenantId: req.user!.tenantId,
+          branchId,
+          motherPatientId: mother.id,
+          babyPatientId,
+          babyName: b.babyName || null,
+          babyGender: b.babyGender,
+          birthDate,
+          placeOfBirth: b.placeOfBirth || null,
+          deliveryType: b.deliveryType,
+          birthOrder: b.birthOrder ?? 1,
+          weightGrams: b.weightGrams ?? null,
+          lengthCm: b.lengthCm ?? null,
+          headCircumferenceCm: b.headCircumferenceCm ?? null,
+          apgar1Min: b.apgar1Min ?? null,
+          apgar5Min: b.apgar5Min ?? null,
+          liveBirth: b.liveBirth ?? true,
+          outcome: b.outcome || null,
+          notes: b.notes || null,
+          fatherName: b.fatherName || null,
+          fatherOccupation: b.fatherOccupation || null,
+          fatherEducation: b.fatherEducation || null,
+          motherOccupation: b.motherOccupation || null,
+          motherEducation: b.motherEducation || null,
+          motherAgeAtBirth: b.motherAgeAtBirth ?? null,
+          parentsAddress: b.parentsAddress || mother.address || null,
+          parentsReligion: b.parentsReligion || null,
+          parentsNationality: b.parentsNationality || 'Indian',
+          attendingDoctorId: b.attendingDoctorId || null,
+          attendingDoctorName: b.attendingDoctorName || null,
+        },
+        include: {
+          motherPatient: { select: { id: true, name: true, mrn: true } },
+          babyPatient: { select: { id: true, name: true, mrn: true } },
+          attendingDoctor: { select: { id: true, name: true } },
+        },
+      });
+
+      return rec;
+    });
+
+    void writeAudit({
+      prisma, req,
+      action: 'BIRTH_RECORD_CREATE',
+      resource: 'BirthRecord',
+      resourceId: created.id,
+      newValue: {
+        motherPatientId: created.motherPatientId,
+        babyPatientId: created.babyPatientId,
+        deliveryType: created.deliveryType,
+      },
+    });
+
+    res.status(201).json(created);
+  } catch (e: any) {
+    console.error('create birth record', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.put('/birth-records/:id', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const owned = await prisma.birthRecord.findFirst({
+      where: { id: req.params.id, tenantId: req.user!.tenantId },
+    });
+    if (!owned) return res.status(404).json({ error: 'Birth record not found' });
+
+    const data = { ...req.body };
+    delete data.tenantId;
+    delete data.id;
+    delete data.babyPatientId; // never reassign baby after creation
+    delete data.motherPatientId;
+    if (data.birthDate) data.birthDate = new Date(data.birthDate);
+
+    const updated = await prisma.birthRecord.update({
+      where: { id: owned.id },
+      data,
+      include: {
+        motherPatient: { select: { id: true, name: true, mrn: true } },
+        babyPatient: { select: { id: true, name: true, mrn: true } },
+      },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('update birth record', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+// Issue (or re-issue) the hospital Birth Certificate. Stamps the row
+// with a sequential certificate number scoped to tenant + year and
+// records who issued it. The printable PDF is rendered client-side.
+clinicalModulesRouter.post('/birth-records/:id/issue-certificate', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const owned = await prisma.birthRecord.findFirst({
+      where: { id: req.params.id, tenantId: req.user!.tenantId },
+    });
+    if (!owned) return res.status(404).json({ error: 'Birth record not found' });
+
+    const year = new Date(owned.birthDate).getFullYear();
+    const prefix = `BC-${year}-`;
+    let certificateNumber = owned.certificateNumber;
+    if (!certificateNumber) {
+      const existing = await prisma.birthRecord.findMany({
+        where: { tenantId: req.user!.tenantId, certificateNumber: { startsWith: prefix } },
+        select: { certificateNumber: true },
+      });
+      const maxN = existing.reduce((m, r) => {
+        const n = parseInt(String(r.certificateNumber || '').replace(prefix, ''), 10);
+        return Number.isFinite(n) && n > m ? n : m;
+      }, 0);
+      certificateNumber = `${prefix}${String(maxN + 1).padStart(4, '0')}`;
+    }
+
+    const updated = await prisma.birthRecord.update({
+      where: { id: owned.id },
+      data: {
+        certificateNumber,
+        certificateIssuedAt: new Date(),
+        certificateIssuedBy: req.user!.userId,
+      },
+      include: {
+        motherPatient: { select: { id: true, name: true, mrn: true, address: true, contact: true } },
+        babyPatient: { select: { id: true, name: true, mrn: true } },
+        attendingDoctor: { select: { id: true, name: true } },
+        branch: { select: { id: true, name: true, address: true } },
+      },
+    });
+
+    void writeAudit({
+      prisma, req,
+      action: 'BIRTH_CERTIFICATE_ISSUE',
+      resource: 'BirthRecord',
+      resourceId: owned.id,
+      newValue: { certificateNumber },
+    });
+
+    res.json(updated);
+  } catch (e: any) {
+    console.error('issue birth certificate', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
   }
 });
 

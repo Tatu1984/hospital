@@ -84,13 +84,13 @@ export const rolePermissions: Record<Role, string[]> = {
     // My Earnings — doctor's personal payout/finance page.
     'my-earnings',
     // New clinical modules
-    'dialysis', 'physiotherapy', 'mortuary',
+    'dialysis', 'physiotherapy', 'mortuary', 'birth-records',
   ],
 
   // NURSE - Patient care focus
   NURSE: [
     '/', 'live-dashboard', 'patients', 'appointment', 'nurse-station', 'inpatient', 'emergency', 'icu',
-    'laboratory', 'radiology', 'pharmacy', 'diet', 'blood-bank'
+    'laboratory', 'radiology', 'pharmacy', 'diet', 'blood-bank', 'birth-records'
   ],
 
   // FRONT_OFFICE - Registration & Appointments
@@ -197,7 +197,7 @@ export const rolePermissions: Record<Role, string[]> = {
     'emergency', 'icu', 'operation-theatre',
     'laboratory', 'radiology', 'pathology', 'pharmacy',
     'blood-bank', 'ambulance', 'dialysis',
-    'housekeeping', 'diet', 'mortuary',
+    'housekeeping', 'diet', 'mortuary', 'birth-records',
     'hr', 'payroll', 'biometric-attendance',
     'inventory', 'store-management', 'asset-management', 'assets',
     'equipment-maintenance',
@@ -214,7 +214,7 @@ export const rolePermissions: Record<Role, string[]> = {
     'inpatient', 'emergency', 'icu', 'operation-theatre',
     'pharmacy', 'doctor-assistant', 'video-conversation',
     'nurse-station', 'mrd-management', 'dicom-pacs',
-    'billing', 'dialysis', 'physiotherapy', 'mortuary',
+    'billing', 'dialysis', 'physiotherapy', 'mortuary', 'birth-records',
     'doctor-registration', 'mis-report',
   ],
 

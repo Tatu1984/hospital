@@ -823,6 +823,9 @@ export const ROUTE_MODULES: Record<string, Permission[]> = {
   '/cssd': ['inventory:view'],
   '/physiotherapy': ['opd:view'],
   '/mortuary': ['ipd:view'],
+  // Birth records reuse the IPD permission family — maternity workflow
+  // sits in the same ward/ipd context.
+  '/birth-records': ['ipd:view'],
   '/billing': ['billing:view'],
   '/ipd-billing': ['billing:view'],
   '/referral-commission': ['commissions:view'],

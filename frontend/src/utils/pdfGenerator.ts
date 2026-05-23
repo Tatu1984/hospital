@@ -502,3 +502,228 @@ export function generateDischargeSummaryPDF(data: {
   // Save
   return { doc, filename: `DischargeSummary_${data.patientMRN}_${data.dischargeDate.replace(/\//g, '-')}.pdf` };
 }
+
+// ---------- Birth Certificate (India Form 1 style) ----------
+// Printable hospital birth certificate. The wet-ink signature of the
+// attending doctor and Medical Superintendent on the printed copy is
+// the legal artefact; this PDF reserves space for both. The civil
+// registration certificate is issued separately by the municipal
+// registrar — this is the hospital's intake document for that filing.
+export function generateBirthCertificatePDF(data: {
+  certificateNumber: string;
+  hospitalName?: string;
+  branchAddress?: string;
+  babyName: string;
+  babyGender: string;
+  birthDate: string;          // pre-formatted human string
+  birthTime?: string;
+  placeOfBirth: string;
+  deliveryType: string;       // normal / c-section / assisted
+  weightGrams?: number;
+  motherName: string;
+  motherMRN: string;
+  motherAge?: number;
+  motherAddress?: string;
+  motherOccupation?: string;
+  motherNationality?: string;
+  fatherName?: string;
+  fatherOccupation?: string;
+  attendingDoctor?: string;
+  issuedAt: string;
+  issuedBy?: string;
+}) {
+  const doc = newPdf();
+  let yPos = addHeader(doc, 'CERTIFICATE OF BIRTH');
+
+  // Sub-title
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'italic');
+  doc.text('(Issued by the hospital — for use in civil registration under the', 105, yPos, { align: 'center' });
+  doc.text('Registration of Births and Deaths Act, 1969 — Form 1 intake)', 105, yPos + 4, { align: 'center' });
+  yPos += 12;
+
+  // Certificate # + issue date
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Certificate No: ${data.certificateNumber}`, 20, yPos);
+  doc.text(`Date of Issue: ${data.issuedAt}`, 130, yPos);
+  yPos += 8;
+
+  // Row helper that prints "Label: value" with a thin underline below
+  // value, mimicking a printed form.
+  const labelW = 55;
+  const row = (label: string, value: string, x = 20, w = 170) => {
+    doc.setFont('helvetica', 'bold'); doc.text(label, x, yPos);
+    doc.setFont('helvetica', 'normal');
+    const valX = x + labelW;
+    doc.text(value || '—', valX, yPos);
+    doc.setDrawColor(180);
+    doc.line(valX, yPos + 1.2, x + w, yPos + 1.2);
+    yPos += 8;
+  };
+
+  doc.setFontSize(11);
+  doc.setFont('helvetica', 'bold');
+  doc.text('A. CHILD', 20, yPos); yPos += 6;
+  doc.setFontSize(10);
+
+  row('Name of child', data.babyName || `Baby (name yet to be declared)`);
+  row('Sex', data.babyGender);
+  row('Date of birth', data.birthDate + (data.birthTime ? `   Time: ${data.birthTime}` : ''));
+  row('Place of birth', data.placeOfBirth);
+  row('Type of delivery', data.deliveryType);
+  if (data.weightGrams) row('Weight at birth', `${data.weightGrams} g`);
+
+  yPos += 2;
+  doc.setFontSize(11); doc.setFont('helvetica', 'bold');
+  doc.text('B. MOTHER', 20, yPos); yPos += 6;
+  doc.setFontSize(10);
+  row('Name of mother', data.motherName);
+  row('Mother MRN', data.motherMRN);
+  if (data.motherAge) row('Age at birth (yrs)', String(data.motherAge));
+  if (data.motherOccupation) row('Occupation', data.motherOccupation);
+  if (data.motherNationality) row('Nationality', data.motherNationality);
+  if (data.motherAddress) row('Address', data.motherAddress);
+
+  yPos += 2;
+  doc.setFontSize(11); doc.setFont('helvetica', 'bold');
+  doc.text('C. FATHER', 20, yPos); yPos += 6;
+  doc.setFontSize(10);
+  row('Name of father', data.fatherName || '—');
+  if (data.fatherOccupation) row('Occupation', data.fatherOccupation);
+
+  // Signature blocks. Two parallel lines for ink signing.
+  yPos = Math.max(yPos + 10, 230);
+  doc.setDrawColor(0);
+  doc.line(25, yPos, 90, yPos);
+  doc.line(120, yPos, 185, yPos);
+  doc.setFontSize(9);
+  doc.text(data.attendingDoctor ? `Attending: ${data.attendingDoctor}` : 'Attending Doctor', 25, yPos + 5);
+  doc.text('Medical Superintendent / Registrar', 120, yPos + 5);
+
+  // Footer
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'italic');
+  doc.text(`Issued by: ${data.issuedBy || '—'}    Generated: ${new Date().toLocaleString()}`, 105, 285, { align: 'center' });
+  doc.text(`${data.hospitalName || ''} ${data.branchAddress ? '· ' + data.branchAddress : ''}`.trim(), 105, 289, { align: 'center' });
+
+  return { doc, filename: `BirthCertificate_${data.certificateNumber}.pdf` };
+}
+
+// ---------- Medical Certificate of Cause of Death (India Form 4) ----------
+// Hospital in-patient version. The wet-ink signature of the certifying
+// medical practitioner is the legal artefact. The form is given to the
+// informant (usually next of kin) who carries it to the municipal
+// registrar to obtain the civil death certificate.
+export function generateDeathCertificatePDF(data: {
+  certificateNumber: string;
+  hospitalName?: string;
+  branchAddress?: string;
+  deceasedName: string;
+  age?: number | string;
+  gender?: string;
+  address?: string;
+  dateOfDeath: string;       // pre-formatted human string
+  placeOfDeath?: string;
+  // Causes — section I
+  immediateCause: string;
+  immediateInterval?: string;
+  antecedentCause1?: string;
+  antecedent1Interval?: string;
+  antecedentCause2?: string;
+  antecedent2Interval?: string;
+  // Section II
+  contributingCauses?: string;
+  // Manner / mode
+  mannerOfDeath?: string;
+  modeOfDeath?: string;
+  // Certifier
+  certifyingDoctorName: string;
+  certifyingDoctorReg?: string;
+  issuedAt: string;
+  issuedBy?: string;
+}) {
+  const doc = newPdf();
+  let yPos = addHeader(doc, 'MEDICAL CERTIFICATE OF CAUSE OF DEATH');
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'italic');
+  doc.text('(Form No. 4 — Hospital In-patient. Issued under the Registration', 105, yPos, { align: 'center' });
+  doc.text('of Births and Deaths Act, 1969 / RBD Rules, 1999)', 105, yPos + 4, { align: 'center' });
+  yPos += 12;
+
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Certificate No: ${data.certificateNumber}`, 20, yPos);
+  doc.text(`Date of Issue: ${data.issuedAt}`, 130, yPos);
+  yPos += 8;
+
+  const labelW = 50;
+  const row = (label: string, value: string, x = 20, w = 170) => {
+    doc.setFont('helvetica', 'bold'); doc.text(label, x, yPos);
+    doc.setFont('helvetica', 'normal');
+    doc.text(value || '—', x + labelW, yPos);
+    doc.setDrawColor(180);
+    doc.line(x + labelW, yPos + 1.2, x + w, yPos + 1.2);
+    yPos += 7;
+  };
+
+  doc.setFontSize(11); doc.setFont('helvetica', 'bold');
+  doc.text('DECEASED', 20, yPos); yPos += 6;
+  doc.setFontSize(10);
+  row('Name', data.deceasedName);
+  row('Age / Sex', `${data.age ?? '—'} / ${data.gender ?? '—'}`);
+  if (data.address) row('Address', data.address);
+  row('Date & time of death', data.dateOfDeath);
+  if (data.placeOfDeath) row('Place of death', data.placeOfDeath);
+
+  yPos += 2;
+  doc.setFontSize(11); doc.setFont('helvetica', 'bold');
+  doc.text('I. CAUSE OF DEATH', 20, yPos); yPos += 6;
+  doc.setFontSize(9); doc.setFont('helvetica', 'italic');
+  doc.text('Only one disease/condition per line. "Due to" links each line to the next.', 20, yPos);
+  yPos += 6;
+  doc.setFontSize(10);
+  doc.autoTable({
+    startY: yPos,
+    head: [['', 'Disease / condition', 'Approx. interval onset → death']],
+    body: [
+      ['(a) Immediate cause',           data.immediateCause || '',     data.immediateInterval || ''],
+      ['(b) due to (or as a consequence of)', data.antecedentCause1 || '', data.antecedent1Interval || ''],
+      ['(c) due to (or as a consequence of)', data.antecedentCause2 || '', data.antecedent2Interval || ''],
+    ],
+    theme: 'grid',
+    headStyles: { fillColor: [80, 80, 80] },
+    styles: { fontSize: 9 },
+    columnStyles: { 0: { cellWidth: 60 }, 1: { cellWidth: 90 }, 2: { cellWidth: 40 } },
+    margin: { left: 20, right: 20 },
+  });
+  yPos = (doc as any).lastAutoTable.finalY + 6;
+
+  doc.setFontSize(11); doc.setFont('helvetica', 'bold');
+  doc.text('II. OTHER SIGNIFICANT CONDITIONS', 20, yPos); yPos += 6;
+  doc.setFontSize(10); doc.setFont('helvetica', 'normal');
+  const cc = doc.splitTextToSize(data.contributingCauses || '—', 170);
+  doc.text(cc, 20, yPos);
+  yPos += cc.length * 5 + 4;
+
+  if (data.mannerOfDeath || data.modeOfDeath) {
+    row('Manner of death', data.mannerOfDeath || '—');
+    row('Mode of death', data.modeOfDeath || '—');
+  }
+
+  // Certifier
+  yPos = Math.max(yPos + 8, 235);
+  doc.setDrawColor(0);
+  doc.line(25, yPos, 110, yPos);
+  doc.setFontSize(9); doc.setFont('helvetica', 'normal');
+  doc.text(`Certifying Doctor: ${data.certifyingDoctorName}`, 25, yPos + 5);
+  if (data.certifyingDoctorReg) doc.text(`Regn. No.: ${data.certifyingDoctorReg}`, 25, yPos + 10);
+  doc.line(130, yPos, 185, yPos);
+  doc.text('Signature & Seal', 130, yPos + 5);
+
+  // Footer
+  doc.setFontSize(8); doc.setFont('helvetica', 'italic');
+  doc.text(`Issued by: ${data.issuedBy || '—'}    Generated: ${new Date().toLocaleString()}`, 105, 285, { align: 'center' });
+  doc.text(`${data.hospitalName || ''} ${data.branchAddress ? '· ' + data.branchAddress : ''}`.trim(), 105, 289, { align: 'center' });
+
+  return { doc, filename: `DeathCertificate_${data.certificateNumber}.pdf` };
+}

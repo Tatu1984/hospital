@@ -8,17 +8,18 @@ datasource db {
 }
 
 model Tenant {
-  id        String    @id @default(uuid())
-  name      String
-  contact   String?
-  address   String?
-  config    Json?
-  isActive  Boolean   @default(true)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  branches  Branch[]
-  patients  Patient[]
-  users     User[]
+  id           String        @id @default(uuid())
+  name         String
+  contact      String?
+  address      String?
+  config       Json?
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  branches     Branch[]
+  patients     Patient[]
+  users        User[]
+  birthRecords BirthRecord[]
 
   @@map("tenants")
 }
@@ -41,6 +42,7 @@ model Branch {
   encounters     Encounter[]
   patients       Patient[]
   users          User[]
+  birthRecords   BirthRecord[]
 
   @@map("branches")
 }
@@ -82,22 +84,22 @@ model Department {
 }
 
 model User {
-  id                  String          @id @default(uuid())
+  id                  String           @id @default(uuid())
   tenantId            String
   branchId            String
-  username            String          @unique
-  email               String          @unique
+  username            String           @unique
+  email               String           @unique
   passwordHash        String
   name                String
   roleIds             String[]
   departmentIds       String[]
   biometricTemplate   String?
-  isActive            Boolean         @default(true)
+  isActive            Boolean          @default(true)
   lastLoginAt         DateTime?
   // Account-lockout state. Reset to (0, null) on a successful login.
   // Bumped + lockedUntil set when bad-password attempts cross the threshold.
   // See modules/auth/auth.service.ts and the legacy /api/auth/login.
-  failedLoginAttempts Int             @default(0)
+  failedLoginAttempts Int              @default(0)
   lockedUntil         DateTime?
   // Top-level identity columns we frequently filter on; kept first-class
   // so admin search can hit indexes if we add them later.
@@ -114,20 +116,22 @@ model User {
   // strings like 'patients:view'. Most users have neither array
   // populated; this is for the rare exception where a single user
   // should have one extra ability or one fewer than their role.
-  extraPermissions    String[]        @default([])
-  revokedPermissions  String[]        @default([])
-  createdAt           DateTime        @default(now())
-  updatedAt           DateTime        @updatedAt
-  admissions          Admission[]     @relation("AdmittingDoctor")
+  extraPermissions    String[]         @default([])
+  revokedPermissions  String[]         @default([])
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  admissions          Admission[]      @relation("AdmittingDoctor")
   attendanceLogs      AttendanceLog[]
-  performedAuditLog   AuditLog[]      @relation("PerformedBy")
-  createdAuditLogs    AuditLog[]      @relation("CreatedBy")
-  appointments        Appointment[]   @relation("DoctorAppointments")
+  performedAuditLog   AuditLog[]       @relation("PerformedBy")
+  createdAuditLogs    AuditLog[]       @relation("CreatedBy")
+  appointments        Appointment[]    @relation("DoctorAppointments")
   encounters          Encounter[]
   opdNotes            OPDNote[]
   prescriptions       Prescription[]
-  branch              Branch          @relation(fields: [branchId], references: [id])
-  tenant              Tenant          @relation(fields: [tenantId], references: [id])
+  branch              Branch           @relation(fields: [branchId], references: [id])
+  tenant              Tenant           @relation(fields: [tenantId], references: [id])
+  birthsAttended      BirthRecord[]    @relation("BirthAttendingDoctor")
+  deathsCertified     MortuaryRecord[] @relation("CertifyingDoctor")
 
   @@map("users")
 }
@@ -269,6 +273,9 @@ model Patient {
   commissions       Commission[]
   insurances        PatientInsurance[]
   dialysisSessions  DialysisSession[]
+  birthsAsMother    BirthRecord[]      @relation("MotherBirths")
+  birthAsBaby       BirthRecord?       @relation("BabyBirth")
+  mortuaryRecords   MortuaryRecord[]
 
   @@unique([tenantId, mrn])
   @@map("patients")
@@ -300,20 +307,20 @@ model Appointment {
 }
 
 model Encounter {
-  id             String     @id @default(uuid())
+  id             String         @id @default(uuid())
   patientId      String
   branchId       String
   type           String
-  visitDate      DateTime   @default(now())
+  visitDate      DateTime       @default(now())
   doctorId       String?
-  status         String     @default("active")
+  status         String         @default("active")
   chiefComplaint String?
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
   admission      Admission?
-  branch         Branch     @relation(fields: [branchId], references: [id])
-  doctor         User?      @relation(fields: [doctorId], references: [id])
-  patient        Patient    @relation(fields: [patientId], references: [id])
+  branch         Branch         @relation(fields: [branchId], references: [id])
+  doctor         User?          @relation(fields: [doctorId], references: [id])
+  patient        Patient        @relation(fields: [patientId], references: [id])
   invoices       Invoice[]
   opdNotes       OPDNote[]
   orders         Order[]
@@ -388,21 +395,21 @@ model OPDNote {
 // workarounds in patient.repository, report.repository, and the
 // demo-seed introspection block.
 model Prescription {
-  id            String    @id @default(uuid())
-  opdNoteId     String
-  patientId     String
-  encounterId   String?
-  doctorId      String
-  drugs         Json
-  status        String    @default("active")
-  notes         String?
-  instructions  String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  doctor        User      @relation(fields: [doctorId], references: [id])
-  opdNote       OPDNote   @relation(fields: [opdNoteId], references: [id])
-  patient       Patient   @relation(fields: [patientId], references: [id])
-  encounter     Encounter? @relation(fields: [encounterId], references: [id])
+  id           String     @id @default(uuid())
+  opdNoteId    String
+  patientId    String
+  encounterId  String?
+  doctorId     String
+  drugs        Json
+  status       String     @default("active")
+  notes        String?
+  instructions String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  doctor       User       @relation(fields: [doctorId], references: [id])
+  opdNote      OPDNote    @relation(fields: [opdNoteId], references: [id])
+  patient      Patient    @relation(fields: [patientId], references: [id])
+  encounter    Encounter? @relation(fields: [encounterId], references: [id])
 
   @@index([patientId, createdAt])
   @@map("prescriptions")
@@ -1559,34 +1566,129 @@ model DialysisSession {
 // Deceased registry + cold-storage tracking. Body number is what the
 // hospital uses to identify the case (separate from the patient's MRN).
 model MortuaryRecord {
-  id              String    @id @default(uuid())
-  tenantId        String
-  patientId       String? // null for unidentified bodies
-  bodyNumber      String
-  deceasedName    String
-  age             Int?
-  gender          String?
-  contact         String?
-  dateOfDeath     DateTime
-  causeOfDeath    String?
-  doctorOnDuty    String? // FK to User but lazy
-  fridgeUnit      String? // unit identifier within mortuary
-  shelfNumber     String?
-  storedAt        DateTime?
-  releasedAt      DateTime?
-  releasedTo      String? // family contact name + relationship
-  releaseAuthBy   String? // who authorised release
-  autopsyRequired Boolean   @default(false)
-  autopsyAt       DateTime?
-  autopsyFindings String?
-  remarks         String?
-  status          String    @default("stored") // stored, released, autopsy, transferred
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id                   String    @id @default(uuid())
+  tenantId             String
+  patientId            String? // null for unidentified bodies
+  bodyNumber           String
+  deceasedName         String
+  age                  Int?
+  gender               String?
+  contact              String?
+  dateOfDeath          DateTime
+  causeOfDeath         String?
+  doctorOnDuty         String? // FK to User but lazy
+  fridgeUnit           String? // unit identifier within mortuary
+  shelfNumber          String?
+  storedAt             DateTime?
+  releasedAt           DateTime?
+  releasedTo           String? // family contact name + relationship
+  releaseAuthBy        String? // who authorised release
+  autopsyRequired      Boolean   @default(false)
+  autopsyAt            DateTime?
+  autopsyFindings      String?
+  remarks              String?
+  status               String    @default("stored") // stored, released, autopsy, transferred
+  // India Medical Certificate of Cause of Death (Form 4 / 4A) fields.
+  // Filled when the certifying doctor issues the certificate; printed
+  // PDF is generated client-side and signed in ink by the certifier.
+  // Digital signature image (base64) of the certifying doctor, if any,
+  // is pasted onto the printable PDF; the wet-ink signature on the
+  // printed copy remains the legal artefact.
+  address              String?
+  placeOfDeath         String? // hospital ward / home / brought dead
+  immediateCause       String? // (a) immediate cause
+  immediateInterval    String? // approx. interval between onset and death
+  antecedentCause1     String? // (b) antecedent cause due to
+  antecedent1Interval  String?
+  antecedentCause2     String? // (c) further antecedent cause due to
+  antecedent2Interval  String?
+  contributingCauses   String? // II - other significant conditions
+  mannerOfDeath        String? // natural / accident / suicide / homicide / pending
+  modeOfDeath          String? // coma, syncope, asphyxia, etc.
+  certifyingDoctorId   String?
+  certifyingDoctorName String?
+  certifyingDoctorReg  String? // medical council registration number
+  certificateNumber    String? // hospital-issued certificate number
+  certificateIssuedAt  DateTime?
+  certificateIssuedBy  String? // userId of issuer (clerk who finalised)
+
+  patient          Patient? @relation(fields: [patientId], references: [id])
+  certifyingDoctor User?    @relation("CertifyingDoctor", fields: [certifyingDoctorId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([tenantId, bodyNumber])
   @@index([tenantId])
+  @@index([patientId])
   @@map("mortuary_records")
+}
+
+// Birth records — captures the delivery event and links the mother
+// (always a Patient) to the newborn (also a Patient — auto-registered
+// on first birth-record creation). Drives the printable hospital
+// Birth Certificate (India Form 1 / civil-registration intake).
+model BirthRecord {
+  id              String  @id @default(uuid())
+  tenantId        String
+  branchId        String
+  // Mother is always known (must be a registered patient). Baby is
+  // optional at creation time but normally created in the same
+  // transaction so the newborn has an MRN immediately.
+  motherPatientId String
+  babyPatientId   String? @unique
+
+  // Baby snapshot (kept on the record so the certificate can render
+  // even if the baby's Patient row is later renamed/deleted).
+  babyName            String? // may be blank — "Baby of <mother>" until named
+  babyGender          String // 'Male' | 'Female' | 'Other'
+  birthDate           DateTime // date+time of birth
+  placeOfBirth        String? // ward / labour room / hospital name
+  deliveryType        String // 'normal' | 'csection' | 'assisted' | 'twin' | 'still'
+  birthOrder          Int      @default(1) // 1 unless twin/multiple
+  weightGrams         Int?
+  lengthCm            Float?
+  headCircumferenceCm Float?
+  apgar1Min           Int?
+  apgar5Min           Int?
+  liveBirth           Boolean  @default(true)
+  outcome             String? // alive, stillborn, died-shortly-after
+  notes               String?
+
+  // Parent details captured from registration intake. Mother's own
+  // patient row already has name/contact/address — these add the rest.
+  fatherName         String?
+  fatherOccupation   String?
+  fatherEducation    String?
+  motherOccupation   String?
+  motherEducation    String?
+  motherAgeAtBirth   Int?
+  parentsAddress     String?
+  parentsReligion    String?
+  parentsNationality String? @default("Indian")
+
+  attendingDoctorId   String?
+  attendingDoctorName String?
+
+  // Civil registration / certificate issuance metadata.
+  certificateNumber   String?
+  certificateIssuedAt DateTime?
+  certificateIssuedBy String?
+  civilRegNumber      String? // number issued by municipal registrar (later)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  motherPatient   Patient  @relation("MotherBirths", fields: [motherPatientId], references: [id])
+  babyPatient     Patient? @relation("BabyBirth", fields: [babyPatientId], references: [id])
+  attendingDoctor User?    @relation("BirthAttendingDoctor", fields: [attendingDoctorId], references: [id])
+  branch          Branch   @relation(fields: [branchId], references: [id])
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, certificateNumber])
+  @@index([tenantId])
+  @@index([motherPatientId])
+  @@map("birth_records")
 }
 
 // ===========================

@@ -45,6 +45,7 @@ import {
   Wallet,
   Search,
   Network,
+  Baby,
 } from 'lucide-react';
 
 // Roles for which the "My Earnings" finance entry shows in the sidebar.
@@ -137,6 +138,7 @@ const MainLayout = () => {
         { path: '/icu', icon: Heart, label: 'ICU' },
         { path: '/operation-theatre', icon: Scissors, label: 'OT' },
         { path: '/dialysis', icon: Activity, label: 'Dialysis' },
+        { path: '/birth-records', icon: Baby, label: 'Birth Records' },
       ]
     },
     {
