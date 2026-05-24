@@ -20,6 +20,7 @@ model Tenant {
   patients     Patient[]
   users        User[]
   birthRecords BirthRecord[]
+  alerts       Alert[]
 
   @@map("tenants")
 }
@@ -132,6 +133,9 @@ model User {
   tenant              Tenant           @relation(fields: [tenantId], references: [id])
   birthsAttended      BirthRecord[]    @relation("BirthAttendingDoctor")
   deathsCertified     MortuaryRecord[] @relation("CertifyingDoctor")
+  raisedAlerts        Alert[]          @relation("AlertRaisedBy")
+  resolvedAlerts      Alert[]          @relation("AlertResolvedBy")
+  ackAlerts           AlertAck[]
 
   @@map("users")
 }
@@ -2106,4 +2110,57 @@ model OTRoom {
   @@unique([tenantId, name])
   @@index([tenantId])
   @@map("ot_rooms")
+}
+
+// ===========================
+// EMERGENCY ALERT BROADCAST
+// ===========================
+// Hospital-wide alarm system. Any logged-in staff member can raise an
+// alert (Code Blue, Code Red, fire, etc.) and every connected portal
+// in the same tenant sees it within ~3s (3-second client poll on
+// /api/alerts/active). Critical codes also play an audible beep.
+//
+// Lifecycle: active → resolved. Individual users can acknowledge to
+// silence the alert on THEIR screen (AlertAck row), but the alert
+// stays active for everyone else until someone clicks Resolve.
+
+model Alert {
+  id          String    @id @default(uuid())
+  tenantId    String
+  code        String    // CODE_BLUE / CODE_RED / CODE_PINK / CODE_BLACK / CODE_GREY / MASS_CASUALTY / ANNOUNCEMENT
+  severity    String    // 'critical' | 'warning' | 'info'
+  location    String    // free text — "ICU Bed 4", "OPD Reception", "Block B 3rd floor"
+  message     String?   // optional details
+  raisedById  String
+  raisedAt    DateTime  @default(now())
+  resolvedById String?
+  resolvedAt  DateTime?
+  // active until resolvedAt is set. Cheaper than maintaining a status
+  // string + index because the query is simply { resolvedAt: null }.
+
+  tenant      Tenant     @relation(fields: [tenantId], references: [id])
+  raisedBy    User       @relation("AlertRaisedBy",   fields: [raisedById],   references: [id])
+  resolvedBy  User?      @relation("AlertResolvedBy", fields: [resolvedById], references: [id])
+  acks        AlertAck[]
+
+  @@index([tenantId, resolvedAt])
+  @@index([tenantId, raisedAt])
+  @@map("alerts")
+}
+
+// Per-user acknowledgement so silencing on one screen doesn't silence
+// for everyone (the whole hospital still needs to see Code Blue even
+// if the senior doctor on duty has acknowledged it).
+model AlertAck {
+  id           String   @id @default(uuid())
+  alertId      String
+  userId       String
+  acknowledgedAt DateTime @default(now())
+
+  alert        Alert @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  user         User  @relation(fields: [userId],  references: [id])
+
+  @@unique([alertId, userId])
+  @@index([userId])
+  @@map("alert_acks")
 }

@@ -754,6 +754,124 @@ clinicalModulesRouter.post('/birth-records/:id/issue-certificate', auth, async (
   }
 });
 
+// =============== EMERGENCY ALERTS (CODE BLUE/RED/etc.) ===============
+// Hospital-wide broadcast. Any staff member can raise; every connected
+// portal polls /api/alerts/active every 3s to pick up new alerts.
+// Tenant-scoped — alerts never cross hospital groups.
+
+const ALERT_CODES = new Set([
+  'CODE_BLUE', 'CODE_RED', 'CODE_PINK', 'CODE_BLACK', 'CODE_ORANGE',
+  'CODE_SILVER', 'CODE_GREY', 'CODE_YELLOW',
+  'MASS_CASUALTY', 'EVACUATION', 'ANNOUNCEMENT',
+]);
+const ALERT_SEVERITIES = new Set(['critical', 'warning', 'info']);
+
+clinicalModulesRouter.get('/alerts/active', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const userId = req.user!.userId;
+    const alerts = await prisma.alert.findMany({
+      where: { tenantId: req.user!.tenantId, resolvedAt: null },
+      orderBy: { raisedAt: 'desc' },
+      include: {
+        raisedBy:   { select: { id: true, name: true } },
+        acks:       { where: { userId }, select: { id: true } },
+      },
+      take: 20,
+    });
+    res.json(alerts.map(a => ({
+      ...a,
+      ackedByMe: a.acks.length > 0,
+      acks: undefined,
+    })));
+  } catch (e) {
+    console.error('list active alerts', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+clinicalModulesRouter.post('/alerts', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const { code, severity, location, message } = req.body || {};
+    if (!code || !ALERT_CODES.has(code))         return res.status(400).json({ error: 'Invalid alert code' });
+    if (!severity || !ALERT_SEVERITIES.has(severity)) return res.status(400).json({ error: 'Invalid severity' });
+    if (!location || !String(location).trim())    return res.status(400).json({ error: 'Location is required' });
+
+    const created = await prisma.alert.create({
+      data: {
+        tenantId: req.user!.tenantId,
+        code, severity,
+        location: String(location).trim(),
+        message: message ? String(message).trim() : null,
+        raisedById: req.user!.userId,
+      },
+      include: { raisedBy: { select: { id: true, name: true } } },
+    });
+
+    void writeAudit({
+      prisma, req,
+      action: 'ALERT_RAISE',
+      resource: 'Alert',
+      resourceId: created.id,
+      newValue: { code, severity, location, message },
+    });
+
+    res.status(201).json(created);
+  } catch (e: any) {
+    console.error('raise alert', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/alerts/:id/acknowledge', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const alert = await prisma.alert.findFirst({
+      where: { id: req.params.id, tenantId: req.user!.tenantId },
+    });
+    if (!alert) return res.status(404).json({ error: 'Alert not found' });
+
+    await prisma.alertAck.upsert({
+      where: { alertId_userId: { alertId: alert.id, userId: req.user!.userId } },
+      create: { alertId: alert.id, userId: req.user!.userId },
+      update: { acknowledgedAt: new Date() },
+    });
+    res.json({ ok: true });
+  } catch (e: any) {
+    console.error('ack alert', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+clinicalModulesRouter.post('/alerts/:id/resolve', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const alert = await prisma.alert.findFirst({
+      where: { id: req.params.id, tenantId: req.user!.tenantId },
+    });
+    if (!alert) return res.status(404).json({ error: 'Alert not found' });
+    if (alert.resolvedAt) return res.json(alert);
+
+    const updated = await prisma.alert.update({
+      where: { id: alert.id },
+      data: { resolvedAt: new Date(), resolvedById: req.user!.userId },
+      include: {
+        raisedBy:   { select: { id: true, name: true } },
+        resolvedBy: { select: { id: true, name: true } },
+      },
+    });
+
+    void writeAudit({
+      prisma, req,
+      action: 'ALERT_RESOLVE',
+      resource: 'Alert',
+      resourceId: alert.id,
+    });
+
+    res.json(updated);
+  } catch (e: any) {
+    console.error('resolve alert', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // =============== PHLEBOTOMY ROUNDS ===============
 
 clinicalModulesRouter.get('/phlebotomy/rounds', auth, async (req: AuthedReq, res: Response) => {

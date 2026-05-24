@@ -71,4 +71,12 @@
   #root {
     min-height: 100vh;
   }
+
+  /* Emergency banner pulse — used by AlertBanner for critical alerts.
+     Subtle red ring expanding outward; an outright flash makes the page
+     unreadable for clinical staff who need to keep working. */
+  @keyframes banner-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgb(239 68 68 / 0.55); }
+    50%      { box-shadow: 0 0 0 10px rgb(239 68 68 / 0); }
+  }
 }

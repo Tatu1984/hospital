@@ -1,6 +1,7 @@
 import { Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { AlertProvider } from './contexts/AlertContext';
 import { ToastProvider } from './components/Toast';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import Login from './pages/Login';
@@ -313,7 +314,9 @@ function App() {
     <ErrorBoundary>
       <AuthProvider>
         <ToastProvider>
-          <AppRoutes />
+          <AlertProvider>
+            <AppRoutes />
+          </AlertProvider>
         </ToastProvider>
       </AuthProvider>
     </ErrorBoundary>

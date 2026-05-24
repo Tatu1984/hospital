@@ -3,6 +3,8 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../services/api';
 import { ErrorBoundary } from './ErrorBoundary';
+import AlertBanner from './AlertBanner';
+import RaiseAlarmButton from './RaiseAlarmButton';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -339,6 +341,7 @@ const MainLayout = () => {
             </div>
 
             <div className="flex items-center gap-2">
+              <RaiseAlarmButton />
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button className="flex items-center gap-2 h-9 px-2 rounded-lg hover:bg-slate-100 transition-colors">
@@ -371,6 +374,7 @@ const MainLayout = () => {
         </header>
 
         <main className="flex-1 overflow-y-auto bg-slate-50/60">
+          <AlertBanner />
           <ErrorBoundary key={location.pathname}>
             <Outlet />
           </ErrorBoundary>
