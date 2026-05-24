@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, TestTube, Barcode, CheckCircle, FileText } from 'lucide-react';
+import { Plus, TestTube, Barcode, CheckCircle, FileText, Clock, Activity } from 'lucide-react';
 import api from '../services/api';
 import { generateLabReportPDF } from '../utils/pdfGenerator';
 import PdfPreviewDialog, { type PdfDoc } from '../components/PdfPreviewDialog';
@@ -254,15 +254,20 @@ export default function Laboratory() {
   };
 
   return (
-    <div className="p-6 space-y-6 bg-white min-h-full">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-900">Laboratory Information System</h1>
-          <p className="text-slate-600">Manage lab tests, samples, and reports</p>
+    <div className="p-6 lg:p-8 space-y-6 min-h-full max-w-[1500px] mx-auto">
+      <div className="flex justify-between items-center flex-wrap gap-3">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-pink-50 ring-1 ring-pink-100 flex items-center justify-center">
+            <TestTube className="w-6 h-6 text-pink-600" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Laboratory Information System</h1>
+            <p className="text-sm text-slate-500 mt-0.5">Manage lab tests, samples, and reports</p>
+          </div>
         </div>
         <Dialog open={isOrderDialogOpen} onOpenChange={setIsOrderDialogOpen}>
           <DialogTrigger asChild>
-            <Button className="gap-2">
+            <Button className="gap-1.5 h-10 px-4 rounded-xl shadow-sm bg-slate-900 hover:bg-slate-800">
               <Plus className="w-4 h-4" />
               Order Lab Test
             </Button>
@@ -352,37 +357,49 @@ export default function Laboratory() {
         </Dialog>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">Total Tests</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.total}</div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Total Tests</div>
+              <div className="w-8 h-8 rounded-lg bg-pink-50 ring-1 ring-pink-100 flex items-center justify-center">
+                <TestTube className="w-4 h-4 text-pink-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-slate-900 mt-2 tracking-tight tabular-nums">{stats.total}</div>
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">Pending Collection</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-orange-600">{stats.pending}</div>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Pending Collection</div>
+              <div className="w-8 h-8 rounded-lg bg-orange-50 ring-1 ring-orange-100 flex items-center justify-center">
+                <Clock className="w-4 h-4 text-orange-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-orange-700 mt-2 tracking-tight tabular-nums">{stats.pending}</div>
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">In Process</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-blue-600">{stats.inProcess}</div>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">In Process</div>
+              <div className="w-8 h-8 rounded-lg bg-blue-50 ring-1 ring-blue-100 flex items-center justify-center">
+                <Activity className="w-4 h-4 text-blue-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-blue-700 mt-2 tracking-tight tabular-nums">{stats.inProcess}</div>
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">Completed</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-green-600">{stats.completed}</div>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Completed</div>
+              <div className="w-8 h-8 rounded-lg bg-emerald-50 ring-1 ring-emerald-100 flex items-center justify-center">
+                <CheckCircle className="w-4 h-4 text-emerald-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-emerald-700 mt-2 tracking-tight tabular-nums">{stats.completed}</div>
           </CardContent>
         </Card>
       </div>

@@ -154,25 +154,51 @@ export default function ResourceListPage<T extends Record<string, any>>(props: R
     }
   }
 
+  // Convert legacy iconTint (e.g. "bg-rose-500") to the new soft pastel
+  // pair (bg-rose-50 ring-rose-100 text-rose-600). Static map because
+  // Tailwind's JIT can't see dynamically-built class names.
+  const TINT_MAP: Record<string, { bg: string; ring: string; text: string }> = {
+    blue:    { bg: 'bg-blue-50',    ring: 'ring-blue-100',    text: 'text-blue-600' },
+    indigo:  { bg: 'bg-indigo-50',  ring: 'ring-indigo-100',  text: 'text-indigo-600' },
+    cyan:    { bg: 'bg-cyan-50',    ring: 'ring-cyan-100',    text: 'text-cyan-600' },
+    sky:     { bg: 'bg-sky-50',     ring: 'ring-sky-100',     text: 'text-sky-600' },
+    teal:    { bg: 'bg-teal-50',    ring: 'ring-teal-100',    text: 'text-teal-600' },
+    emerald: { bg: 'bg-emerald-50', ring: 'ring-emerald-100', text: 'text-emerald-600' },
+    green:   { bg: 'bg-green-50',   ring: 'ring-green-100',   text: 'text-green-700' },
+    lime:    { bg: 'bg-lime-50',    ring: 'ring-lime-100',    text: 'text-lime-700' },
+    yellow:  { bg: 'bg-yellow-50',  ring: 'ring-yellow-100',  text: 'text-yellow-700' },
+    amber:   { bg: 'bg-amber-50',   ring: 'ring-amber-100',   text: 'text-amber-700' },
+    orange:  { bg: 'bg-orange-50',  ring: 'ring-orange-100',  text: 'text-orange-600' },
+    red:     { bg: 'bg-red-50',     ring: 'ring-red-100',     text: 'text-red-600' },
+    rose:    { bg: 'bg-rose-50',    ring: 'ring-rose-100',    text: 'text-rose-600' },
+    pink:    { bg: 'bg-pink-50',    ring: 'ring-pink-100',    text: 'text-pink-600' },
+    fuchsia: { bg: 'bg-fuchsia-50', ring: 'ring-fuchsia-100', text: 'text-fuchsia-600' },
+    violet:  { bg: 'bg-violet-50',  ring: 'ring-violet-100',  text: 'text-violet-600' },
+    slate:   { bg: 'bg-slate-100',  ring: 'ring-slate-200',   text: 'text-slate-700' },
+  };
+  const tintKey = (iconTint.match(/bg-([a-z]+)-/) || [])[1] || 'slate';
+  const tint = TINT_MAP[tintKey] || TINT_MAP.slate;
+  const { bg: softBg, ring: softRing, text: softText } = tint;
+
   return (
-    <div className="p-6 space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+    <div className="p-6 lg:p-8 space-y-6 min-h-full max-w-[1500px] mx-auto">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-4">
           {Icon && (
-            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${iconTint}`}>
-              <Icon className="w-5 h-5 text-white" />
+            <div className={`w-12 h-12 rounded-2xl ${softBg} ring-1 ${softRing} flex items-center justify-center`}>
+              <Icon className={`w-6 h-6 ${softText}`} />
             </div>
           )}
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">{title}</h1>
-            {description && <p className="text-sm text-slate-500">{description}</p>}
+            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">{title}</h1>
+            {description && <p className="text-sm text-slate-500 mt-0.5">{description}</p>}
           </div>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={load} className="gap-1">
+          <Button variant="outline" onClick={load} className="gap-1.5 h-10 rounded-xl">
             <RefreshCw className="w-4 h-4" /> Refresh
           </Button>
-          <Button onClick={openNew} className="gap-1">
+          <Button onClick={openNew} className="gap-1.5 h-10 px-4 rounded-xl shadow-sm bg-slate-900 hover:bg-slate-800">
             <Plus className="w-4 h-4" /> New
           </Button>
         </div>
@@ -181,19 +207,19 @@ export default function ResourceListPage<T extends Record<string, any>>(props: R
       {stats && stats.length > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {stats.map((s, i) => (
-            <Card key={i}>
-              <CardContent className="p-3">
-                <div className="text-xs uppercase tracking-wide text-slate-500">{s.label}</div>
-                <div className="text-2xl font-bold text-slate-900 mt-1">{s.compute(rows)}</div>
+            <Card key={i} className="rounded-2xl">
+              <CardContent className="p-5">
+                <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">{s.label}</div>
+                <div className="text-3xl font-semibold text-slate-900 mt-2 tracking-tight tabular-nums">{s.compute(rows)}</div>
               </CardContent>
             </Card>
           ))}
         </div>
       )}
 
-      <Card>
+      <Card className="rounded-2xl">
         <CardHeader>
-          <CardTitle className="text-base">{title} ({rows.length})</CardTitle>
+          <CardTitle className="text-base text-slate-900">{title} <span className="text-slate-500 font-normal text-sm">({rows.length})</span></CardTitle>
         </CardHeader>
         <CardContent>
           {loading ? (

@@ -191,17 +191,22 @@ export default function Quality() {
   const criticalIncidents = incidents.filter(i => i.severity === 'CRITICAL' && i.status !== 'CLOSED').length;
 
   return (
-    <div className="p-6 space-y-6 bg-white min-h-full">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-900">Quality, Compliance & Feedback</h1>
-          <p className="text-slate-600">Incident reporting, patient feedback, and quality metrics</p>
+    <div className="p-6 lg:p-8 space-y-6 min-h-full max-w-[1500px] mx-auto">
+      <div className="flex justify-between items-center flex-wrap gap-3">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-emerald-50 ring-1 ring-emerald-100 flex items-center justify-center">
+            <Star className="w-6 h-6 text-emerald-600" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Quality, Compliance & Feedback</h1>
+            <p className="text-sm text-slate-500 mt-0.5">Incident reporting, patient feedback, and quality metrics</p>
+          </div>
         </div>
         <div className="flex gap-2">
           <PermissionGate permission="quality:manage">
             <Dialog open={showAddIncident} onOpenChange={setShowAddIncident}>
               <DialogTrigger asChild>
-                <Button className="gap-2">
+                <Button className="gap-2 h-10 rounded-xl bg-slate-900 hover:bg-slate-800">
                   <AlertTriangle className="w-4 h-4" />
                   Report Incident
                 </Button>
@@ -368,51 +373,51 @@ export default function Quality() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card className={criticalIncidents > 0 ? 'border-red-200 bg-red-50' : ''}>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <AlertTriangle className={`w-4 h-4 ${criticalIncidents > 0 ? 'text-red-600' : ''}`} />
-              Critical Incidents
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className={`text-2xl font-bold ${criticalIncidents > 0 ? 'text-red-600' : ''}`}>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Critical Incidents</div>
+              <div className="w-8 h-8 rounded-lg bg-red-50 ring-1 ring-red-100 flex items-center justify-center">
+                <AlertTriangle className="w-4 h-4 text-red-600" />
+              </div>
+            </div>
+            <div className={`text-3xl font-semibold mt-2 tracking-tight tabular-nums ${criticalIncidents > 0 ? 'text-red-600' : 'text-slate-900'}`}>
               {criticalIncidents}
             </div>
           </CardContent>
         </Card>
-        <Card className="border-orange-200 bg-orange-50">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-orange-700">
-              <AlertTriangle className="w-4 h-4" />
-              Pending Review
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-orange-600">{pendingIncidents.length}</div>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Pending Review</div>
+              <div className="w-8 h-8 rounded-lg bg-orange-50 ring-1 ring-orange-100 flex items-center justify-center">
+                <AlertTriangle className="w-4 h-4 text-orange-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-orange-600 mt-2 tracking-tight tabular-nums">{pendingIncidents.length}</div>
           </CardContent>
         </Card>
-        <Card className="border-green-200 bg-green-50">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-green-700">
-              <Star className="w-4 h-4" />
-              Avg Rating
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-green-600">{avgRating}/5</div>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Avg Rating</div>
+              <div className="w-8 h-8 rounded-lg bg-emerald-50 ring-1 ring-emerald-100 flex items-center justify-center">
+                <Star className="w-4 h-4 text-emerald-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-emerald-600 mt-2 tracking-tight tabular-nums">{avgRating}/5</div>
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <FileText className="w-4 h-4" />
-              Total Feedbacks
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{feedbacks.length}</div>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Total Feedbacks</div>
+              <div className="w-8 h-8 rounded-lg bg-blue-50 ring-1 ring-blue-100 flex items-center justify-center">
+                <FileText className="w-4 h-4 text-blue-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-slate-900 mt-2 tracking-tight tabular-nums">{feedbacks.length}</div>
           </CardContent>
         </Card>
       </div>

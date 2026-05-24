@@ -4,7 +4,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Plus, Fingerprint } from 'lucide-react';
+import { Plus, Fingerprint, UserPlus } from 'lucide-react';
 import api from '../services/api';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '../components/Toast';
@@ -310,15 +310,20 @@ export default function PatientRegistration() {
   };
 
   return (
-    <div className="p-6 space-y-6 bg-white min-h-full">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-900">Patient Registration</h1>
-          <p className="text-slate-600">Register a new patient. The full list lives at /app/patients.</p>
+    <div className="p-6 lg:p-8 space-y-6 min-h-full max-w-[1500px] mx-auto">
+      <div className="flex justify-between items-center flex-wrap gap-3">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-cyan-50 ring-1 ring-cyan-100 flex items-center justify-center">
+            <UserPlus className="w-6 h-6 text-cyan-600" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Patient Registration</h1>
+            <p className="text-sm text-slate-500 mt-0.5">Register a new patient. The full list lives at /app/patients.</p>
+          </div>
         </div>
         <Dialog open={isDialogOpen} onOpenChange={handleDialogChange}>
           <DialogTrigger asChild>
-            <Button className="gap-2">
+            <Button className="gap-1.5 h-10 px-4 rounded-xl shadow-sm bg-slate-900 hover:bg-slate-800">
               <Plus className="w-4 h-4" />
               Register New Patient
             </Button>

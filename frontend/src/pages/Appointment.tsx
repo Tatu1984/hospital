@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Calendar, Plus, Clock } from 'lucide-react';
+import { Calendar, Plus, Clock, CheckCircle, UserX } from 'lucide-react';
 import api from '../services/api';
 
 interface Appointment {
@@ -186,15 +186,20 @@ export default function Appointment() {
   }, [appointments]);
 
   return (
-    <div className="p-6 space-y-6 bg-white min-h-full">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-900">Appointment Management</h1>
-          <p className="text-slate-600">Schedule and manage patient appointments</p>
+    <div className="p-6 lg:p-8 space-y-6 min-h-full max-w-[1500px] mx-auto">
+      <div className="flex justify-between items-center flex-wrap gap-3">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-blue-50 ring-1 ring-blue-100 flex items-center justify-center">
+            <Calendar className="w-6 h-6 text-blue-600" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Appointment Management</h1>
+            <p className="text-sm text-slate-500 mt-0.5">Schedule and manage patient appointments</p>
+          </div>
         </div>
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
-            <Button className="gap-2">
+            <Button className="gap-1.5 h-10 px-4 rounded-xl shadow-sm bg-slate-900 hover:bg-slate-800">
               <Plus className="w-4 h-4" />
               Schedule Appointment
             </Button>
@@ -270,22 +275,50 @@ export default function Appointment() {
         </Dialog>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="pb-3"><CardTitle className="text-sm font-medium">Today's Appointments</CardTitle></CardHeader>
-          <CardContent><div className="text-2xl font-bold">{stats.today}</div></CardContent>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Today's Appointments</div>
+              <div className="w-8 h-8 rounded-lg bg-blue-50 ring-1 ring-blue-100 flex items-center justify-center">
+                <Calendar className="w-4 h-4 text-blue-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-slate-900 mt-2 tracking-tight tabular-nums">{stats.today}</div>
+          </CardContent>
         </Card>
-        <Card>
-          <CardHeader className="pb-3"><CardTitle className="text-sm font-medium">Confirmed</CardTitle></CardHeader>
-          <CardContent><div className="text-2xl font-bold text-green-600">{stats.confirmed}</div></CardContent>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Confirmed</div>
+              <div className="w-8 h-8 rounded-lg bg-emerald-50 ring-1 ring-emerald-100 flex items-center justify-center">
+                <CheckCircle className="w-4 h-4 text-emerald-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-emerald-700 mt-2 tracking-tight tabular-nums">{stats.confirmed}</div>
+          </CardContent>
         </Card>
-        <Card>
-          <CardHeader className="pb-3"><CardTitle className="text-sm font-medium">Pending</CardTitle></CardHeader>
-          <CardContent><div className="text-2xl font-bold text-yellow-600">{stats.pending}</div></CardContent>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Pending</div>
+              <div className="w-8 h-8 rounded-lg bg-amber-50 ring-1 ring-amber-100 flex items-center justify-center">
+                <Clock className="w-4 h-4 text-amber-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-amber-700 mt-2 tracking-tight tabular-nums">{stats.pending}</div>
+          </CardContent>
         </Card>
-        <Card>
-          <CardHeader className="pb-3"><CardTitle className="text-sm font-medium">No-Shows</CardTitle></CardHeader>
-          <CardContent><div className="text-2xl font-bold text-red-600">{stats.noShows}</div></CardContent>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">No-Shows</div>
+              <div className="w-8 h-8 rounded-lg bg-red-50 ring-1 ring-red-100 flex items-center justify-center">
+                <UserX className="w-4 h-4 text-red-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-red-700 mt-2 tracking-tight tabular-nums">{stats.noShows}</div>
+          </CardContent>
         </Card>
       </div>
 

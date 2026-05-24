@@ -10,7 +10,7 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-import { RefreshCw, Search, AlertCircle, Shield } from 'lucide-react';
+import { RefreshCw, Search, AlertCircle, ShieldCheck } from 'lucide-react';
 import api from '../services/api';
 
 interface AuditLogEntry {
@@ -99,17 +99,20 @@ export default function AuditLog() {
   }, [logs, search]);
 
   return (
-    <div className="p-6 space-y-6 bg-white min-h-full">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-            <Shield className="w-6 h-6 text-blue-600" /> Audit Log
-          </h1>
-          <p className="text-sm text-slate-500">
-            Append-only record of who did what, when. Tenant-scoped.
-          </p>
+    <div className="p-6 lg:p-8 space-y-6 min-h-full max-w-[1500px] mx-auto">
+      <div className="flex justify-between items-center flex-wrap gap-3">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-slate-100 ring-1 ring-slate-200 flex items-center justify-center">
+            <ShieldCheck className="w-6 h-6 text-slate-700" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Audit Log</h1>
+            <p className="text-sm text-slate-500 mt-0.5">
+              Append-only record of who did what, when. Tenant-scoped.
+            </p>
+          </div>
         </div>
-        <Button variant="outline" onClick={load} disabled={loading} className="gap-2">
+        <Button variant="outline" onClick={load} disabled={loading} className="gap-2 h-10 rounded-xl">
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           Refresh
         </Button>

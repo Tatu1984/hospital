@@ -183,19 +183,22 @@ export default function ActivityMonitor() {
   }
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-            <Network className="w-6 h-6" /> Activity Monitor
-          </h1>
-          <p className="text-sm text-slate-500">
-            Live view of who is signed in, from where, and what they're doing.
-            Auto-refreshes every {REFRESH_MS / 1000}s.
-            {data && ` Last update: ${new Date(data.summary.generatedAt).toLocaleTimeString()}`}
-          </p>
+    <div className="p-6 lg:p-8 space-y-6 min-h-full max-w-[1500px] mx-auto">
+      <div className="flex justify-between items-center flex-wrap gap-3">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-indigo-50 ring-1 ring-indigo-100 flex items-center justify-center">
+            <Network className="w-6 h-6 text-indigo-600" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Activity Monitor</h1>
+            <p className="text-sm text-slate-500 mt-0.5">
+              Live view of who is signed in, from where, and what they're doing.
+              Auto-refreshes every {REFRESH_MS / 1000}s.
+              {data && ` Last update: ${new Date(data.summary.generatedAt).toLocaleTimeString()}`}
+            </p>
+          </div>
         </div>
-        <Button variant="outline" onClick={load} disabled={refreshing} className="gap-2">
+        <Button variant="outline" onClick={load} disabled={refreshing} className="gap-1.5 h-10 px-4 rounded-xl">
           <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
         </Button>
       </div>
@@ -209,11 +212,11 @@ export default function ActivityMonitor() {
         </Card>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <SummaryTile label="Active Sessions" icon={ActivityIcon} value={data?.summary.activeSessions ?? 0} tone="bg-emerald-50 text-emerald-700" />
-        <SummaryTile label="Unique Users" icon={UsersIcon} value={data?.summary.uniqueUsers ?? 0} tone="bg-blue-50 text-blue-700" />
-        <SummaryTile label="Failed Logins (24h)" icon={AlertTriangle} value={data?.summary.failedLogins24h ?? 0} tone={(data?.summary.failedLogins24h ?? 0) > 0 ? 'bg-red-50 text-red-700' : 'bg-slate-50 text-slate-700'} />
-        <SummaryTile label="Attack Source IPs" icon={MapPin} value={data?.summary.failedSourceIps ?? 0} tone="bg-amber-50 text-amber-700" />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <SummaryTile label="Active Sessions" icon={ActivityIcon} value={data?.summary.activeSessions ?? 0} chip="bg-emerald-50 ring-emerald-100 text-emerald-600" accent="text-emerald-700" />
+        <SummaryTile label="Unique Users" icon={UsersIcon} value={data?.summary.uniqueUsers ?? 0} chip="bg-blue-50 ring-blue-100 text-blue-600" accent="text-blue-700" />
+        <SummaryTile label="Failed Logins (24h)" icon={AlertTriangle} value={data?.summary.failedLogins24h ?? 0} chip={(data?.summary.failedLogins24h ?? 0) > 0 ? 'bg-red-50 ring-red-100 text-red-600' : 'bg-slate-100 ring-slate-200 text-slate-600'} accent={(data?.summary.failedLogins24h ?? 0) > 0 ? 'text-red-700' : 'text-slate-900'} />
+        <SummaryTile label="Attack Source IPs" icon={MapPin} value={data?.summary.failedSourceIps ?? 0} chip="bg-amber-50 ring-amber-100 text-amber-600" accent="text-amber-700" />
       </div>
 
       <Tabs defaultValue="sessions" className="space-y-4">
@@ -360,19 +363,17 @@ export default function ActivityMonitor() {
   );
 }
 
-function SummaryTile({ label, icon: Icon, value, tone }: { label: string; icon: any; value: number; tone: string }) {
+function SummaryTile({ label, icon: Icon, value, chip, accent }: { label: string; icon: any; value: number; chip: string; accent: string }) {
   return (
-    <Card>
+    <Card className="rounded-2xl">
       <CardContent className="p-5">
         <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
-            <p className="text-2xl font-bold mt-1 text-slate-900">{value}</p>
-          </div>
-          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${tone}`}>
-            <Icon className="w-5 h-5" />
+          <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">{label}</div>
+          <div className={`w-8 h-8 rounded-lg ring-1 flex items-center justify-center ${chip}`}>
+            <Icon className="w-4 h-4" />
           </div>
         </div>
+        <div className={`text-3xl font-semibold mt-2 tracking-tight tabular-nums ${accent}`}>{value}</div>
       </CardContent>
     </Card>
   );

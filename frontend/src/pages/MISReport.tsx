@@ -212,25 +212,25 @@ export default function MISReport() {
   }
 
   return (
-    <div className="p-6 space-y-6 bg-white min-h-full">
+    <div className="p-6 lg:p-8 space-y-6 min-h-full max-w-[1500px] mx-auto">
       {/* Header */}
-      <div className="flex justify-between items-start">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 bg-violet-500 rounded-full flex items-center justify-center">
-            <BarChart3 className="w-6 h-6 text-white" />
+      <div className="flex justify-between items-center flex-wrap gap-3">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-blue-50 ring-1 ring-blue-100 flex items-center justify-center">
+            <BarChart3 className="w-6 h-6 text-blue-600" />
           </div>
           <div>
-            <h1 className="text-3xl font-bold">MIS Reports & Analytics</h1>
-            <p className="text-gray-600">Comprehensive analytics and business intelligence</p>
+            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">MIS Reports & Analytics</h1>
+            <p className="text-sm text-slate-500 mt-0.5">Comprehensive analytics and business intelligence</p>
           </div>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={fetchDashboardData}>
+          <Button variant="outline" onClick={fetchDashboardData} className="h-10 rounded-xl">
             <RefreshCw className="w-4 h-4 mr-2" />
             Refresh
           </Button>
           <PermissionGate permission="reports:export">
-            <Button onClick={() => handleExportReport('Dashboard Summary', 'pdf')}>
+            <Button onClick={() => handleExportReport('Dashboard Summary', 'pdf')} className="h-10 rounded-xl bg-slate-900 hover:bg-slate-800">
               <Download className="w-4 h-4 mr-2" />
               Export Dashboard
             </Button>
@@ -285,64 +285,64 @@ export default function MISReport() {
       </Card>
 
       {/* Key Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card className="border-l-4 border-l-green-500">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-gray-600">
-              <DollarSign className="w-4 h-4" />
-              Total Revenue
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-green-600">{formatCurrency(stats.totalRevenue)}</div>
-            <div className="text-sm text-gray-500 flex items-center gap-1 mt-1">
-              <TrendingUp className="w-3 h-3 text-green-500" />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Total Revenue</div>
+              <div className="w-8 h-8 rounded-lg bg-emerald-50 ring-1 ring-emerald-100 flex items-center justify-center">
+                <DollarSign className="w-4 h-4 text-emerald-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-emerald-600 mt-2 tracking-tight tabular-nums">{formatCurrency(stats.totalRevenue)}</div>
+            <div className="text-xs text-slate-500 flex items-center gap-1 mt-1">
+              <TrendingUp className="w-3 h-3 text-emerald-500" />
               +12.5% vs last month
             </div>
           </CardContent>
         </Card>
-        <Card className="border-l-4 border-l-blue-500">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-gray-600">
-              <Users className="w-4 h-4" />
-              Total Patients
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-blue-600">{formatNumber(stats.totalPatients)}</div>
-            <div className="text-sm text-gray-500 flex items-center gap-1 mt-1">
-              <TrendingUp className="w-3 h-3 text-green-500" />
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Total Patients</div>
+              <div className="w-8 h-8 rounded-lg bg-blue-50 ring-1 ring-blue-100 flex items-center justify-center">
+                <Users className="w-4 h-4 text-blue-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-blue-600 mt-2 tracking-tight tabular-nums">{formatNumber(stats.totalPatients)}</div>
+            <div className="text-xs text-slate-500 flex items-center gap-1 mt-1">
+              <TrendingUp className="w-3 h-3 text-emerald-500" />
               +8.3% vs last month
             </div>
           </CardContent>
         </Card>
-        <Card className="border-l-4 border-l-purple-500">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-gray-600">
-              <Activity className="w-4 h-4" />
-              Avg Length of Stay
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-purple-600">{stats.avgLengthOfStay} days</div>
-            <div className="text-sm text-gray-500 flex items-center gap-1 mt-1">
-              <TrendingDown className="w-3 h-3 text-green-500" />
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Avg Length of Stay</div>
+              <div className="w-8 h-8 rounded-lg bg-violet-50 ring-1 ring-violet-100 flex items-center justify-center">
+                <Activity className="w-4 h-4 text-violet-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-violet-600 mt-2 tracking-tight tabular-nums">{stats.avgLengthOfStay} days</div>
+            <div className="text-xs text-slate-500 flex items-center gap-1 mt-1">
+              <TrendingDown className="w-3 h-3 text-emerald-500" />
               -0.3 days vs last month
             </div>
           </CardContent>
         </Card>
-        <Card className="border-l-4 border-l-orange-500">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-gray-600">
-              <Bed className="w-4 h-4" />
-              Bed Occupancy
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-orange-600">{stats.bedOccupancy}%</div>
-            <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Bed Occupancy</div>
+              <div className="w-8 h-8 rounded-lg bg-orange-50 ring-1 ring-orange-100 flex items-center justify-center">
+                <Bed className="w-4 h-4 text-orange-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-orange-600 mt-2 tracking-tight tabular-nums">{stats.bedOccupancy}%</div>
+            <div className="w-full bg-slate-100 rounded-full h-1.5 mt-2">
               <div
-                className="bg-orange-500 h-2 rounded-full"
+                className="bg-orange-500 h-1.5 rounded-full"
                 style={{ width: `${stats.bedOccupancy}%` }}
               ></div>
             </div>

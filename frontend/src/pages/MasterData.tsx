@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Edit, Trash2, Barcode, Wifi } from 'lucide-react';
+import { Plus, Edit, Trash2, Barcode, Wifi, Settings } from 'lucide-react';
 import api from '../services/api';
 import { useScanner } from '../hooks/useScanner';
 import { WARD_CATEGORIES, labelFor } from '../lib/wardCategories';
@@ -494,11 +494,16 @@ export default function MasterData() {
   };
 
   return (
-    <div className="p-6 space-y-6 bg-white min-h-full">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-900">Master Data Management</h1>
-          <p className="text-slate-600">Configure hospital master data and tariffs</p>
+    <div className="p-6 lg:p-8 space-y-6 min-h-full max-w-[1500px] mx-auto">
+      <div className="flex justify-between items-center flex-wrap gap-3">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-slate-100 ring-1 ring-slate-200 flex items-center justify-center">
+            <Settings className="w-6 h-6 text-slate-700" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Master Data Management</h1>
+            <p className="text-sm text-slate-500 mt-0.5">Configure hospital master data and tariffs</p>
+          </div>
         </div>
       </div>
 

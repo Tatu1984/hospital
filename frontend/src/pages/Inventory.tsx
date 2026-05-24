@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Package, Plus, AlertTriangle, TrendingDown, FileText } from 'lucide-react';
+import { Package, Plus, AlertTriangle, TrendingDown, FileText, Wallet } from 'lucide-react';
 import api from '../services/api';
 import { useToast } from '../components/Toast';
 import { toArray } from '../utils/list';
@@ -135,72 +135,78 @@ export default function Inventory() {
   };
 
   return (
-    <div className="p-6 space-y-6 bg-white min-h-full">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-900">Inventory & Procurement</h1>
-          <p className="text-slate-600">Stock management, purchase orders, and supplier tracking</p>
+    <div className="p-6 lg:p-8 space-y-6 min-h-full max-w-[1500px] mx-auto">
+      <div className="flex justify-between items-center flex-wrap gap-3">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-amber-50 ring-1 ring-amber-100 flex items-center justify-center">
+            <Package className="w-6 h-6 text-amber-600" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Inventory & Procurement</h1>
+            <p className="text-sm text-slate-500 mt-0.5">Stock management, purchase orders, and supplier tracking</p>
+          </div>
         </div>
-        <Button onClick={() => setIsItemDialogOpen(true)}>
+        <Button onClick={() => setIsItemDialogOpen(true)} className="bg-slate-900 hover:bg-slate-800 rounded-xl h-10">
           <Plus className="w-5 h-5 mr-2" />
           Add Item
         </Button>
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <Package className="w-4 h-4" />
-              Total Items
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.totalItems}</div>
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Total Items</div>
+              <div className="w-8 h-8 rounded-lg bg-amber-50 ring-1 ring-amber-100 flex items-center justify-center">
+                <Package className="w-4 h-4 text-amber-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-slate-900 mt-2 tracking-tight tabular-nums">{stats.totalItems}</div>
           </CardContent>
         </Card>
-        <Card className="border-orange-200 bg-orange-50">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-orange-700">
-              <TrendingDown className="w-4 h-4" />
-              Low Stock
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-orange-600">{stats.lowStock}</div>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Low Stock</div>
+              <div className="w-8 h-8 rounded-lg bg-orange-50 ring-1 ring-orange-100 flex items-center justify-center">
+                <TrendingDown className="w-4 h-4 text-orange-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-orange-700 mt-2 tracking-tight tabular-nums">{stats.lowStock}</div>
           </CardContent>
         </Card>
-        <Card className="border-red-200 bg-red-50">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-red-700">
-              <AlertTriangle className="w-4 h-4" />
-              Out of Stock
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-red-600">{stats.outOfStock}</div>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Out of Stock</div>
+              <div className="w-8 h-8 rounded-lg bg-red-50 ring-1 ring-red-100 flex items-center justify-center">
+                <AlertTriangle className="w-4 h-4 text-red-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-red-700 mt-2 tracking-tight tabular-nums">{stats.outOfStock}</div>
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <FileText className="w-4 h-4" />
-              Pending POs
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-blue-600">{stats.pendingPOs}</div>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Pending POs</div>
+              <div className="w-8 h-8 rounded-lg bg-blue-50 ring-1 ring-blue-100 flex items-center justify-center">
+                <FileText className="w-4 h-4 text-blue-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-blue-700 mt-2 tracking-tight tabular-nums">{stats.pendingPOs}</div>
           </CardContent>
         </Card>
-        <Card className="border-green-200 bg-green-50">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium text-green-700">
-              Total Value
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-green-600">Rs. {stats.totalValue.toFixed(2)}</div>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Total Value</div>
+              <div className="w-8 h-8 rounded-lg bg-green-50 ring-1 ring-green-100 flex items-center justify-center">
+                <Wallet className="w-4 h-4 text-green-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-green-700 mt-2 tracking-tight tabular-nums">Rs. {stats.totalValue.toFixed(2)}</div>
           </CardContent>
         </Card>
       </div>

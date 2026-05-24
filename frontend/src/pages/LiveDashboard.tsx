@@ -83,18 +83,23 @@ export default function LiveDashboard() {
   ];
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Live Dashboard</h1>
-          <p className="text-sm text-slate-500">
-            Auto-refreshes every {REFRESH_MS / 1000}s
-            {updatedAt ? ` · last updated ${updatedAt.toLocaleTimeString()}` : ''}
-          </p>
+    <div className="p-6 lg:p-8 space-y-6 min-h-full max-w-[1500px] mx-auto">
+      <div className="flex justify-between items-center flex-wrap gap-3">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-blue-50 ring-1 ring-blue-100 flex items-center justify-center">
+            <Activity className="w-6 h-6 text-blue-600" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Live Dashboard</h1>
+            <p className="text-sm text-slate-500 mt-0.5">
+              Auto-refreshes every {REFRESH_MS / 1000}s
+              {updatedAt ? ` · last updated ${updatedAt.toLocaleTimeString()}` : ''}
+            </p>
+          </div>
         </div>
         <button
           onClick={load}
-          className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 h-10 text-sm font-medium text-slate-700 hover:bg-slate-50"
         >
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           Refresh

@@ -316,19 +316,24 @@ export default function Diet() {
   }
 
   return (
-    <div className="p-6 space-y-6 bg-white min-h-full">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-900">Diet & Kitchen Management</h1>
-          <p className="text-slate-600">Meal planning, diet orders, and kitchen operations</p>
+    <div className="p-6 lg:p-8 space-y-6 min-h-full max-w-[1500px] mx-auto">
+      <div className="flex justify-between items-center flex-wrap gap-3">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-lime-50 ring-1 ring-lime-100 flex items-center justify-center">
+            <Utensils className="w-6 h-6 text-lime-600" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Diet & Kitchen Management</h1>
+            <p className="text-sm text-slate-500 mt-0.5">Meal planning, diet orders, and kitchen operations</p>
+          </div>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={fetchAll}>
+          <Button variant="outline" onClick={fetchAll} className="rounded-xl h-10">
             <RefreshCw className="w-4 h-4 mr-2" />
             Refresh
           </Button>
           <PermissionGate permission="diet:create">
-            <Button onClick={() => setShowAddOrder(true)}>
+            <Button onClick={() => setShowAddOrder(true)} className="bg-slate-900 hover:bg-slate-800 rounded-xl h-10">
               <Plus className="w-4 h-4 mr-2" />
               New Order
             </Button>
@@ -337,49 +342,49 @@ export default function Diet() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <Calendar className="w-4 h-4" />
-              Today's Orders
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{orders.length}</div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Today's Orders</div>
+              <div className="w-8 h-8 rounded-lg bg-lime-50 ring-1 ring-lime-100 flex items-center justify-center">
+                <Calendar className="w-4 h-4 text-lime-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-slate-900 mt-2 tracking-tight tabular-nums">{orders.length}</div>
           </CardContent>
         </Card>
-        <Card className="border-orange-200 bg-orange-50">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-orange-700">
-              <Clock className="w-4 h-4" />
-              Pending
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-orange-600">{pendingOrders}</div>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Pending</div>
+              <div className="w-8 h-8 rounded-lg bg-orange-50 ring-1 ring-orange-100 flex items-center justify-center">
+                <Clock className="w-4 h-4 text-orange-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-orange-700 mt-2 tracking-tight tabular-nums">{pendingOrders}</div>
           </CardContent>
         </Card>
-        <Card className="border-blue-200 bg-blue-50">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-blue-700">
-              <Utensils className="w-4 h-4" />
-              Preparing / Ready
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-blue-600">{preparingOrders + readyOrders}</div>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Preparing / Ready</div>
+              <div className="w-8 h-8 rounded-lg bg-blue-50 ring-1 ring-blue-100 flex items-center justify-center">
+                <Utensils className="w-4 h-4 text-blue-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-blue-700 mt-2 tracking-tight tabular-nums">{preparingOrders + readyOrders}</div>
           </CardContent>
         </Card>
-        <Card className="border-green-200 bg-green-50">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-green-700">
-              <CheckCircle className="w-4 h-4" />
-              Delivered Today
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-green-600">{deliveredToday}</div>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Delivered Today</div>
+              <div className="w-8 h-8 rounded-lg bg-green-50 ring-1 ring-green-100 flex items-center justify-center">
+                <CheckCircle className="w-4 h-4 text-green-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-green-700 mt-2 tracking-tight tabular-nums">{deliveredToday}</div>
           </CardContent>
         </Card>
       </div>

@@ -143,59 +143,57 @@ export default function DoctorDashboard() {
   const goChart = (patientId: string) => navigate(`/app/chart/${patientId}`);
 
   return (
-    <div className="p-6 space-y-6">
-      {/* Identity card */}
-      <Card>
-        <CardContent className="p-6">
-          <div className="flex items-center gap-4">
-            <div className="w-16 h-16 rounded-2xl bg-blue-50 flex items-center justify-center">
-              <Stethoscope className="w-7 h-7 text-blue-600" />
-            </div>
-            <div className="flex-1">
-              <h1 className="text-2xl font-bold text-slate-900">{data.doctor.displayName}</h1>
-              {data.doctor.displaySubtitle && (
-                <p className="text-sm text-slate-500 mt-0.5">{data.doctor.displaySubtitle}</p>
-              )}
-            </div>
-            <Button
-              variant="outline"
-              onClick={() => { setRefreshing(true); void load(); }}
-              disabled={refreshing}
-            >
-              <RefreshCw className={`w-4 h-4 mr-1 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
-            </Button>
+    <div className="p-6 lg:p-8 space-y-6 min-h-full max-w-[1500px] mx-auto">
+      {/* Page header */}
+      <div className="flex justify-between items-center flex-wrap gap-3">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-blue-50 ring-1 ring-blue-100 flex items-center justify-center">
+            <Stethoscope className="w-6 h-6 text-blue-600" />
           </div>
-        </CardContent>
-      </Card>
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">{data.doctor.displayName}</h1>
+            <p className="text-sm text-slate-500 mt-0.5">
+              {data.doctor.displaySubtitle || 'Doctor dashboard'}
+            </p>
+          </div>
+        </div>
+        <Button
+          onClick={() => { setRefreshing(true); void load(); }}
+          disabled={refreshing}
+          className="gap-1.5 h-10 px-4 rounded-xl shadow-sm bg-slate-900 hover:bg-slate-800"
+        >
+          <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
+        </Button>
+      </div>
 
       {/* Stat strip — clickable, drives the section below */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <StatCard
-          icon={CalendarDays} tint="bg-blue-500"
+          icon={CalendarDays} tint="blue"
           label="OPD today" value={data.opd.todayCount}
           sub={data.opd.nextUpAt ? `Next at ${data.opd.nextUpAt}` : 'No more today'}
           active={active === 'opd'} onClick={() => setActive('opd')}
         />
         <StatCard
-          icon={BedDouble} tint="bg-emerald-500"
+          icon={BedDouble} tint="emerald"
           label="IPD under care" value={data.ipd.totalActive}
           sub={`${data.ipd.byWard.length} ward${data.ipd.byWard.length === 1 ? '' : 's'}`}
           active={active === 'ipd'} onClick={() => setActive('ipd')}
         />
         <StatCard
-          icon={Activity} tint="bg-orange-500"
+          icon={Activity} tint="orange"
           label="OT today" value={data.ot.todayCount}
           sub="Scheduled / in progress"
           active={active === 'ot'} onClick={() => setActive('ot')}
         />
         <StatCard
-          icon={FlaskConical} tint="bg-cyan-500"
+          icon={FlaskConical} tint="cyan"
           label="Pending labs" value={data.pendingLabs.count}
           sub="Awaiting results"
           active={active === 'lab'} onClick={() => setActive('lab')}
         />
         <StatCard
-          icon={Scan} tint="bg-purple-500"
+          icon={Scan} tint="purple"
           label="Pending imaging" value={data.pendingImaging.count}
           sub="Awaiting reports"
           active={active === 'imaging'} onClick={() => setActive('imaging')}
@@ -215,21 +213,30 @@ export default function DoctorDashboard() {
 function StatCard({ icon: Icon, tint, label, value, sub, active, onClick }: {
   icon: any; tint: string; label: string; value: number; sub?: string; active?: boolean; onClick?: () => void;
 }) {
+  // tint is a Tailwind color stem (blue / emerald / orange / cyan / purple)
+  const tintClasses: Record<string, { bg: string; ring: string; text: string }> = {
+    blue:    { bg: 'bg-blue-50',    ring: 'ring-blue-100',    text: 'text-blue-600'    },
+    emerald: { bg: 'bg-emerald-50', ring: 'ring-emerald-100', text: 'text-emerald-600' },
+    orange:  { bg: 'bg-orange-50',  ring: 'ring-orange-100',  text: 'text-orange-600'  },
+    cyan:    { bg: 'bg-cyan-50',    ring: 'ring-cyan-100',    text: 'text-cyan-600'    },
+    purple:  { bg: 'bg-purple-50',  ring: 'ring-purple-100',  text: 'text-purple-600'  },
+  };
+  const t = tintClasses[tint] || tintClasses.blue;
   return (
     <button
       onClick={onClick}
-      className={`text-left transition-all ${active ? 'ring-2 ring-blue-500' : 'hover:shadow-md'}`}
+      className={`text-left transition-all rounded-2xl ${active ? 'ring-2 ring-slate-900' : 'hover:shadow-md'}`}
     >
-      <Card className={active ? 'border-blue-500' : ''}>
-        <CardContent className="p-4 flex items-center gap-3">
-          <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${tint}`}>
-            <Icon className="w-5 h-5 text-white" />
+      <Card className={`rounded-2xl ${active ? 'border-slate-900' : ''}`}>
+        <CardContent className="p-5">
+          <div className="flex items-center justify-between">
+            <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">{label}</div>
+            <div className={`w-8 h-8 rounded-lg ${t.bg} ring-1 ${t.ring} flex items-center justify-center`}>
+              <Icon className={`w-4 h-4 ${t.text}`} />
+            </div>
           </div>
-          <div className="flex-1 min-w-0">
-            <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
-            <div className="text-2xl font-bold text-slate-900 leading-tight">{value}</div>
-            {sub && <div className="text-[11px] text-slate-400 truncate">{sub}</div>}
-          </div>
+          <div className="text-3xl font-semibold text-slate-900 mt-2 tracking-tight tabular-nums">{value}</div>
+          {sub && <div className="text-[11px] text-slate-400 truncate mt-1">{sub}</div>}
         </CardContent>
       </Card>
     </button>

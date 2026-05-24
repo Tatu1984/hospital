@@ -434,10 +434,17 @@ const SystemControl: React.FC = () => {
   };
 
   return (
-    <div className="p-6 space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">System Control</h1>
-        <p className="text-muted-foreground">Manage users, settings, audit logs, and reports</p>
+    <div className="p-6 lg:p-8 space-y-6 min-h-full max-w-[1500px] mx-auto">
+      <div className="flex justify-between items-center flex-wrap gap-3">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-slate-100 ring-1 ring-slate-200 flex items-center justify-center">
+            <ShieldCheck className="w-6 h-6 text-slate-700" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">System Control</h1>
+            <p className="text-sm text-slate-500 mt-0.5">Manage users, settings, audit logs, and reports</p>
+          </div>
+        </div>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>

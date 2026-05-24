@@ -6,7 +6,6 @@ import {
   Button,
   Input,
   Space,
-  Typography,
   Modal,
   Form,
   DatePicker,
@@ -15,10 +14,10 @@ import {
   Tag,
 } from 'antd';
 import { PlusOutlined, SearchOutlined, UserOutlined } from '@ant-design/icons';
+import { Users } from 'lucide-react';
 import { patientAPI } from '../services/api';
 import dayjs from 'dayjs';
 
-const { Title } = Typography;
 const { Option } = Select;
 
 const Patients = () => {
@@ -121,26 +120,26 @@ const Patients = () => {
   ];
 
   return (
-    <div>
-      <Card>
-        <Space
-          style={{
-            width: '100%',
-            justifyContent: 'space-between',
-            marginBottom: 16,
-          }}
+    <div className="p-6 lg:p-8 space-y-6 min-h-full max-w-[1500px] mx-auto">
+      <div className="flex justify-between items-center flex-wrap gap-3">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-blue-50 ring-1 ring-blue-100 flex items-center justify-center">
+            <Users className="w-6 h-6 text-blue-600" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Patients</h1>
+            <p className="text-sm text-slate-500 mt-0.5">Patient directory and registration</p>
+          </div>
+        </div>
+        <Button
+          type="primary"
+          icon={<PlusOutlined />}
+          onClick={() => setIsModalVisible(true)}
         >
-          <Title level={2} style={{ margin: 0 }}>
-            Patients
-          </Title>
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => setIsModalVisible(true)}
-          >
-            Register New Patient
-          </Button>
-        </Space>
+          Register New Patient
+        </Button>
+      </div>
+      <Card>
 
         <Space style={{ marginBottom: 16 }}>
           <Input

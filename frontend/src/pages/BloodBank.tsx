@@ -377,94 +377,99 @@ export default function BloodBank() {
   };
 
   return (
-    <div className="p-6 space-y-6 bg-white min-h-full">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-900">Blood Bank Management</h1>
-          <p className="text-slate-600">Donor management, inventory tracking, and blood request processing</p>
+    <div className="p-6 lg:p-8 space-y-6 min-h-full max-w-[1500px] mx-auto">
+      <div className="flex justify-between items-center flex-wrap gap-3">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-red-50 ring-1 ring-red-100 flex items-center justify-center">
+            <Droplet className="w-6 h-6 text-red-600" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Blood Bank Management</h1>
+            <p className="text-sm text-slate-500 mt-0.5">Donor management, inventory tracking, and blood request processing</p>
+          </div>
         </div>
-        <div className="flex gap-2">
-          <Button onClick={() => setIsDonorDialogOpen(true)} variant="outline">
-            <UserPlus className="w-5 h-5 mr-2" />
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={() => setIsDonorDialogOpen(true)} variant="outline" className="gap-1.5 h-10 rounded-xl">
+            <UserPlus className="w-4 h-4" />
             Register Donor
           </Button>
-          <Button onClick={() => setIsUnitDialogOpen(true)} variant="outline">
-            <Plus className="w-5 h-5 mr-2" />
+          <Button onClick={() => setIsUnitDialogOpen(true)} variant="outline" className="gap-1.5 h-10 rounded-xl">
+            <Plus className="w-4 h-4" />
             Add Unit
           </Button>
-          <Button onClick={() => setIsRequestDialogOpen(true)}>
-            <Package className="w-5 h-5 mr-2" />
+          <Button onClick={() => setIsRequestDialogOpen(true)} className="gap-1.5 h-10 px-4 rounded-xl shadow-sm bg-slate-900 hover:bg-slate-800">
+            <Package className="w-4 h-4" />
             New Request
           </Button>
         </div>
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <Droplet className="w-4 h-4" />
-              Total Units
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.totalUnits}</div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Total Units</div>
+              <div className="w-8 h-8 rounded-lg bg-red-50 ring-1 ring-red-100 flex items-center justify-center">
+                <Droplet className="w-4 h-4 text-red-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-slate-900 mt-2 tracking-tight tabular-nums">{stats.totalUnits}</div>
           </CardContent>
         </Card>
-        <Card className="border-red-200 bg-red-50">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-red-700">
-              <AlertTriangle className="w-4 h-4" />
-              Critical Stock
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-red-600">{stats.criticalStock}</div>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Critical Stock</div>
+              <div className="w-8 h-8 rounded-lg bg-red-50 ring-1 ring-red-100 flex items-center justify-center">
+                <AlertTriangle className="w-4 h-4 text-red-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-red-700 mt-2 tracking-tight tabular-nums">{stats.criticalStock}</div>
           </CardContent>
         </Card>
-        <Card className="border-orange-200 bg-orange-50">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-orange-700">
-              <AlertTriangle className="w-4 h-4" />
-              Low Stock
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-orange-600">{stats.lowStock}</div>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Low Stock</div>
+              <div className="w-8 h-8 rounded-lg bg-orange-50 ring-1 ring-orange-100 flex items-center justify-center">
+                <AlertTriangle className="w-4 h-4 text-orange-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-orange-700 mt-2 tracking-tight tabular-nums">{stats.lowStock}</div>
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <Clock className="w-4 h-4" />
-              Pending
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-blue-600">{stats.pendingRequests}</div>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Pending</div>
+              <div className="w-8 h-8 rounded-lg bg-blue-50 ring-1 ring-blue-100 flex items-center justify-center">
+                <Clock className="w-4 h-4 text-blue-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-blue-700 mt-2 tracking-tight tabular-nums">{stats.pendingRequests}</div>
           </CardContent>
         </Card>
-        <Card className="border-red-200 bg-red-50">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-red-700">
-              <AlertTriangle className="w-4 h-4" />
-              Emergency
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-red-600">{stats.emergencyRequests}</div>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Emergency</div>
+              <div className="w-8 h-8 rounded-lg bg-red-50 ring-1 ring-red-100 flex items-center justify-center">
+                <AlertTriangle className="w-4 h-4 text-red-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-red-700 mt-2 tracking-tight tabular-nums">{stats.emergencyRequests}</div>
           </CardContent>
         </Card>
-        <Card className="border-green-200 bg-green-50">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-green-700">
-              <Users className="w-4 h-4" />
-              Active Donors
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-green-600">{stats.activeDonors}</div>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Active Donors</div>
+              <div className="w-8 h-8 rounded-lg bg-emerald-50 ring-1 ring-emerald-100 flex items-center justify-center">
+                <Users className="w-4 h-4 text-emerald-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-emerald-700 mt-2 tracking-tight tabular-nums">{stats.activeDonors}</div>
           </CardContent>
         </Card>
       </div>

@@ -302,14 +302,25 @@ export default function PatientProfile() {
   const p = data.patient;
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <Button variant="ghost" onClick={() => navigate(-1)} className="gap-2">
-          <ArrowLeft className="w-4 h-4" /> Back
-        </Button>
-        <Button variant="outline" onClick={load} disabled={refreshing} className="gap-2">
-          <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
-        </Button>
+    <div className="p-6 lg:p-8 space-y-6 min-h-full max-w-[1500px] mx-auto">
+      <div className="flex justify-between items-center flex-wrap gap-3">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-blue-50 ring-1 ring-blue-100 flex items-center justify-center">
+            <User className="w-6 h-6 text-blue-600" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Patient Profile</h1>
+            <p className="text-sm text-slate-500 mt-0.5">Demographics, history, and clinical record</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" onClick={() => navigate(-1)} className="gap-2">
+            <ArrowLeft className="w-4 h-4" /> Back
+          </Button>
+          <Button onClick={load} disabled={refreshing} className="gap-1.5 h-10 px-4 rounded-xl shadow-sm bg-slate-900 hover:bg-slate-800">
+            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
+          </Button>
+        </div>
       </div>
 
       {/* Demographics hero */}
@@ -371,14 +382,14 @@ export default function PatientProfile() {
       </Card>
 
       {/* Quick counts */}
-      <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
-        <CountCard icon={CalendarDays} tint="bg-blue-500" label="Visits" value={data.encounters.length} />
-        <CountCard icon={BedDouble} tint="bg-emerald-500" label="Admissions" value={data.admissions.length} />
-        <CountCard icon={Droplet} tint="bg-purple-500" label="Dialysis" value={data.dialysisSessions.length} />
-        <CountCard icon={FlaskConical} tint="bg-cyan-500" label="Lab orders" value={labOrders.length} />
-        <CountCard icon={Scan} tint="bg-fuchsia-500" label="Radiology" value={radOrders.length} />
-        <CountCard icon={Pill} tint="bg-pink-500" label="Rx" value={data.prescriptions.length} />
-        <CountCard icon={Activity} tint="bg-orange-500" label="Surgeries" value={data.surgeries.length} />
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+        <CountCard icon={CalendarDays} tint="blue" label="Visits" value={data.encounters.length} />
+        <CountCard icon={BedDouble} tint="emerald" label="Admissions" value={data.admissions.length} />
+        <CountCard icon={Droplet} tint="purple" label="Dialysis" value={data.dialysisSessions.length} />
+        <CountCard icon={FlaskConical} tint="cyan" label="Lab orders" value={labOrders.length} />
+        <CountCard icon={Scan} tint="fuchsia" label="Radiology" value={radOrders.length} />
+        <CountCard icon={Pill} tint="pink" label="Rx" value={data.prescriptions.length} />
+        <CountCard icon={Activity} tint="orange" label="Surgeries" value={data.surgeries.length} />
       </div>
 
       <Tabs defaultValue="overview" className="space-y-4">
@@ -421,16 +432,27 @@ function totalIpdNotes(admissions: Admission[]): number {
 }
 
 function CountCard({ icon: Icon, tint, label, value }: { icon: any; tint: string; label: string; value: number }) {
+  // tint is a Tailwind color stem (blue / emerald / purple / cyan / fuchsia / pink / orange)
+  const tintClasses: Record<string, { bg: string; ring: string; text: string }> = {
+    blue:    { bg: 'bg-blue-50',    ring: 'ring-blue-100',    text: 'text-blue-600'    },
+    emerald: { bg: 'bg-emerald-50', ring: 'ring-emerald-100', text: 'text-emerald-600' },
+    purple:  { bg: 'bg-purple-50',  ring: 'ring-purple-100',  text: 'text-purple-600'  },
+    cyan:    { bg: 'bg-cyan-50',    ring: 'ring-cyan-100',    text: 'text-cyan-600'    },
+    fuchsia: { bg: 'bg-fuchsia-50', ring: 'ring-fuchsia-100', text: 'text-fuchsia-600' },
+    pink:    { bg: 'bg-pink-50',    ring: 'ring-pink-100',    text: 'text-pink-600'    },
+    orange:  { bg: 'bg-orange-50',  ring: 'ring-orange-100',  text: 'text-orange-600'  },
+  };
+  const t = tintClasses[tint] || tintClasses.blue;
   return (
-    <Card>
-      <CardContent className="p-3 flex items-center gap-2">
-        <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${tint}`}>
-          <Icon className="w-4 h-4 text-white" />
+    <Card className="rounded-2xl">
+      <CardContent className="p-5">
+        <div className="flex items-center justify-between">
+          <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">{label}</div>
+          <div className={`w-8 h-8 rounded-lg ${t.bg} ring-1 ${t.ring} flex items-center justify-center`}>
+            <Icon className={`w-4 h-4 ${t.text}`} />
+          </div>
         </div>
-        <div>
-          <div className="text-[11px] uppercase tracking-wide text-slate-500">{label}</div>
-          <div className="text-xl font-bold text-slate-900 leading-tight">{value}</div>
-        </div>
+        <div className="text-3xl font-semibold text-slate-900 mt-2 tracking-tight tabular-nums">{value}</div>
       </CardContent>
     </Card>
   );

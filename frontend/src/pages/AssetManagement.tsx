@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import {
   Plus, Search, MoreVertical, Eye, Edit, Trash2, Wrench, Power, RotateCcw, AlertCircle, Wrench as WrenchIcon,
+  Boxes, CheckCircle, Archive,
 } from 'lucide-react';
 import api from '../services/api';
 import { useToast } from '../components/Toast';
@@ -304,34 +305,67 @@ export default function AssetManagement() {
   };
 
   return (
-    <div className="p-6 space-y-6 bg-white min-h-full">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Asset Management</h1>
-          <p className="text-sm text-slate-500">Hospital equipment and asset registry</p>
+    <div className="p-6 lg:p-8 space-y-6 min-h-full max-w-[1500px] mx-auto">
+      <div className="flex justify-between items-center flex-wrap gap-3">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-orange-50 ring-1 ring-orange-100 flex items-center justify-center">
+            <Wrench className="w-6 h-6 text-orange-600" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Asset Management</h1>
+            <p className="text-sm text-slate-500 mt-0.5">Hospital equipment and asset registry</p>
+          </div>
         </div>
-        <Button onClick={openCreate} className="gap-2">
+        <Button onClick={openCreate} className="gap-1.5 h-10 px-4 rounded-xl shadow-sm bg-slate-900 hover:bg-slate-800">
           <Plus className="w-4 h-4" /> Add Asset
         </Button>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card><CardContent className="p-5">
-          <p className="text-xs uppercase tracking-wide text-slate-500">Total</p>
-          <p className="text-2xl font-bold mt-1">{stats.total}</p>
-        </CardContent></Card>
-        <Card><CardContent className="p-5">
-          <p className="text-xs uppercase tracking-wide text-emerald-600">Active</p>
-          <p className="text-2xl font-bold mt-1">{stats.active}</p>
-        </CardContent></Card>
-        <Card><CardContent className="p-5">
-          <p className="text-xs uppercase tracking-wide text-amber-600">Under Maintenance</p>
-          <p className="text-2xl font-bold mt-1">{stats.maint}</p>
-        </CardContent></Card>
-        <Card><CardContent className="p-5">
-          <p className="text-xs uppercase tracking-wide text-slate-500">Retired</p>
-          <p className="text-2xl font-bold mt-1">{stats.retired}</p>
-        </CardContent></Card>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Total</div>
+              <div className="w-8 h-8 rounded-lg bg-orange-50 ring-1 ring-orange-100 flex items-center justify-center">
+                <Boxes className="w-4 h-4 text-orange-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-slate-900 mt-2 tracking-tight tabular-nums">{stats.total}</div>
+          </CardContent>
+        </Card>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Active</div>
+              <div className="w-8 h-8 rounded-lg bg-emerald-50 ring-1 ring-emerald-100 flex items-center justify-center">
+                <CheckCircle className="w-4 h-4 text-emerald-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-emerald-700 mt-2 tracking-tight tabular-nums">{stats.active}</div>
+          </CardContent>
+        </Card>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Under Maintenance</div>
+              <div className="w-8 h-8 rounded-lg bg-amber-50 ring-1 ring-amber-100 flex items-center justify-center">
+                <WrenchIcon className="w-4 h-4 text-amber-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-amber-700 mt-2 tracking-tight tabular-nums">{stats.maint}</div>
+          </CardContent>
+        </Card>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Retired</div>
+              <div className="w-8 h-8 rounded-lg bg-slate-100 ring-1 ring-slate-200 flex items-center justify-center">
+                <Archive className="w-4 h-4 text-slate-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-slate-900 mt-2 tracking-tight tabular-nums">{stats.retired}</div>
+          </CardContent>
+        </Card>
       </div>
 
       <Card>

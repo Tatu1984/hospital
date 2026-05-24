@@ -230,73 +230,78 @@ export default function Emergency() {
   const greenCases = activeCases.filter(c => c.triageCategory === 'GREEN');
 
   return (
-    <div className="p-6 space-y-6 bg-white min-h-full">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-900">Emergency / Casualty</h1>
-          <p className="text-slate-600">Triage, emergency board, and critical care management</p>
+    <div className="p-6 lg:p-8 space-y-6 min-h-full max-w-[1500px] mx-auto">
+      <div className="flex justify-between items-center flex-wrap gap-3">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-red-50 ring-1 ring-red-100 flex items-center justify-center">
+            <AlertCircle className="w-6 h-6 text-red-600" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Emergency / Casualty</h1>
+            <p className="text-sm text-slate-500 mt-0.5">Triage, emergency board, and critical care management</p>
+          </div>
         </div>
-        <Button onClick={() => setIsTriageDialogOpen(true)} size="lg">
-          <UserPlus className="w-5 h-5 mr-2" />
+        <Button onClick={() => setIsTriageDialogOpen(true)} className="gap-1.5 h-10 px-4 rounded-xl shadow-sm bg-slate-900 hover:bg-slate-800">
+          <UserPlus className="w-4 h-4" />
           New Triage
         </Button>
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <Activity className="w-4 h-4" />
-              Active Cases
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.totalActive}</div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Active Cases</div>
+              <div className="w-8 h-8 rounded-lg bg-slate-100 ring-1 ring-slate-200 flex items-center justify-center">
+                <Activity className="w-4 h-4 text-slate-700" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-slate-900 mt-2 tracking-tight tabular-nums">{stats.totalActive}</div>
           </CardContent>
         </Card>
-        <Card className="border-red-200 bg-red-50">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-red-700">
-              <AlertCircle className="w-4 h-4" />
-              Critical (Red)
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-red-600">{stats.critical}</div>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Critical (Red)</div>
+              <div className="w-8 h-8 rounded-lg bg-red-50 ring-1 ring-red-100 flex items-center justify-center">
+                <AlertCircle className="w-4 h-4 text-red-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-red-700 mt-2 tracking-tight tabular-nums">{stats.critical}</div>
           </CardContent>
         </Card>
-        <Card className="border-yellow-200 bg-yellow-50">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-yellow-700">
-              <AlertTriangle className="w-4 h-4" />
-              Urgent (Yellow)
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-yellow-600">{stats.urgent}</div>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Urgent (Yellow)</div>
+              <div className="w-8 h-8 rounded-lg bg-yellow-50 ring-1 ring-yellow-100 flex items-center justify-center">
+                <AlertTriangle className="w-4 h-4 text-yellow-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-yellow-700 mt-2 tracking-tight tabular-nums">{stats.urgent}</div>
           </CardContent>
         </Card>
-        <Card className="border-green-200 bg-green-50">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-green-700">
-              <CheckCircle2 className="w-4 h-4" />
-              Stable (Green)
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-green-600">{stats.stable}</div>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Stable (Green)</div>
+              <div className="w-8 h-8 rounded-lg bg-green-50 ring-1 ring-green-100 flex items-center justify-center">
+                <CheckCircle2 className="w-4 h-4 text-green-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-green-700 mt-2 tracking-tight tabular-nums">{stats.stable}</div>
           </CardContent>
         </Card>
-        <Card className="border-purple-200 bg-purple-50">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-purple-700">
-              <Shield className="w-4 h-4" />
-              MLC Cases
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-purple-600">{stats.mlcCases}</div>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">MLC Cases</div>
+              <div className="w-8 h-8 rounded-lg bg-purple-50 ring-1 ring-purple-100 flex items-center justify-center">
+                <Shield className="w-4 h-4 text-purple-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-purple-700 mt-2 tracking-tight tabular-nums">{stats.mlcCases}</div>
           </CardContent>
         </Card>
       </div>

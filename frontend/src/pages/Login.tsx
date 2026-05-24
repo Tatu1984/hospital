@@ -40,24 +40,33 @@ const Login = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-blue-50 flex items-center justify-center p-4">
-      <Card className="w-full max-w-md shadow-xl bg-white border-slate-200">
-        <CardHeader className="space-y-4 text-center pb-8">
-          <div className="mx-auto w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg">
-            <Stethoscope className="w-10 h-10 text-white" />
+    <div className="min-h-screen bg-slate-50/60 flex items-center justify-center p-4">
+      {/* Subtle grid background — adds personality without being noisy. */}
+      <div
+        className="absolute inset-0 pointer-events-none opacity-[0.4]"
+        style={{
+          backgroundImage:
+            'linear-gradient(rgb(226 232 240) 1px, transparent 1px), linear-gradient(90deg, rgb(226 232 240) 1px, transparent 1px)',
+          backgroundSize: '40px 40px',
+          maskImage: 'radial-gradient(ellipse at center, black 30%, transparent 75%)',
+        }}
+      />
+      <Card className="relative w-full max-w-md rounded-2xl border-slate-200/70 shadow-[0_8px_30px_rgb(0_0_0_/_0.06)]">
+        <CardHeader className="space-y-4 text-center pb-6 pt-8">
+          <div className="mx-auto w-14 h-14 bg-slate-900 rounded-2xl flex items-center justify-center shadow-sm">
+            <Stethoscope className="w-7 h-7 text-white" />
           </div>
-          <div>
-            <CardTitle className="text-3xl font-bold text-slate-900">HospitalPro</CardTitle>
-            <CardDescription className="text-slate-600 mt-2">
+          <div className="space-y-1">
+            <CardTitle className="text-[22px] font-semibold text-slate-900 tracking-tight">HospitalPro</CardTitle>
+            <CardDescription className="text-slate-500 text-sm">
               Busitema Referral Hospital
             </CardDescription>
-            <p className="text-sm text-slate-500 mt-1">Sign in to your account</p>
           </div>
         </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <div className="space-y-2">
-              <Label htmlFor="username" className="text-slate-900 font-medium">Username</Label>
+        <CardContent className="pb-8">
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="username" className="text-[13px] text-slate-700 font-medium">Username</Label>
               <Input
                 id="username"
                 type="text"
@@ -66,11 +75,19 @@ const Login = () => {
                 onChange={(e) => setUsername(e.target.value)}
                 required
                 disabled={loading}
-                className="h-11 bg-white border-slate-300 focus:border-blue-500 focus:ring-blue-500"
+                className="h-10"
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="password" className="text-slate-900 font-medium">Password</Label>
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password" className="text-[13px] text-slate-700 font-medium">Password</Label>
+                <Link
+                  to="/forgot-password"
+                  className="text-[12px] text-slate-500 hover:text-slate-900 transition-colors"
+                >
+                  Forgot?
+                </Link>
+              </div>
               <Input
                 id="password"
                 type="password"
@@ -79,33 +96,24 @@ const Login = () => {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 disabled={loading}
-                className="h-11 bg-white border-slate-300 focus:border-blue-500 focus:ring-blue-500"
+                className="h-10"
               />
             </div>
 
             {error && (
-              <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg">
-                <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
-                <p className="text-sm text-red-700">{error}</p>
+              <div className="flex items-center gap-2 p-2.5 bg-red-50 border border-red-200 rounded-lg">
+                <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0" />
+                <p className="text-[13px] text-red-700">{error}</p>
               </div>
             )}
 
             <Button
               type="submit"
               disabled={loading}
-              className="w-full h-11 bg-blue-600 hover:bg-blue-700 text-white font-medium shadow-md"
+              className="w-full h-10 rounded-lg shadow-sm"
             >
-              {loading ? 'Signing in...' : 'Sign In'}
+              {loading ? 'Signing in…' : 'Sign in'}
             </Button>
-
-            <div className="text-center">
-              <Link
-                to="/forgot-password"
-                className="text-sm text-blue-600 hover:underline"
-              >
-                Forgot password?
-              </Link>
-            </div>
           </form>
         </CardContent>
       </Card>

@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { PersonStanding, Plus, Pencil } from 'lucide-react';
+import { Plus, Pencil, Activity } from 'lucide-react';
 import api from '../services/api';
 import { StatusBadge, fmtDate } from '../components/modules/ResourceListPage';
 
@@ -56,31 +56,42 @@ export default function Physiotherapy() {
   useEffect(() => { void load(); }, []);
 
   return (
-    <div className="p-6 space-y-4">
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-xl bg-cyan-600 flex items-center justify-center">
-          <PersonStanding className="w-5 h-5 text-white" />
-        </div>
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Physiotherapy</h1>
-          <p className="text-sm text-slate-500">Treatment plans + individual session records</p>
+    <div className="p-6 lg:p-8 space-y-6 min-h-full max-w-[1500px] mx-auto">
+      <div className="flex justify-between items-center flex-wrap gap-3">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-cyan-50 ring-1 ring-cyan-100 flex items-center justify-center">
+            <Activity className="w-6 h-6 text-cyan-600" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Physiotherapy</h1>
+            <p className="text-sm text-slate-500 mt-0.5">Treatment plans + individual session records</p>
+          </div>
         </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {[
-          ['Active plans', plans.filter((p) => p.status === 'active').length],
-          ['Total plans', plans.length],
-          ['Sessions today', sessions.filter((s) => fmtDate(s.scheduledDate) === fmtDate(new Date())).length],
-          ['Completed sessions', sessions.filter((s) => s.status === 'completed').length],
-        ].map(([label, value]) => (
-          <Card key={String(label)}>
-            <CardContent className="p-3">
-              <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
-              <div className="text-2xl font-bold mt-1">{value}</div>
-            </CardContent>
-          </Card>
-        ))}
+        {([
+          ['Active plans', plans.filter((p) => p.status === 'active').length, 'cyan'],
+          ['Total plans', plans.length, 'slate'],
+          ['Sessions today', sessions.filter((s) => fmtDate(s.scheduledDate) === fmtDate(new Date())).length, 'cyan'],
+          ['Completed sessions', sessions.filter((s) => s.status === 'completed').length, 'slate'],
+        ] as Array<[string, number, 'cyan' | 'slate']>).map(([label, value, tint]) => {
+          const tintBg = tint === 'cyan' ? 'bg-cyan-50 ring-cyan-100' : 'bg-slate-100 ring-slate-200';
+          const iconColor = tint === 'cyan' ? 'text-cyan-600' : 'text-slate-700';
+          return (
+            <Card key={label} className="rounded-2xl">
+              <CardContent className="p-5">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">{label}</div>
+                  <div className={`w-8 h-8 rounded-lg ring-1 flex items-center justify-center ${tintBg}`}>
+                    <Activity className={`w-4 h-4 ${iconColor}`} />
+                  </div>
+                </div>
+                <div className="text-3xl font-semibold text-slate-900 mt-2 tracking-tight tabular-nums">{value}</div>
+              </CardContent>
+            </Card>
+          );
+        })}
       </div>
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>

@@ -218,68 +218,73 @@ export default function Ambulance() {
   }
 
   return (
-    <div className="p-6 space-y-6 bg-white min-h-full">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-900">Ambulance & Transport</h1>
-          <p className="text-slate-600">Fleet management, trip dispatch, and emergency transport</p>
+    <div className="p-6 lg:p-8 space-y-6 min-h-full max-w-[1500px] mx-auto">
+      <div className="flex justify-between items-center flex-wrap gap-3">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-orange-50 ring-1 ring-orange-100 flex items-center justify-center">
+            <AmbulanceIcon className="w-6 h-6 text-orange-600" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Ambulance & Transport</h1>
+            <p className="text-sm text-slate-500 mt-0.5">Fleet management, trip dispatch, and emergency transport</p>
+          </div>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => setIsAddVehicleOpen(true)} className="gap-2">
+          <Button variant="outline" onClick={() => setIsAddVehicleOpen(true)} className="gap-2 h-10 rounded-xl">
             <Plus className="w-4 h-4" />
             Add Vehicle
           </Button>
-          <Button onClick={() => setIsTripDialogOpen(true)} size="lg">
-            <Plus className="w-5 h-5 mr-2" />
+          <Button onClick={() => setIsTripDialogOpen(true)} className="h-10 rounded-xl bg-slate-900 hover:bg-slate-800">
+            <Plus className="w-4 h-4 mr-2" />
             New Trip Request
           </Button>
         </div>
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <AmbulanceIcon className="w-4 h-4" />
-              Total Vehicles
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.totalVehicles}</div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Total Vehicles</div>
+              <div className="w-8 h-8 rounded-lg bg-orange-50 ring-1 ring-orange-100 flex items-center justify-center">
+                <AmbulanceIcon className="w-4 h-4 text-orange-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-slate-900 mt-2 tracking-tight tabular-nums">{stats.totalVehicles}</div>
           </CardContent>
         </Card>
-        <Card className="border-green-200 bg-green-50">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-green-700">
-              <CheckCircle className="w-4 h-4" />
-              Available
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-green-600">{stats.available}</div>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Available</div>
+              <div className="w-8 h-8 rounded-lg bg-emerald-50 ring-1 ring-emerald-100 flex items-center justify-center">
+                <CheckCircle className="w-4 h-4 text-emerald-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-emerald-600 mt-2 tracking-tight tabular-nums">{stats.available}</div>
           </CardContent>
         </Card>
-        <Card className="border-blue-200 bg-blue-50">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-blue-700">
-              <MapPin className="w-4 h-4" />
-              Active Trips
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-blue-600">{stats.activeTrips}</div>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Active Trips</div>
+              <div className="w-8 h-8 rounded-lg bg-blue-50 ring-1 ring-blue-100 flex items-center justify-center">
+                <MapPin className="w-4 h-4 text-blue-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-blue-600 mt-2 tracking-tight tabular-nums">{stats.activeTrips}</div>
           </CardContent>
         </Card>
-        <Card className="border-orange-200 bg-orange-50">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2 text-orange-700">
-              <Clock className="w-4 h-4" />
-              Pending
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-orange-600">{stats.pending}</div>
+        <Card className="rounded-2xl">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">Pending</div>
+              <div className="w-8 h-8 rounded-lg bg-amber-50 ring-1 ring-amber-100 flex items-center justify-center">
+                <Clock className="w-4 h-4 text-amber-600" />
+              </div>
+            </div>
+            <div className="text-3xl font-semibold text-amber-600 mt-2 tracking-tight tabular-nums">{stats.pending}</div>
           </CardContent>
         </Card>
       </div>

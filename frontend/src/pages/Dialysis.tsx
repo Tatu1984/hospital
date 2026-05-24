@@ -100,22 +100,24 @@ export default function Dialysis() {
   const inProgress = sessions.filter((s) => s.status === 'in_progress').length;
 
   return (
-    <div className="p-6 space-y-4">
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-xl bg-rose-500 flex items-center justify-center">
-          <Activity className="w-5 h-5 text-white" />
-        </div>
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Dialysis</h1>
-          <p className="text-sm text-slate-500">Nephrology unit — sessions, machines, vascular access</p>
+    <div className="p-6 lg:p-8 space-y-6 min-h-full max-w-[1500px] mx-auto">
+      <div className="flex justify-between items-center flex-wrap gap-3">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-rose-50 ring-1 ring-rose-100 flex items-center justify-center">
+            <Activity className="w-6 h-6 text-rose-600" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Dialysis</h1>
+            <p className="text-sm text-slate-500 mt-0.5">Nephrology unit — sessions, machines, vascular access</p>
+          </div>
         </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Stat label="Machines" value={machineCount} sub={`${machinesAvailable} available`} />
-        <Stat label="Sessions today" value={sessionsToday} />
-        <Stat label="In progress" value={inProgress} accent="text-blue-700" />
-        <Stat label="Total this month" value={sessions.length} />
+        <Stat label="Machines" value={machineCount} sub={`${machinesAvailable} available`} icon={<Cog className="w-4 h-4 text-slate-700" />} />
+        <Stat label="Sessions today" value={sessionsToday} icon={<CalendarDays className="w-4 h-4 text-rose-600" />} tint="rose" />
+        <Stat label="In progress" value={inProgress} accent="text-blue-700" icon={<Activity className="w-4 h-4 text-blue-600" />} tint="blue" />
+        <Stat label="Total this month" value={sessions.length} icon={<Activity className="w-4 h-4 text-slate-700" />} />
       </div>
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
@@ -151,13 +153,21 @@ export default function Dialysis() {
   );
 }
 
-function Stat({ label, value, sub, accent }: { label: string; value: number; sub?: string; accent?: string }) {
+function Stat({ label, value, sub, accent, icon, tint }: { label: string; value: number; sub?: string; accent?: string; icon?: React.ReactNode; tint?: 'rose' | 'blue' | 'slate' }) {
+  const tintBg = tint === 'rose' ? 'bg-rose-50 ring-rose-100' : tint === 'blue' ? 'bg-blue-50 ring-blue-100' : 'bg-slate-100 ring-slate-200';
   return (
-    <Card>
-      <CardContent className="p-3">
-        <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
-        <div className={`text-2xl font-bold ${accent || 'text-slate-900'} mt-1`}>{value}</div>
-        {sub && <div className="text-xs text-slate-500">{sub}</div>}
+    <Card className="rounded-2xl">
+      <CardContent className="p-5">
+        <div className="flex items-center justify-between">
+          <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">{label}</div>
+          {icon && (
+            <div className={`w-8 h-8 rounded-lg ring-1 flex items-center justify-center ${tintBg}`}>
+              {icon}
+            </div>
+          )}
+        </div>
+        <div className={`text-3xl font-semibold ${accent || 'text-slate-900'} mt-2 tracking-tight tabular-nums`}>{value}</div>
+        {sub && <div className="text-[11px] text-slate-500 mt-1">{sub}</div>}
       </CardContent>
     </Card>
   );

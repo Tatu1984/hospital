@@ -35,6 +35,7 @@ import {
   Save,
   X,
   TestTube,
+  Cog,
 } from 'lucide-react';
 import api from '../services/api';
 
@@ -232,7 +233,19 @@ export default function LabConfiguration() {
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+    <div className="space-y-6">
+      <div className="flex justify-between items-center flex-wrap gap-3">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-pink-50 ring-1 ring-pink-100 flex items-center justify-center">
+            <Cog className="w-6 h-6 text-pink-600" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Lab Configuration</h1>
+            <p className="text-sm text-slate-500 mt-0.5">Manage the test catalog and reportable parameters</p>
+          </div>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
       {/* LEFT — test catalog */}
       <Card className="lg:col-span-5">
         <CardHeader>
@@ -700,6 +713,7 @@ export default function LabConfiguration() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </div>
     </div>
   );
 }
