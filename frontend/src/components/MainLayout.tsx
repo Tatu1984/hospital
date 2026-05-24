@@ -172,6 +172,7 @@ const MainLayout = () => {
       title: 'Support Services',
       items: [
         { path: '/pharmacy', icon: Pill, label: 'Pharmacy' },
+        { path: '/drug-catalog', icon: Pill, label: 'Drug catalog' },
         { path: '/nurse-station', icon: Activity, label: 'Nursing' },
         { path: '/ambulance', icon: Ambulance, label: 'Transport' },
       ]

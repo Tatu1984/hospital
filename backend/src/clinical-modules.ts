@@ -4615,6 +4615,106 @@ clinicalModulesRouter.post('/radiotherapy/:id/complete', auth, async (req: Authe
   }
 });
 
+// =============== PHASE 6: DRUG MASTER CATALOG ===============
+// CDSCO + NLEM 2022 curated catalog. Independent of pharmacy stock —
+// this is what doctors prescribe FROM. The existing /api/drugs lists
+// in-house stock; this endpoint lists everything approved in India
+// regardless of whether we stock it. Refresh via scripts/seedDrugMaster.ts.
+
+clinicalModulesRouter.get('/drug-catalog/search', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    const therapeuticClass = req.query.class as string | undefined;
+    const nlemOnly = req.query.nlem === 'true';
+    const schedule = req.query.schedule as string | undefined;
+    const limit = Math.min(parseInt(String(req.query.limit || '30'), 10) || 30, 200);
+
+    const where: any = { isActive: true };
+    if (therapeuticClass) where.therapeuticClass = therapeuticClass;
+    if (nlemOnly) where.isEssential = true;
+    if (schedule !== undefined) where.schedule = schedule;
+
+    if (q) {
+      // Substring match on generic / manufacturer / class via Prisma
+      // mode:'insensitive'. Brand-name substring match against a Postgres
+      // text[] is non-trivial through the Prisma DSL, so we OR a raw
+      // EXISTS subquery into the where clause as unchecked SQL —
+      // safer to load a slightly wider set and filter in JS for the
+      // catalog (340 rows total — negligible cost). That's what we do.
+      where.OR = [
+        { genericName: { contains: q, mode: 'insensitive' } },
+        { manufacturer: { contains: q, mode: 'insensitive' } },
+        { therapeuticClass: { contains: q, mode: 'insensitive' } },
+      ];
+    }
+
+    let rows = await prisma.drugMaster.findMany({
+      where,
+      orderBy: [{ isEssential: 'desc' }, { genericName: 'asc' }],
+      take: limit * 4, // over-fetch so brand-name JS pass can backfill
+    });
+
+    // If a query is set, also include rows whose brand name contains q
+    // (case-insensitive). Cheap because catalog is small.
+    if (q) {
+      const needle = q.toLowerCase();
+      const seen = new Set(rows.map(r => r.id));
+      const allActive = await prisma.drugMaster.findMany({
+        where: { isActive: true, ...(therapeuticClass ? { therapeuticClass } : {}), ...(nlemOnly ? { isEssential: true } : {}) },
+      });
+      for (const r of allActive) {
+        if (seen.has(r.id)) continue;
+        if ((r.brandNames || []).some(b => b.toLowerCase().includes(needle))) {
+          rows.push(r);
+          seen.add(r.id);
+        }
+      }
+      // Re-rank: drugs whose generic OR any brand STARTS with q win the
+      // top of the list; then NLEM essentials; then alphabetical.
+      rows = rows.sort((a, b) => {
+        const aStart = a.genericName.toLowerCase().startsWith(needle) || (a.brandNames || []).some(x => x.toLowerCase().startsWith(needle));
+        const bStart = b.genericName.toLowerCase().startsWith(needle) || (b.brandNames || []).some(x => x.toLowerCase().startsWith(needle));
+        if (aStart !== bStart) return aStart ? -1 : 1;
+        if (a.isEssential !== b.isEssential) return a.isEssential ? -1 : 1;
+        return a.genericName.localeCompare(b.genericName);
+      });
+    }
+
+    res.json(rows.slice(0, limit));
+  } catch (e: any) {
+    console.error('drug catalog search', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.get('/drug-catalog/classes', auth, async (_req: AuthedReq, res: Response) => {
+  try {
+    // Distinct therapeutic-class list for filter chips. Cheap query —
+    // ~30 classes across the curated 340-entry catalog.
+    const rows = await prisma.drugMaster.findMany({
+      where: { isActive: true },
+      distinct: ['therapeuticClass'],
+      select: { therapeuticClass: true },
+      orderBy: { therapeuticClass: 'asc' },
+    });
+    res.json(rows.map(r => r.therapeuticClass));
+  } catch (e: any) {
+    console.error('drug catalog classes', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+clinicalModulesRouter.get('/drug-catalog/:id', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const row = await prisma.drugMaster.findUnique({ where: { id: req.params.id } });
+    if (!row) return res.status(404).json({ error: 'Drug not found' });
+    res.json(row);
+  } catch (e) {
+    console.error('drug catalog get', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // =============== PHASE 5: CLOSEOUT (Queue/KIOSK, NPS, Patient Portal) ===============
 // OPD queue/token management for front-desk + waiting-area KIOSK board.
 // NPS / patient experience survey + summary analytics.

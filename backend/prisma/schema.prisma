@@ -3277,3 +3277,40 @@ model PatientPortalSession {
   @@index([tenantId, patientId])
   @@map("patient_portal_sessions")
 }
+
+// ===========================
+// PHASE 6 — DRUG MASTER CATALOG (CDSCO + NLEM)
+// ===========================
+// Master catalog of approved drugs in India. Seed sourced from CDSCO's
+// List of Approved Drugs and NLEM 2022; can be refreshed by importing a
+// fresh CSV via scripts/importDrugMaster.ts.
+//
+// This is the catalog doctors PRESCRIBE from. The existing `Drug` model
+// holds the in-house pharmacy STOCK; a drug can be prescribed from this
+// master catalog even if the pharmacy doesn't stock it.
+model DrugMaster {
+  id                String   @id @default(uuid())
+  genericName       String
+  brandNames        String[] @default([])
+  manufacturer      String?
+  therapeuticClass  String
+  atcCode           String?
+  strength          String?
+  form              String?
+  // CDSCO schedule: H / H1 / X / G / K / empty=OTC
+  schedule          String   @default("")
+  isEssential       Boolean  @default(false)
+  hsnCode           String?
+  pregnancyCategory String?
+  indications       String?
+  contraindications String?
+  isActive          Boolean  @default(true)
+  source            String   @default("manual")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([genericName])
+  @@index([therapeuticClass, isActive])
+  @@index([isEssential, isActive])
+  @@map("drug_master")
+}

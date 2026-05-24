@@ -93,6 +93,8 @@ export const rolePermissions: Record<Role, string[]> = {
     'obstetrics', 'nicu', 'chemo', 'cath-lab', 'radiotherapy',
     // Phase-5 closeout — OPD queue board + patient feedback.
     'opd-queue', 'feedback',
+    // Phase-6 — CDSCO + NLEM drug catalog (doctors prescribe FROM this).
+    'drug-catalog',
   ],
 
   // NURSE - Patient care focus

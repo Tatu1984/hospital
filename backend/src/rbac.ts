@@ -818,6 +818,7 @@ export const ROUTE_MODULES: Record<string, Permission[]> = {
   '/operation-theatre': ['ot:view'],
   '/blood-bank': ['blood_bank:view'],
   '/pharmacy': ['pharmacy:view'],
+  '/drug-catalog': ['pharmacy:view'],
   '/ambulance': ['ambulance:view'],
   '/housekeeping': ['housekeeping:view'],
   '/diet': ['diet:view'],

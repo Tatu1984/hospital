@@ -22,7 +22,24 @@ import api from '../services/api';
 import { useToast } from './Toast';
 import DrugInteractionWarning, { DrugInteractionHit } from './DrugInteractionWarning';
 
-interface DrugLite { id: string; name: string; genericName?: string | null }
+// Lite shape used inside the dialog. We accept rows from either source:
+//   /api/drug-catalog/search  → DrugMaster (~340 entries, NLEM + CDSCO,
+//                                what doctors prescribe FROM)
+//   /api/drugs?search=        → in-house pharmacy stock (24 SKUs we own)
+// The autocomplete prefers the master catalog and shows an "in stock"
+// chip when the same generic is also in pharmacy stock.
+interface DrugLite {
+  id: string;
+  name: string;          // generic name displayed in the chip
+  genericName?: string | null;
+  brandNames?: string[];
+  therapeuticClass?: string | null;
+  strength?: string | null;
+  form?: string | null;
+  schedule?: string | null;
+  isEssential?: boolean;
+  source?: 'master' | 'stock';
+}
 
 interface RxRow {
   drugId: string;
@@ -278,8 +295,36 @@ function DrugAutocomplete({
     const t = setTimeout(async () => {
       setLoading(true);
       try {
-        const r = await api.get<DrugLite[]>('/api/drugs', { params: { search: q } });
-        setResults((r.data || []).slice(0, 8));
+        // Search the master catalog first (CDSCO + NLEM curated set —
+        // ~340 drugs covering vitamins to oncology). Then merge in any
+        // in-house pharmacy stock hits that aren't already in the list,
+        // so the doctor sees both "what's approved" and "what we have".
+        const [masterRes, stockRes] = await Promise.all([
+          api.get<any[]>('/api/drug-catalog/search', { params: { q, limit: 12 } }),
+          api.get<any[]>('/api/drugs', { params: { search: q } }).catch(() => ({ data: [] as any[] })),
+        ]);
+        const master: DrugLite[] = (masterRes.data || []).map(d => ({
+          id: d.id,
+          name: d.genericName,
+          genericName: d.genericName,
+          brandNames: d.brandNames || [],
+          therapeuticClass: d.therapeuticClass || null,
+          strength: d.strength || null,
+          form: d.form || null,
+          schedule: d.schedule || null,
+          isEssential: d.isEssential || false,
+          source: 'master' as const,
+        }));
+        const stock: DrugLite[] = (stockRes.data || [])
+          .filter((s: any) => !master.some(m => m.genericName?.toLowerCase() === (s.genericName || s.name || '').toLowerCase()))
+          .slice(0, 4)
+          .map((d: any) => ({
+            id: d.id,
+            name: d.name,
+            genericName: d.genericName || null,
+            source: 'stock' as const,
+          }));
+        setResults([...master, ...stock].slice(0, 12));
       } catch {
         setResults([]);
       } finally {
@@ -299,7 +344,7 @@ function DrugAutocomplete({
         className="rounded-lg h-9"
       />
       {q && results.length > 0 && (
-        <div className="absolute top-full left-0 right-0 mt-1 max-h-56 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg z-50">
+        <div className="absolute top-full left-0 right-0 mt-1 max-h-80 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg z-50">
           {results.map(d => (
             <button
               key={d.id}
@@ -307,8 +352,34 @@ function DrugAutocomplete({
               onClick={() => { onSelect(d); setOpen(false); setQ(''); setResults([]); }}
               className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 border-b border-slate-50 last:border-b-0"
             >
-              <div className="font-medium text-slate-900">{d.name}</div>
-              {d.genericName && <div className="text-xs text-slate-500">{d.genericName}</div>}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-medium text-slate-900">{d.name}</span>
+                {d.strength && <span className="text-[11px] text-slate-500">· {d.strength}</span>}
+                {d.form && <span className="text-[11px] text-slate-500">· {d.form}</span>}
+                {d.schedule && d.schedule !== '' && (
+                  <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 ring-1 ring-amber-200 font-medium">
+                    Sched {d.schedule}
+                  </span>
+                )}
+                {d.isEssential && (
+                  <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 font-medium">
+                    NLEM
+                  </span>
+                )}
+                {d.source === 'stock' && (
+                  <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-sky-50 text-sky-700 ring-1 ring-sky-200 font-medium">
+                    in stock
+                  </span>
+                )}
+              </div>
+              {d.brandNames && d.brandNames.length > 0 && (
+                <div className="text-[11px] text-slate-500 mt-0.5 truncate">
+                  Brands: {d.brandNames.slice(0, 4).join(' · ')}{d.brandNames.length > 4 ? ` +${d.brandNames.length - 4}` : ''}
+                </div>
+              )}
+              {d.therapeuticClass && (
+                <div className="text-[10px] text-slate-400 italic">{d.therapeuticClass}</div>
+              )}
             </button>
           ))}
         </div>

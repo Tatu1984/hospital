@@ -79,6 +79,7 @@ const Dialysis = lazy(() => import('./pages/Dialysis'));
 const ActivityMonitor = lazy(() => import('./pages/ActivityMonitor'));
 const BirthRecords = lazy(() => import('./pages/BirthRecords'));
 const Consultations = lazy(() => import('./pages/Consultations'));
+const DrugCatalog = lazy(() => import('./pages/DrugCatalog'));
 const Implants = lazy(() => import('./pages/Implants'));
 const HAISurveillance = lazy(() => import('./pages/HAISurveillance'));
 const BMWTracking = lazy(() => import('./pages/BMWTracking'));
@@ -306,6 +307,7 @@ const AppRoutes = () => {
         <Route path="icu" element={<RoleProtectedRoute path="icu"><ICU /></RoleProtectedRoute>} />
         <Route path="operation-theatre" element={<RoleProtectedRoute path="operation-theatre"><OperationTheatre /></RoleProtectedRoute>} />
         <Route path="birth-records" element={<RoleProtectedRoute path="birth-records"><BirthRecords /></RoleProtectedRoute>} />
+        <Route path="drug-catalog" element={<RoleProtectedRoute path="drug-catalog"><DrugCatalog /></RoleProtectedRoute>} />
         <Route path="implants" element={<RoleProtectedRoute path="implants"><Implants /></RoleProtectedRoute>} />
         <Route path="hai-surveillance" element={<RoleProtectedRoute path="hai-surveillance"><HAISurveillance /></RoleProtectedRoute>} />
         <Route path="bmw-tracking" element={<RoleProtectedRoute path="bmw-tracking"><BMWTracking /></RoleProtectedRoute>} />
