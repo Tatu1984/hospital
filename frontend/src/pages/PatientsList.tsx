@@ -11,12 +11,11 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Search, Filter, UserPlus, Activity } from 'lucide-react';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Search, UserPlus, Activity, Users, Bed, Stethoscope, Droplet } from 'lucide-react';
 import api from '../services/api';
 
 type AdmissionFilter = 'all' | 'ipd' | 'opd' | 'dialysis';
@@ -41,12 +40,18 @@ interface PatientRow {
   activeAdmission: { id: string; admissionDate: string; diagnosis: string | null } | null;
 }
 
-const FILTER_OPTIONS: { key: AdmissionFilter; label: string; description: string }[] = [
-  { key: 'all', label: 'All', description: 'Every registered patient' },
-  { key: 'ipd', label: 'IPD', description: 'Has at least one admission' },
-  { key: 'opd', label: 'OPD', description: 'Has at least one OPD encounter' },
-  { key: 'dialysis', label: 'Dialysis', description: 'Has at least one dialysis session' },
+const FILTER_OPTIONS: { key: AdmissionFilter; label: string; description: string; icon: any; tint: string }[] = [
+  { key: 'all',      label: 'All',      description: 'Every registered patient',         icon: Users,       tint: 'bg-slate-100  text-slate-700  ring-slate-200' },
+  { key: 'ipd',      label: 'IPD',      description: 'Has at least one admission',       icon: Bed,         tint: 'bg-emerald-50 text-emerald-700 ring-emerald-100' },
+  { key: 'opd',      label: 'OPD',      description: 'Has at least one OPD encounter',   icon: Stethoscope, tint: 'bg-blue-50    text-blue-700    ring-blue-100' },
+  { key: 'dialysis', label: 'Dialysis', description: 'Has at least one dialysis session',icon: Droplet,     tint: 'bg-rose-50    text-rose-700    ring-rose-100' },
 ];
+
+const ACTIVITY_TINT: Record<string, string> = {
+  IPD:      'bg-emerald-50 text-emerald-700 ring-emerald-100',
+  OPD:      'bg-blue-50    text-blue-700    ring-blue-100',
+  Dialysis: 'bg-rose-50    text-rose-700    ring-rose-100',
+};
 
 function ageFromDob(dob: string | null): string {
   if (!dob) return '—';
@@ -60,17 +65,28 @@ function fmtDate(iso: string | null): string {
   if (!iso) return '—';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
 }
 
-function badgeForActivity(type: PatientRow['lastActivityType']) {
-  if (!type) return null;
-  const cls = type === 'IPD'
-    ? 'bg-emerald-100 text-emerald-800'
-    : type === 'OPD'
-      ? 'bg-blue-100 text-blue-800'
-      : 'bg-purple-100 text-purple-800';
-  return <span className={`text-xs px-2 py-0.5 rounded ${cls}`}>{type}</span>;
+// Deterministic avatar tint per patient so the same patient always gets
+// the same pastel chip — purely visual aid, no semantic meaning.
+const AVATAR_TINTS = [
+  'bg-blue-100   text-blue-700',
+  'bg-emerald-100 text-emerald-700',
+  'bg-violet-100 text-violet-700',
+  'bg-amber-100  text-amber-700',
+  'bg-pink-100   text-pink-700',
+  'bg-cyan-100   text-cyan-700',
+  'bg-rose-100   text-rose-700',
+  'bg-indigo-100 text-indigo-700',
+];
+function avatarFor(id: string) {
+  let h = 0; for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return AVATAR_TINTS[h % AVATAR_TINTS.length];
+}
+function initials(name: string) {
+  const parts = name.trim().split(/\s+/).slice(0, 2);
+  return parts.map(p => p[0]?.toUpperCase() || '').join('') || '?';
 }
 
 export default function PatientsList() {
@@ -114,165 +130,176 @@ export default function PatientsList() {
     return () => { aborted = true; };
   }, [debouncedSearch, filter]);
 
-  // Counts shown next to each filter tab. Computed off the currently-loaded
-  // page so they stay in sync with what the user sees; for a true global
-  // tally the backend would need separate aggregate endpoints.
   const filterCounts = useMemo(() => {
     return {
-      all: patients.length,
-      ipd: patients.filter((p) => p.counts.admissions > 0).length,
-      opd: patients.filter((p) => p.counts.encounters > 0).length,
+      all:      patients.length,
+      ipd:      patients.filter((p) => p.counts.admissions > 0).length,
+      opd:      patients.filter((p) => p.counts.encounters > 0).length,
       dialysis: patients.filter((p) => p.counts.dialysisSessions > 0).length,
     };
   }, [patients]);
 
   return (
-    <div className="p-6 space-y-4">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Patients</h1>
-          <p className="text-sm text-slate-600">
-            Unified directory across IPD, OPD, Dialysis, and every other intake.
-            Click any row to open the full medical history.
-          </p>
-        </div>
-        <Button className="gap-2" onClick={() => navigate('/app/patient-registration')}>
-          <UserPlus className="w-4 h-4" />
-          Register New Patient
-        </Button>
-      </div>
-
-      <Card>
-        <CardHeader className="space-y-3">
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <div>
-              <CardTitle>All Registered Patients</CardTitle>
-              <CardDescription>
-                Clinical records are retained for at least 10 years per the
-                hospital's retention policy.
-              </CardDescription>
+    <div className="min-h-screen">
+      <div className="p-6 lg:p-8 max-w-[1400px] mx-auto space-y-6">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-blue-50 ring-1 ring-blue-100 flex items-center justify-center">
+              <Users className="w-6 h-6 text-blue-600" />
             </div>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <div>
+              <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Patients</h1>
+              <p className="text-sm text-slate-500 mt-0.5">
+                Unified directory across IPD, OPD, Dialysis & every other intake
+              </p>
+            </div>
+          </div>
+          <Button onClick={() => navigate('/app/patient-registration')} className="gap-1.5 h-10 px-4 rounded-xl shadow-sm bg-slate-900 hover:bg-slate-800">
+            <UserPlus className="w-4 h-4" />
+            Register patient
+          </Button>
+        </div>
+
+        {/* Filter cards as KPI tiles */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {FILTER_OPTIONS.map((f) => {
+            const active = filter === f.key;
+            const count = filterCounts[f.key];
+            const Icon = f.icon;
+            return (
+              <button
+                key={f.key}
+                onClick={() => setFilter(f.key)}
+                title={f.description}
+                className={`text-left rounded-2xl border p-4 transition-all duration-150 ${
+                  active
+                    ? 'border-slate-900 bg-white shadow-sm ring-1 ring-slate-900'
+                    : 'border-slate-200/70 bg-white hover:border-slate-300 hover:shadow-sm'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">{f.label}</div>
+                  <div className={`w-8 h-8 rounded-lg ${f.tint} ring-1 flex items-center justify-center`}>
+                    <Icon className="w-4 h-4" />
+                  </div>
+                </div>
+                {loading
+                  ? <Skeleton className="h-8 w-12 mt-2" />
+                  : <div className="text-3xl font-semibold text-slate-900 mt-2 tracking-tight tabular-nums">{count}</div>}
+                <div className="text-[11px] text-slate-500 mt-1">{f.description}</div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* List */}
+        <Card className="rounded-2xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-100 bg-white flex items-center gap-3 flex-wrap">
+            <div className="relative flex-1 max-w-md">
+              <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
               <Input
                 placeholder="Search MRN, name, or phone…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="pl-10 w-80"
+                className="pl-9 h-9 rounded-xl border-slate-200 bg-slate-50/50 focus-visible:bg-white"
               />
             </div>
+            <span className="text-xs text-slate-500 ml-auto">
+              {patients.length} patient{patients.length === 1 ? '' : 's'} {filter !== 'all' && `· ${filter.toUpperCase()}`}
+            </span>
           </div>
-
-          <div className="flex items-center gap-2 flex-wrap">
-            <Filter className="w-4 h-4 text-slate-400" />
-            {FILTER_OPTIONS.map((f) => {
-              const active = filter === f.key;
-              const count = filterCounts[f.key];
-              return (
-                <button
-                  key={f.key}
-                  type="button"
-                  onClick={() => setFilter(f.key)}
-                  title={f.description}
-                  className={
-                    `text-sm px-3 py-1 rounded-full border transition ` +
-                    (active
-                      ? 'bg-slate-900 text-white border-slate-900'
-                      : 'bg-white text-slate-700 border-slate-200 hover:border-slate-400')
-                  }
-                >
-                  {f.label}
-                  <span className={`ml-2 text-xs ${active ? 'text-slate-300' : 'text-slate-400'}`}>{count}</span>
-                </button>
-              );
-            })}
-          </div>
-        </CardHeader>
-        <CardContent>
-          {error && (
-            <div className="p-3 mb-3 rounded bg-red-50 border border-red-200 text-sm text-red-700">
-              {error}
-            </div>
-          )}
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>MRN</TableHead>
-                <TableHead>Name</TableHead>
-                <TableHead>Age/Sex</TableHead>
-                <TableHead>Phone</TableHead>
-                <TableHead>Blood</TableHead>
-                <TableHead>Last activity</TableHead>
-                <TableHead>Last doctor</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Visits</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading && (
-                <TableRow>
-                  <TableCell colSpan={9} className="text-center text-slate-500 py-8">
-                    Loading patients…
-                  </TableCell>
-                </TableRow>
-              )}
-              {!loading && patients.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={9} className="text-center text-slate-500 py-8">
-                    No patients match the current filter.
-                  </TableCell>
-                </TableRow>
-              )}
-              {!loading && patients.map((p) => (
-                <TableRow
-                  key={p.id}
-                  className="cursor-pointer hover:bg-slate-50"
-                  onClick={() => navigate(`/app/patients/${p.id}`)}
-                >
-                  <TableCell className="font-mono text-xs">{p.mrn}</TableCell>
-                  <TableCell className="font-medium">
-                    {p.name}
-                    {p.purpose && (
-                      <div className="text-xs text-slate-500 truncate max-w-[220px]" title={p.purpose}>
-                        {p.purpose}
+          <CardContent className="p-0">
+            {error && (
+              <div className="mx-5 mt-4 p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
+                {error}
+              </div>
+            )}
+            {loading ? (
+              <div className="p-5 space-y-3">
+                {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-14 w-full rounded-xl" />)}
+              </div>
+            ) : patients.length === 0 ? (
+              <EmptyState onAdd={() => navigate('/app/patient-registration')} hasFilter={filter !== 'all' || !!search} />
+            ) : (
+              <div>
+                {patients.map((p) => {
+                  const total = p.counts.admissions + p.counts.encounters + p.counts.dialysisSessions;
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => navigate(`/app/patients/${p.id}`)}
+                      className="w-full text-left flex items-center gap-4 px-5 py-3.5 border-b border-slate-100 last:border-b-0 hover:bg-slate-50/80 transition-colors"
+                    >
+                      <div className={`w-10 h-10 rounded-full ${avatarFor(p.id)} flex items-center justify-center shrink-0 font-medium text-[13px]`}>
+                        {initials(p.name)}
                       </div>
-                    )}
-                  </TableCell>
-                  <TableCell>{ageFromDob(p.dob)} / {p.gender || '—'}</TableCell>
-                  <TableCell className="text-slate-600">{p.contact || '—'}</TableCell>
-                  <TableCell>{p.bloodGroup || '—'}</TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      {badgeForActivity(p.lastActivityType)}
-                      <span className="text-xs text-slate-500">{fmtDate(p.lastActivityAt)}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-slate-600">{p.lastDoctorName || '—'}</TableCell>
-                  <TableCell>
-                    {p.activeAdmission ? (
-                      <Badge className="bg-emerald-600 hover:bg-emerald-600 gap-1">
-                        <Activity className="w-3 h-3" /> Admitted
-                      </Badge>
-                    ) : (
-                      <span className="text-xs text-slate-500">—</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right text-xs text-slate-600">
-                    <div title={`IPD ${p.counts.admissions} • OPD ${p.counts.encounters} • Dialysis ${p.counts.dialysisSessions}`}>
-                      {p.counts.admissions + p.counts.encounters + p.counts.dialysisSessions}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          {!loading && patients.length >= 100 && (
-            <div className="mt-3 text-xs text-slate-500">
-              Showing first 100 rows. Refine your search to see more.
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-medium text-slate-900 truncate">{p.name}</span>
+                          <span className="text-[11px] text-slate-500 font-mono bg-slate-100 px-1.5 py-0.5 rounded">{p.mrn}</span>
+                          {p.activeAdmission && (
+                            <span className="text-[10px] inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100 uppercase tracking-wider font-medium">
+                              <Activity className="w-2.5 h-2.5" /> Admitted
+                            </span>
+                          )}
+                          {p.lastActivityType && (
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded-full ring-1 uppercase tracking-wider font-medium ${ACTIVITY_TINT[p.lastActivityType]}`}>
+                              {p.lastActivityType}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-3 flex-wrap">
+                          <span>{ageFromDob(p.dob)} · {p.gender || '—'}</span>
+                          {p.contact && <span>{p.contact}</span>}
+                          {p.bloodGroup && <span className="text-rose-700 font-medium">{p.bloodGroup}</span>}
+                          {p.lastDoctorName && <span>Dr. {p.lastDoctorName}</span>}
+                          {p.lastActivityAt && <span>Last visit · {fmtDate(p.lastActivityAt)}</span>}
+                        </div>
+                        {p.purpose && (
+                          <div className="text-xs text-slate-400 mt-0.5 truncate max-w-[600px]" title={p.purpose}>
+                            {p.purpose}
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className="text-sm font-medium text-slate-900 tabular-nums">{total}</div>
+                        <div className="text-[10px] text-slate-500 uppercase tracking-wider">visits</div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {!loading && patients.length >= 100 && (
+              <div className="px-5 py-3 text-xs text-slate-500 border-t border-slate-100 bg-slate-50/40">
+                Showing first 100 rows. Refine your search to see more.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function EmptyState({ onAdd, hasFilter }: { onAdd: () => void; hasFilter: boolean }) {
+  return (
+    <div className="py-16 px-6 flex flex-col items-center justify-center text-center">
+      <div className="w-16 h-16 rounded-2xl bg-blue-50 ring-1 ring-blue-100 flex items-center justify-center mb-4">
+        <Users className="w-8 h-8 text-blue-500" />
+      </div>
+      <h3 className="text-base font-medium text-slate-900">
+        {hasFilter ? 'No patients match the filter' : 'No patients registered yet'}
+      </h3>
+      <p className="text-sm text-slate-500 mt-1 max-w-sm">
+        {hasFilter ? 'Try clearing the search or switching the filter.' : 'Register your first patient to start building the directory.'}
+      </p>
+      {!hasFilter && (
+        <Button onClick={onAdd} className="gap-1.5 mt-5 rounded-xl bg-slate-900 hover:bg-slate-800">
+          <UserPlus className="w-4 h-4" /> Register first patient
+        </Button>
+      )}
     </div>
   );
 }
