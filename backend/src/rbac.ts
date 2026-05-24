@@ -841,6 +841,14 @@ export const ROUTE_MODULES: Record<string, Permission[]> = {
   '/bmw-tracking': ['ipd:view'],
   // NABH KPI dashboard exposes hospital-wide analytics.
   '/nabh-dashboard': ['analytics:view'],
+  // Phase-3 India statutory compliance routes.
+  // PCPNDT Form-F lives inside the radiology workflow (the sonologist
+  // signs it off after an ultrasound).
+  '/form-f':       ['radiology:view'],
+  // MTP register is filled in the gynae/IPD ward.
+  '/mtp-register': ['ipd:view'],
+  // PMJAY claim queue is a billing function.
+  '/pmjay':        ['billing:view'],
   '/billing': ['billing:view'],
   '/ipd-billing': ['billing:view'],
   '/referral-commission': ['commissions:view'],

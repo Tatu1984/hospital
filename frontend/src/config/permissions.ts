@@ -87,6 +87,8 @@ export const rolePermissions: Record<Role, string[]> = {
     'dialysis', 'physiotherapy', 'mortuary', 'birth-records', 'consultations',
     // Phase-2 clinical quality modules
     'implants', 'hai-surveillance', 'mnm-reviews',
+    // Phase-3 India statutory registers + PMJAY.
+    'form-f', 'mtp-register', 'pmjay',
   ],
 
   // NURSE - Patient care focus
@@ -99,7 +101,9 @@ export const rolePermissions: Record<Role, string[]> = {
 
   // FRONT_OFFICE - Registration & Appointments
   FRONT_OFFICE: [
-    '/', 'live-dashboard', 'patients', 'appointment', 'billing', 'tpa', 'inpatient'
+    '/', 'live-dashboard', 'patients', 'appointment', 'billing', 'tpa', 'inpatient',
+    // Front desk reads PMJAY status when verifying patient eligibility.
+    'pmjay',
   ],
 
   // BILLING - Finance focus
@@ -229,6 +233,8 @@ export const rolePermissions: Record<Role, string[]> = {
     'doctor-registration', 'mis-report', 'consultations',
     // Phase-2 — CMO owns clinical quality reporting.
     'implants', 'hai-surveillance', 'mnm-reviews', 'nabh-dashboard', 'bmw-tracking',
+    // Phase-3 — CMO signs Form-F and MTP and approves PMJAY claims.
+    'form-f', 'mtp-register', 'pmjay',
   ],
 
   // NURSING_DIRECTOR (CNO) — nursing operations + ward management.
@@ -276,6 +282,8 @@ export const rolePermissions: Record<Role, string[]> = {
     'radiology', 'dicom-pacs',
     'inventory', 'mis-report',
     'hr', 'biometric-attendance',
+    // Radiology owns the PCPNDT Form-F register for ultrasound scans.
+    'form-f',
   ],
 
   // PHARMACY_MANAGER — pharmacy + inventory + PO approval.
@@ -309,6 +317,8 @@ export const rolePermissions: Record<Role, string[]> = {
     'inpatient', 'billing', 'ipd-billing', 'tpa',
     'referral-commission', 'doctor-accounting', 'tally',
     'mis-report', 'hr', 'biometric-attendance',
+    // Billing manager owns the PMJAY claim workflow end-to-end.
+    'pmjay',
   ],
 
   // FRONT_DESK_LEAD — reception supervisor.

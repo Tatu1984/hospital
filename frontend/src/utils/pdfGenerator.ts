@@ -727,3 +727,157 @@ export function generateDeathCertificatePDF(data: {
 
   return { doc, filename: `DeathCertificate_${data.certificateNumber}.pdf` };
 }
+
+// ---------- Form-F (PCPNDT Act 1994) ----------
+// Statutory ultrasound register for genetic facilities. The PDF must
+// look like the printable Form-F so the operator can attach the wet-ink
+// signed copy to their PCPNDT register binder during the monthly
+// inspection. Sex of foetus is intentionally absent from the form —
+// the Act prohibits its disclosure to the patient or family, and our
+// schema doesn't collect it.
+export function generateFormFPDF(data: {
+  formNumber: string;
+  hospitalName?: string;
+  branchAddress?: string;
+  pcpndtRegNo?: string;
+  patientName: string;
+  patientAge: number | string;
+  patientHusbandOrFather: string;
+  patientAddress: string;
+  spouseName?: string;
+  priorChildren?: number | string;
+  priorChildrenGender?: string;
+  referredByName?: string;
+  referrerRegNo?: string;
+  lmpDate?: string;
+  gestationWeeks?: number | string;
+  obstetricHistory?: string;
+  indication: string;
+  indicationOther?: string;
+  procedure: string;
+  findings?: string;
+  sonologistName: string;
+  sonologistRegNo: string;
+  sonologistPcpndtCertNo: string;
+  performedAt: string;
+  signedAt?: string;
+}) {
+  const doc = newPdf();
+  let yPos = addHeader(doc, 'FORM F');
+
+  // Sub-title — statutory citation
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'italic');
+  doc.text('[See Rule 9 of the Pre-conception and Pre-natal Diagnostic Techniques', 105, yPos, { align: 'center' });
+  doc.text('(Prohibition of Sex Selection) Act, 1994 — Form F: Maintained by the Genetic Clinic / Ultrasound Clinic / Imaging Centre]', 105, yPos + 4, { align: 'center' });
+  yPos += 12;
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Form No: ${data.formNumber}`, 20, yPos);
+  doc.text(`Date: ${data.performedAt}`, 130, yPos);
+  yPos += 6;
+  if (data.pcpndtRegNo) {
+    doc.text(`Clinic PCPNDT Reg No: ${data.pcpndtRegNo}`, 20, yPos);
+    yPos += 6;
+  }
+
+  const labelW = 60;
+  const row = (label: string, value: string, x = 20, w = 170) => {
+    doc.setFont('helvetica', 'bold'); doc.text(label, x, yPos);
+    doc.setFont('helvetica', 'normal');
+    const valX = x + labelW;
+    const lines = doc.splitTextToSize(value || '—', w - labelW);
+    doc.text(lines, valX, yPos);
+    doc.setDrawColor(180);
+    doc.line(valX, yPos + 1.2 + (lines.length - 1) * 5, x + w, yPos + 1.2 + (lines.length - 1) * 5);
+    yPos += 6 + (lines.length - 1) * 5;
+  };
+
+  // ---------- Patient ----------
+  doc.setFontSize(11); doc.setFont('helvetica', 'bold');
+  doc.text('1. PATIENT DETAILS', 20, yPos); yPos += 6;
+  doc.setFontSize(10);
+  row('Name of pregnant woman', data.patientName);
+  row('Age (yrs)', String(data.patientAge));
+  row('Husband / Father name', data.patientHusbandOrFather);
+  if (data.spouseName) row('Spouse name', data.spouseName);
+  row('Address', data.patientAddress);
+  if (data.priorChildren !== undefined && data.priorChildren !== '') {
+    row('No. of children (living)', `${data.priorChildren}${data.priorChildrenGender ? ` (${data.priorChildrenGender})` : ''}`);
+  }
+
+  yPos += 2;
+  // ---------- Referring physician ----------
+  doc.setFontSize(11); doc.setFont('helvetica', 'bold');
+  doc.text('2. REFERRING REGISTERED MEDICAL PRACTITIONER', 20, yPos); yPos += 6;
+  doc.setFontSize(10);
+  row('Name', data.referredByName || 'Walk-in / self');
+  if (data.referrerRegNo) row('Reg. No.', data.referrerRegNo);
+
+  yPos += 2;
+  // ---------- Clinical ----------
+  doc.setFontSize(11); doc.setFont('helvetica', 'bold');
+  doc.text('3. CLINICAL HISTORY', 20, yPos); yPos += 6;
+  doc.setFontSize(10);
+  if (data.lmpDate) row('LMP', data.lmpDate);
+  if (data.gestationWeeks !== undefined && data.gestationWeeks !== '') {
+    row('Gestation (weeks)', String(data.gestationWeeks));
+  }
+  if (data.obstetricHistory) row('Obstetric history', data.obstetricHistory);
+
+  // ---------- Indication ----------
+  if (yPos > 220) { doc.addPage(); yPos = 20; }
+  yPos += 2;
+  doc.setFontSize(11); doc.setFont('helvetica', 'bold');
+  doc.text('4. INDICATION FOR PROCEDURE', 20, yPos); yPos += 6;
+  doc.setFontSize(10);
+  row('Indication', data.indication + (data.indicationOther ? ` — ${data.indicationOther}` : ''));
+
+  // ---------- Procedure ----------
+  yPos += 2;
+  doc.setFontSize(11); doc.setFont('helvetica', 'bold');
+  doc.text('5. PROCEDURE', 20, yPos); yPos += 6;
+  doc.setFontSize(10);
+  row('Type of procedure', data.procedure);
+  if (data.findings) row('Findings (excl. sex)', data.findings);
+
+  // ---------- Sonologist ----------
+  if (yPos > 235) { doc.addPage(); yPos = 20; }
+  yPos += 2;
+  doc.setFontSize(11); doc.setFont('helvetica', 'bold');
+  doc.text('6. SONOLOGIST / RADIOLOGIST', 20, yPos); yPos += 6;
+  doc.setFontSize(10);
+  row('Name', data.sonologistName);
+  row('Reg. No. (MCI / SMC)', data.sonologistRegNo);
+  row('PCPNDT Certificate No.', data.sonologistPcpndtCertNo);
+
+  // ---------- Declaration ----------
+  yPos += 4;
+  if (yPos > 240) { doc.addPage(); yPos = 20; }
+  doc.setFontSize(9); doc.setFont('helvetica', 'italic');
+  const decl = doc.splitTextToSize(
+    'DECLARATION: I, the undersigned, hereby declare that while conducting the ultrasonography / image scanning on the above-mentioned pregnant woman, I have neither detected nor disclosed the sex of the foetus to any one in any manner. The above information is true and correct to the best of my knowledge and belief.',
+    170,
+  );
+  doc.text(decl, 20, yPos);
+  yPos += decl.length * 4 + 8;
+
+  // Signatures
+  doc.setDrawColor(0);
+  doc.line(25, yPos, 90, yPos);
+  doc.line(120, yPos, 185, yPos);
+  doc.setFontSize(9); doc.setFont('helvetica', 'normal');
+  doc.text(`Sonologist: ${data.sonologistName}`, 25, yPos + 5);
+  doc.text('Signature of pregnant woman', 120, yPos + 5);
+
+  // Footer
+  doc.setFontSize(8); doc.setFont('helvetica', 'italic');
+  if (data.signedAt) {
+    doc.text(`Digitally signed in HMIS at: ${data.signedAt}`, 105, 281, { align: 'center' });
+  }
+  doc.text(`Generated: ${new Date().toLocaleString()}`, 105, 285, { align: 'center' });
+  doc.text(`${data.hospitalName || ''} ${data.branchAddress ? '· ' + data.branchAddress : ''}`.trim(), 105, 289, { align: 'center' });
+
+  return { doc, filename: `FormF_${data.formNumber}.pdf` };
+}

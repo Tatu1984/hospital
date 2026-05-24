@@ -84,6 +84,10 @@ const HAISurveillance = lazy(() => import('./pages/HAISurveillance'));
 const BMWTracking = lazy(() => import('./pages/BMWTracking'));
 const MnMReviews = lazy(() => import('./pages/MnMReviews'));
 const NABHDashboard = lazy(() => import('./pages/NABHDashboard'));
+// Phase 3 — India statutory & national-program modules.
+const FormFRegister = lazy(() => import('./pages/FormFRegister'));
+const MTPRegister = lazy(() => import('./pages/MTPRegister'));
+const PMJAYClaims = lazy(() => import('./pages/PMJAYClaims'));
 
 // Some smaller modules still live in AllModules.tsx — split that into one
 // async chunk. Each named import resolves once the chunk loads.
@@ -316,6 +320,16 @@ const AppRoutes = () => {
         <Route path="system-control" element={<RoleProtectedRoute path="system-control"><SystemControl /></RoleProtectedRoute>} />
         <Route path="audit-log" element={<RoleProtectedRoute path="audit-log"><AuditLog /></RoleProtectedRoute>} />
         <Route path="activity-monitor" element={<RoleProtectedRoute path="activity-monitor"><ActivityMonitor /></RoleProtectedRoute>} />
+
+        {/* India compliance — Phase 3.
+            Form-F (PCPNDT 1994) ultrasound register, MTP register, and
+            PMJAY claims. Form-F and MTP live under "Admin & Reports"
+            since they're statutory registers, not clinical workflow
+            pages. PMJAY is under "Finance". RBAC is set in
+            config/permissions.ts. */}
+        <Route path="form-f" element={<RoleProtectedRoute path="form-f"><FormFRegister /></RoleProtectedRoute>} />
+        <Route path="mtp-register" element={<RoleProtectedRoute path="mtp-register"><MTPRegister /></RoleProtectedRoute>} />
+        <Route path="pmjay" element={<RoleProtectedRoute path="pmjay"><PMJAYClaims /></RoleProtectedRoute>} />
       </Route>
     </Routes>
   );

@@ -78,6 +78,13 @@ interface ChartPatient {
   photo: string | null;
   purpose: string | null;
   createdAt: string;
+  // ABHA (Ayushman Bharat Health Account) — populated when the patient
+  // has linked their ABHA ID through the ABDM consent gateway. These
+  // are optional because not every patient has an ABHA yet (rollout is
+  // ongoing nationally).
+  abhaNumber?: string | null;
+  abhaAddress?: string | null;
+  abhaLinkedAt?: string | null;
 }
 interface IPDNote {
   id: string;
@@ -478,7 +485,7 @@ export default function PatientProfile() {
           <TabsTrigger value="bills">Bills ({data.invoices.length})</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="overview"><OverviewSection data={data} /></TabsContent>
+        <TabsContent value="overview"><OverviewSection data={data} onRefresh={load} /></TabsContent>
         <TabsContent value="vitals"><VitalsSection patientId={p.id} /></TabsContent>
         <TabsContent value="allergies"><AllergiesSection patientId={p.id} /></TabsContent>
         <TabsContent value="diagnoses"><DiagnosesSection patientId={p.id} admissionDiagnoses={data.diagnoses} /></TabsContent>
@@ -531,7 +538,7 @@ function CountCard({ icon: Icon, tint, label, value }: { icon: any; tint: string
 
 // --- sections ---
 
-function OverviewSection({ data }: { data: ChartData }) {
+function OverviewSection({ data, onRefresh }: { data: ChartData; onRefresh: () => void | Promise<void> }) {
   const latestNote = data.encounters.find((e) => e.latestNote)?.latestNote || null;
   const latestEncounter = data.encounters[0] || null;
   const activeAdmission = data.admissions.find((a) => a.status === 'active' || a.status === 'admitted') || null;
@@ -542,6 +549,9 @@ function OverviewSection({ data }: { data: ChartData }) {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="lg:col-span-2">
+        <AbhaCard patient={data.patient} onChanged={onRefresh} />
+      </div>
       <Card>
         <CardHeader><CardTitle className="text-base">Latest vitals</CardTitle></CardHeader>
         <CardContent>
@@ -2304,5 +2314,234 @@ function DiscountForm({
 function Empty({ text }: { text: string }) {
   return (
     <Card><CardContent className="p-8 text-center text-sm text-slate-500">{text}</CardContent></Card>
+  );
+}
+
+// =========================================================================
+// ABHA (Ayushman Bharat Health Account) — surgical addition to Overview.
+//
+// Card shows either:
+//   • Linked state: 14-digit ABHA number (formatted XX-XXXX-XXXX-XXXX),
+//     abha@sbx.abdm.gov.in address, linkedAt timestamp, an Unlink button,
+//     and an expandable "ABDM history" list.
+//   • Unlinked state: a "Link ABHA" CTA opening a small modal.
+//
+// All API calls go through /api/patients/:id/abha/link, /unlink, and
+// /api/patients/:id/abdm-events. The backend is the source of truth for
+// the ABDM event timeline.
+// =========================================================================
+
+interface AbdmEvent {
+  id: string;
+  type: string;
+  payload?: any;
+  createdAt: string;
+}
+
+function formatAbha(num?: string | null): string {
+  if (!num) return '—';
+  const digits = num.replace(/\D/g, '');
+  if (digits.length !== 14) return num;
+  // XX-XXXX-XXXX-XXXX
+  return `${digits.slice(0, 2)}-${digits.slice(2, 6)}-${digits.slice(6, 10)}-${digits.slice(10, 14)}`;
+}
+
+function AbhaCard({ patient, onChanged }: { patient: ChartPatient; onChanged: () => void | Promise<void> }) {
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [events, setEvents] = useState<AbdmEvent[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+
+  async function loadEvents() {
+    try {
+      const r = await api.get(`/api/patients/${patient.id}/abdm-events`);
+      setEvents(Array.isArray(r.data) ? r.data : (r.data?.items || []));
+    } catch {
+      setEvents([]);
+    }
+  }
+
+  async function unlink() {
+    if (!confirm('Unlink ABHA from this patient?')) return;
+    setBusy(true);
+    try {
+      await api.delete(`/api/patients/${patient.id}/abha`);
+      toast.success('ABHA unlinked');
+      await onChanged();
+    } catch (e: any) {
+      toast.error('Unlink failed', e?.response?.data?.error || 'Try again');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const isLinked = !!patient.abhaNumber;
+
+  return (
+    <Card className="rounded-2xl border-slate-200/70">
+      <CardContent className="p-5">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-50 ring-1 ring-emerald-100 flex items-center justify-center">
+              <ShieldAlert className="w-5 h-5 text-emerald-600" />
+            </div>
+            <div>
+              <div className="text-sm font-semibold text-slate-900">ABHA — Ayushman Bharat Health Account</div>
+              <div className="text-xs text-slate-500">National Digital Health Mission (ABDM) link</div>
+            </div>
+          </div>
+          {isLinked ? (
+            <Button variant="outline" size="sm" onClick={unlink} disabled={busy} className="rounded-lg">
+              {busy ? 'Working…' : 'Unlink'}
+            </Button>
+          ) : (
+            <Button size="sm" onClick={() => setLinkOpen(true)} className="rounded-lg bg-slate-900 hover:bg-slate-800">
+              Link ABHA
+            </Button>
+          )}
+        </div>
+
+        {isLinked ? (
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+            <div>
+              <div className="text-[11px] uppercase tracking-wide text-slate-500">ABHA number</div>
+              <div className="font-mono text-slate-900 tabular-nums">{formatAbha(patient.abhaNumber)}</div>
+            </div>
+            <div>
+              <div className="text-[11px] uppercase tracking-wide text-slate-500">ABHA address</div>
+              <div className="text-slate-900 truncate" title={patient.abhaAddress || ''}>{patient.abhaAddress || '—'}</div>
+            </div>
+            <div>
+              <div className="text-[11px] uppercase tracking-wide text-slate-500">Linked at</div>
+              <div className="text-slate-900">{patient.abhaLinkedAt ? fmtDateTime(patient.abhaLinkedAt) : '—'}</div>
+            </div>
+            <div className="md:col-span-3 mt-1">
+              <button
+                onClick={() => { setHistoryOpen((o) => !o); if (!events) void loadEvents(); }}
+                className="text-xs text-emerald-700 hover:text-emerald-900 underline underline-offset-2"
+              >
+                {historyOpen ? 'Hide ABDM history' : 'Show ABDM history'}
+              </button>
+              {historyOpen && (
+                <div className="mt-2 border border-slate-100 rounded-xl bg-slate-50/40 p-2 max-h-56 overflow-y-auto">
+                  {events === null ? (
+                    <div className="text-xs text-slate-500 p-2">Loading…</div>
+                  ) : events.length === 0 ? (
+                    <div className="text-xs text-slate-500 p-2 italic">No ABDM events recorded yet.</div>
+                  ) : (
+                    <ul className="space-y-1">
+                      {events.map(e => (
+                        <li key={e.id} className="text-xs flex items-start gap-2 p-1.5 border-b border-slate-100 last:border-b-0">
+                          <span className="font-mono text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded text-[10px] shrink-0">{e.type}</span>
+                          <span className="flex-1 text-slate-700 truncate" title={typeof e.payload === 'string' ? e.payload : JSON.stringify(e.payload || {})}>
+                            {typeof e.payload === 'string' ? e.payload : (e.payload?.message || e.payload?.note || '—')}
+                          </span>
+                          <span className="text-[10px] text-slate-400 shrink-0">{fmtDateTime(e.createdAt)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="mt-3 text-sm text-slate-600">
+            This patient has not linked an ABHA. Linking enables ABDM-compliant consent flows and longitudinal health record sharing across providers.
+          </div>
+        )}
+      </CardContent>
+
+      <AbhaLinkDialog
+        open={linkOpen}
+        onClose={() => setLinkOpen(false)}
+        patientId={patient.id}
+        onLinked={onChanged}
+      />
+    </Card>
+  );
+}
+
+function AbhaLinkDialog({ open, onClose, patientId, onLinked }: {
+  open: boolean;
+  onClose: () => void;
+  patientId: string;
+  onLinked: () => void | Promise<void>;
+}) {
+  const [abhaNumber, setAbhaNumber] = useState('');
+  const [abhaAddress, setAbhaAddress] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const toast = useToast();
+
+  // Format the 14-digit ABHA as the user types (XX-XXXX-XXXX-XXXX).
+  function onNumberChange(raw: string) {
+    const digits = raw.replace(/\D/g, '').slice(0, 14);
+    const parts = [
+      digits.slice(0, 2),
+      digits.slice(2, 6),
+      digits.slice(6, 10),
+      digits.slice(10, 14),
+    ].filter(Boolean);
+    setAbhaNumber(parts.join('-'));
+  }
+
+  async function submit() {
+    const digits = abhaNumber.replace(/\D/g, '');
+    if (digits.length !== 14) { toast.error('ABHA must be 14 digits'); return; }
+    setSubmitting(true);
+    try {
+      await api.post(`/api/patients/${patientId}/abha/link`, {
+        abhaNumber: digits,
+        abhaAddress: abhaAddress || undefined,
+      });
+      toast.success('ABHA linked');
+      onClose();
+      setAbhaNumber('');
+      setAbhaAddress('');
+      await onLinked();
+    } catch (e: any) {
+      toast.error('Link failed', e?.response?.data?.error || 'Try again');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md rounded-2xl">
+        <DialogHeader>
+          <DialogTitle>Link ABHA</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <div>
+            <Label className="text-xs text-slate-500">ABHA number (14 digits) *</Label>
+            <Input
+              value={abhaNumber}
+              onChange={(e) => onNumberChange(e.target.value)}
+              placeholder="12-3456-7890-1234"
+              className="rounded-lg font-mono tabular-nums"
+              maxLength={17}
+            />
+            <div className="text-[11px] text-slate-500 mt-1">Auto-formatted to XX-XXXX-XXXX-XXXX as you type.</div>
+          </div>
+          <div>
+            <Label className="text-xs text-slate-500">ABHA address (optional)</Label>
+            <Input
+              value={abhaAddress}
+              onChange={(e) => setAbhaAddress(e.target.value)}
+              placeholder="abc@sbx.abdm.gov.in"
+              className="rounded-lg"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={submitting}>Cancel</Button>
+          <Button onClick={submit} disabled={submitting} className="bg-slate-900 hover:bg-slate-800">
+            {submitting ? 'Linking…' : 'Link ABHA'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

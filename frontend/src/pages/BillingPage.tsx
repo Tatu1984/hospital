@@ -42,6 +42,17 @@ interface Bill {
   status: 'Paid' | 'Pending' | 'Partial';
   paymentMode?: string;
   date: string;
+  // India GST / IRP (e-invoice) — populated once the operator fills the
+  // GST details for the invoice via the inline GST modal. The IRN is
+  // assigned by the IRP after we call /generate-irn.
+  gstinPatient?: string | null;
+  hsnSac?: string | null;
+  cgst?: number | null;
+  sgst?: number | null;
+  igst?: number | null;
+  placeOfSupply?: string | null;
+  irn?: string | null;
+  irnGeneratedAt?: string | null;
 }
 
 interface Patient {
@@ -63,6 +74,20 @@ export default function BillingPage() {
 
   const [isNewBillDialogOpen, setIsNewBillDialogOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  // India GST / e-invoice (IRN) — surgical extension. The modal is
+  // opened from the actions column on each row; saving POSTs to
+  // /api/invoices/:id/gst, and IRN generation POSTs to /generate-irn.
+  const [gstBill, setGstBill] = useState<Bill | null>(null);
+  const [gstForm, setGstForm] = useState({
+    gstinPatient: '',
+    hsnSac: '',
+    cgst: '' as string | number,
+    sgst: '' as string | number,
+    igst: '' as string | number,
+    placeOfSupply: '',
+  });
+  const [gstSaving, setGstSaving] = useState(false);
+  const [irnGenerating, setIrnGenerating] = useState<string | null>(null);
 
   const [billFormData, setBillFormData] = useState({
     patientId: queryParams.get('patientId') || '',
@@ -222,6 +247,54 @@ export default function BillingPage() {
   const afterDiscount = subtotal - discount;
   const tax = (afterDiscount * billFormData.taxPercent) / 100;
   const grandTotal = afterDiscount + tax;
+
+  function openGst(b: Bill) {
+    setGstBill(b);
+    setGstForm({
+      gstinPatient: b.gstinPatient || '',
+      hsnSac: b.hsnSac || '',
+      cgst: b.cgst ?? '',
+      sgst: b.sgst ?? '',
+      igst: b.igst ?? '',
+      placeOfSupply: b.placeOfSupply || '',
+    });
+  }
+
+  async function saveGst() {
+    if (!gstBill) return;
+    setGstSaving(true);
+    try {
+      const payload: any = {};
+      if (gstForm.gstinPatient) payload.gstinPatient = gstForm.gstinPatient;
+      if (gstForm.hsnSac) payload.hsnSac = gstForm.hsnSac;
+      if (gstForm.cgst !== '') payload.cgst = Number(gstForm.cgst);
+      if (gstForm.sgst !== '') payload.sgst = Number(gstForm.sgst);
+      if (gstForm.igst !== '') payload.igst = Number(gstForm.igst);
+      if (gstForm.placeOfSupply) payload.placeOfSupply = gstForm.placeOfSupply;
+      await api.post(`/api/invoices/${gstBill.id}/gst`, payload);
+      // Patch the local row so the GST section reflects immediately.
+      setBills(prev => prev.map(b => b.id === gstBill.id ? { ...b, ...payload } : b));
+      setGstBill(null);
+    } catch (e: any) {
+      alert('Save failed: ' + (e?.response?.data?.error || 'Try again'));
+    } finally {
+      setGstSaving(false);
+    }
+  }
+
+  async function generateIrn(bill: Bill) {
+    setIrnGenerating(bill.id);
+    try {
+      const r = await api.post(`/api/invoices/${bill.id}/generate-irn`);
+      const irn = r.data?.irn || r.data?.invoice?.irn || null;
+      const irnGeneratedAt = r.data?.irnGeneratedAt || r.data?.invoice?.irnGeneratedAt || new Date().toISOString();
+      setBills(prev => prev.map(b => b.id === bill.id ? { ...b, irn, irnGeneratedAt } : b));
+    } catch (e: any) {
+      alert('IRN generation failed: ' + (e?.response?.data?.error || 'Try again'));
+    } finally {
+      setIrnGenerating(null);
+    }
+  }
 
   const stats = {
     todayRevenue: bills.filter(b => new Date(b.date).toDateString() === new Date().toDateString())
@@ -604,7 +677,7 @@ export default function BillingPage() {
                     </TableCell>
                     <TableCell>{new Date(bill.date).toLocaleDateString()}</TableCell>
                     <TableCell>
-                      <div className="flex gap-2">
+                      <div className="flex gap-2 items-center flex-wrap">
                         <Button
                           size="sm"
                           variant="outline"
@@ -635,6 +708,15 @@ export default function BillingPage() {
                             <DollarSign className="w-4 h-4" />
                           </Button>
                         )}
+                        {/* India GST / e-invoice section — surgical inline.
+                            Shows a compact summary if any field is set, plus
+                            an "Add GST" CTA if anything is missing. */}
+                        <GstRowSection
+                          bill={bill}
+                          onAdd={() => openGst(bill)}
+                          onGenerateIrn={() => generateIrn(bill)}
+                          irnLoading={irnGenerating === bill.id}
+                        />
                       </div>
                     </TableCell>
                   </TableRow>
@@ -648,6 +730,97 @@ export default function BillingPage() {
       {/* In-app PDF preview — shows the bill with explicit Print +
           Download buttons. */}
       <PdfPreviewDialog pdf={pdfPreview} onClose={() => setPdfPreview(null)} />
+
+      {/* India GST / e-invoice (IRN) modal — surgical addition. */}
+      <Dialog open={!!gstBill} onOpenChange={(o) => { if (!o) setGstBill(null); }}>
+        <DialogContent className="max-w-md rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Add GST details</DialogTitle>
+            <DialogDescription>
+              Required for GST-compliant invoices. e-Invoice (IRN) is generated separately once all fields are filled.
+            </DialogDescription>
+          </DialogHeader>
+          {gstBill && (
+            <div className="space-y-3 py-2">
+              <div className="text-xs text-slate-500 bg-slate-50 rounded-xl p-2">
+                <div className="font-medium text-slate-800">{gstBill.billNo}</div>
+                <div>{gstBill.patientName} · {gstBill.patientMRN}</div>
+                <div className="tabular-nums">Total: ₹{gstBill.total.toFixed(2)}</div>
+              </div>
+              <div>
+                <Label className="text-xs text-slate-500">Patient GSTIN (optional)</Label>
+                <Input value={gstForm.gstinPatient} onChange={(e) => setGstForm({ ...gstForm, gstinPatient: e.target.value.toUpperCase() })} placeholder="22AAAAA0000A1Z5" className="rounded-lg font-mono" maxLength={15} />
+              </div>
+              <div>
+                <Label className="text-xs text-slate-500">HSN / SAC code</Label>
+                <Input value={gstForm.hsnSac} onChange={(e) => setGstForm({ ...gstForm, hsnSac: e.target.value })} placeholder="9993 (healthcare)" className="rounded-lg" />
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <Label className="text-xs text-slate-500">CGST</Label>
+                  <Input type="number" value={gstForm.cgst} onChange={(e) => setGstForm({ ...gstForm, cgst: e.target.value })} className="rounded-lg" />
+                </div>
+                <div>
+                  <Label className="text-xs text-slate-500">SGST</Label>
+                  <Input type="number" value={gstForm.sgst} onChange={(e) => setGstForm({ ...gstForm, sgst: e.target.value })} className="rounded-lg" />
+                </div>
+                <div>
+                  <Label className="text-xs text-slate-500">IGST</Label>
+                  <Input type="number" value={gstForm.igst} onChange={(e) => setGstForm({ ...gstForm, igst: e.target.value })} className="rounded-lg" />
+                </div>
+              </div>
+              <div>
+                <Label className="text-xs text-slate-500">Place of supply</Label>
+                <Input value={gstForm.placeOfSupply} onChange={(e) => setGstForm({ ...gstForm, placeOfSupply: e.target.value })} placeholder="State code or name" className="rounded-lg" />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setGstBill(null)} disabled={gstSaving}>Cancel</Button>
+            <Button onClick={saveGst} disabled={gstSaving}>{gstSaving ? 'Saving…' : 'Save GST'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// India GST / IRP details — compact inline section appended to each
+// row's actions column. Shows the running CGST+SGST+IGST chip + IRN if
+// present, plus buttons to add missing GST details or generate an IRN
+// once everything is filled. Surgical addition — no impact on the rest
+// of BillingPage.
+function GstRowSection({ bill, onAdd, onGenerateIrn, irnLoading }: {
+  bill: Bill;
+  onAdd: () => void;
+  onGenerateIrn: () => void;
+  irnLoading: boolean;
+}) {
+  const hasAnyGst = !!(bill.gstinPatient || bill.hsnSac || bill.cgst || bill.sgst || bill.igst || bill.placeOfSupply);
+  const isComplete = !!bill.hsnSac && (
+    (bill.cgst != null && bill.sgst != null) || bill.igst != null
+  );
+  const gstSum = (bill.cgst || 0) + (bill.sgst || 0) + (bill.igst || 0);
+  return (
+    <div className="flex items-center gap-1 flex-wrap">
+      {hasAnyGst && (
+        <span className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded font-mono tabular-nums" title={`HSN ${bill.hsnSac || '—'} · CGST ${bill.cgst ?? '—'} · SGST ${bill.sgst ?? '—'} · IGST ${bill.igst ?? '—'}`}>
+          GST ₹{gstSum.toFixed(2)}
+        </span>
+      )}
+      {bill.irn && (
+        <span className="text-[10px] text-violet-700 bg-violet-50 border border-violet-200 px-1.5 py-0.5 rounded font-mono truncate max-w-[100px]" title={bill.irn}>
+          IRN {bill.irn.slice(0, 8)}…
+        </span>
+      )}
+      <Button size="sm" variant="ghost" onClick={onAdd} className="h-7 text-[11px] px-2">
+        {hasAnyGst ? 'Edit GST' : 'Add GST'}
+      </Button>
+      {isComplete && !bill.irn && (
+        <Button size="sm" variant="outline" onClick={onGenerateIrn} disabled={irnLoading} className="h-7 text-[11px] px-2">
+          {irnLoading ? '…' : 'Generate IRN'}
+        </Button>
+      )}
     </div>
   );
 }

@@ -173,6 +173,8 @@ const MainLayout = () => {
         { path: '/billing', icon: Receipt, label: 'Billing' },
         { path: '/ipd-billing', icon: Receipt, label: 'IPD Billing' },
         { path: '/tpa', icon: ShieldCheck, label: 'TPA/Insurance' },
+        // India national health insurance — Ayushman Bharat claims.
+        { path: '/pmjay', icon: ShieldCheck, label: 'PMJAY claims' },
       ]
     },
     {
@@ -193,6 +195,11 @@ const MainLayout = () => {
         { path: '/hai-surveillance', icon: AlertOctagon, label: 'HAI Surveillance' },
         { path: '/bmw-tracking', icon: Trash2, label: 'BMW Tracking' },
         { path: '/mnm-reviews', icon: Scale, label: 'M&M Reviews' },
+        // India statutory registers — PCPNDT (Form-F) and MTP. Live
+        // here rather than under "Clinical" because they're
+        // government-mandated record-keeping, not patient workflow.
+        { path: '/form-f', icon: Scan, label: 'Form-F register' },
+        { path: '/mtp-register', icon: AlertCircle, label: 'MTP register' },
         { path: '/quality', icon: Star, label: 'Quality' },
         { path: '/master-data', icon: Settings, label: 'Master Data' },
         { path: '/audit-log', icon: ShieldCheck, label: 'Audit Log' },

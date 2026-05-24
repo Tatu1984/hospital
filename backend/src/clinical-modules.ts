@@ -14,6 +14,7 @@ import { prisma } from './shared/prisma';
 import { authenticateToken } from './middleware';
 import { writeAudit } from './utils/audit';
 import { searchIcd10, getIcd10ByCode } from './data/icd10';
+import { createHash, randomBytes } from 'crypto';
 
 type AuthedReq = Request & { user?: { userId: string; tenantId: string; branchId?: string } };
 
@@ -2592,6 +2593,974 @@ clinicalModulesRouter.get('/nabh/kpis', auth, async (req: AuthedReq, res: Respon
     });
   } catch (e: any) {
     console.error('nabh kpis', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+// =============== PHASE 3: INDIA STATUTORY COMPLIANCE ===============
+// PCPNDT Form-F (ultrasound register), MTP Act register, ABHA / ABDM
+// scaffolds, PMJAY claim workflow, and GST / e-invoicing helpers.
+//
+// Legal notes:
+//   • PCPNDT and MTP registers are privacy-critical — every READ is
+//     audit-logged (action 'FORMF_READ' / 'MTP_READ') in addition to
+//     every mutation. Sex determination is illegal; the Form-F schema
+//     deliberately has no sex field.
+//   • MTP Act 2021: ≤20 wks = one doctor's opinion; 20–24 wks = two
+//     doctors must concur (boardConcurrence flag); >24 wks = only
+//     legal ground is substantial foetal abnormality ('foetal_anomaly').
+//   • ABDM, IRP (e-invoice), and PMJAY TMS integrations are STUBBED
+//     locally — they generate deterministic IDs / acks so the workflow
+//     can be exercised end-to-end without a live gateway.
+
+// ---------- Form-F (PCPNDT) ULTRASOUND REGISTER ----------
+
+const FORMF_ALLOWED_INDICATIONS = [
+  'anomaly_screening', 'growth_monitoring', 'placenta_location',
+  'liquor_volume', 'biophysical_profile', 'twin_pregnancy',
+  'cervical_length', 'doppler_study', 'other',
+];
+const FORMF_ALLOWED_PROCEDURES = ['usg_abdominal', 'usg_transvaginal', 'doppler'];
+
+clinicalModulesRouter.get('/form-f', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { from, to, search } = req.query;
+    const where: any = { tenantId };
+    if (from || to) {
+      where.performedAt = {};
+      if (from) where.performedAt.gte = new Date(String(from));
+      if (to) where.performedAt.lte = new Date(String(to));
+    }
+    if (search) {
+      const s = String(search);
+      where.OR = [
+        { formFNumber: { contains: s, mode: 'insensitive' } },
+        { patientName: { contains: s, mode: 'insensitive' } },
+        { sonologistName: { contains: s, mode: 'insensitive' } },
+      ];
+    }
+    const rows = await prisma.ultrasoundFormF.findMany({
+      where,
+      take: 200,
+      orderBy: { performedAt: 'desc' },
+      include: { patient: { select: { id: true, name: true, mrn: true } } },
+    });
+    res.json(rows);
+  } catch (e: any) {
+    console.error('list form-f', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.get('/form-f/:id', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const row = await prisma.ultrasoundFormF.findFirst({
+      where: { id: req.params.id, tenantId: req.user!.tenantId },
+      include: { patient: { select: { id: true, name: true, mrn: true } } },
+    });
+    if (!row) return res.status(404).json({ error: 'Form-F not found' });
+    // PCPNDT register is privacy-critical — audit every read.
+    void writeAudit({
+      prisma, req,
+      action: 'FORMF_READ',
+      resource: 'UltrasoundFormF',
+      resourceId: row.id,
+    });
+    res.json(row);
+  } catch (e: any) {
+    console.error('get form-f', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/form-f', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const b = req.body || {};
+    const tenantId = req.user!.tenantId;
+
+    // Required field validation. patientAge, indication, procedure,
+    // sonologist name+regNo+pcpndtCert, performedAt all mandatory.
+    if (!b.patientName) return res.status(400).json({ error: 'patientName is required' });
+    if (b.patientAge === undefined || b.patientAge === null) return res.status(400).json({ error: 'patientAge is required' });
+    if (!b.patientHusbandOrFather) return res.status(400).json({ error: 'patientHusbandOrFather is required' });
+    if (!b.patientAddress) return res.status(400).json({ error: 'patientAddress is required' });
+    if (!b.indication) return res.status(400).json({ error: 'indication is required' });
+    if (!FORMF_ALLOWED_INDICATIONS.includes(b.indication)) {
+      return res.status(400).json({ error: `indication must be one of: ${FORMF_ALLOWED_INDICATIONS.join('|')}` });
+    }
+    if (!b.procedure) return res.status(400).json({ error: 'procedure is required' });
+    if (!FORMF_ALLOWED_PROCEDURES.includes(b.procedure)) {
+      return res.status(400).json({ error: `procedure must be one of: ${FORMF_ALLOWED_PROCEDURES.join('|')}` });
+    }
+    if (!b.sonologistName) return res.status(400).json({ error: 'sonologistName is required' });
+    if (!b.sonologistRegNo) return res.status(400).json({ error: 'sonologistRegNo is required' });
+    if (!b.sonologistPcpndtCertNo) return res.status(400).json({ error: 'sonologistPcpndtCertNo is required' });
+    if (!b.performedAt) return res.status(400).json({ error: 'performedAt is required' });
+
+    // If patientId supplied, confirm tenant ownership.
+    if (b.patientId) {
+      const p = await prisma.patient.findFirst({ where: { id: b.patientId, tenantId }, select: { id: true } });
+      if (!p) return res.status(404).json({ error: 'Patient not found' });
+    }
+
+    // Mint formFNumber: F-YYYY-MM-NNNN scoped to tenant + current month.
+    const performedAt = new Date(b.performedAt);
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const monthCount = await prisma.ultrasoundFormF.count({
+      where: { tenantId, createdAt: { gte: monthStart, lt: monthEnd } },
+    });
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const seq = String(monthCount + 1).padStart(4, '0');
+    const formFNumber = `F-${yyyy}-${mm}-${seq}`;
+
+    const created = await prisma.ultrasoundFormF.create({
+      data: {
+        tenantId,
+        formFNumber,
+        patientId: b.patientId || null,
+        patientName: b.patientName,
+        patientAge: Number(b.patientAge),
+        patientHusbandOrFather: b.patientHusbandOrFather,
+        patientAddress: b.patientAddress,
+        spouseName: b.spouseName || null,
+        priorChildren: b.priorChildren ?? 0,
+        priorChildrenGender: b.priorChildrenGender || null,
+        referredById: b.referredById || null,
+        referredByName: b.referredByName || null,
+        referrerRegNo: b.referrerRegNo || null,
+        lmpDate: b.lmpDate ? new Date(b.lmpDate) : null,
+        gestationWeeks: b.gestationWeeks ?? null,
+        obstetricHistory: b.obstetricHistory || null,
+        indication: b.indication,
+        indicationOther: b.indicationOther || null,
+        procedure: b.procedure,
+        sonologistId: req.user!.userId,
+        sonologistName: b.sonologistName,
+        sonologistRegNo: b.sonologistRegNo,
+        sonologistPcpndtCertNo: b.sonologistPcpndtCertNo,
+        performedAt,
+        findings: b.findings || null,
+      },
+      include: { patient: { select: { id: true, name: true, mrn: true } } },
+    });
+
+    void writeAudit({
+      prisma, req,
+      action: 'FORMF_CREATE',
+      resource: 'UltrasoundFormF',
+      resourceId: created.id,
+      newValue: { formFNumber: created.formFNumber, indication: created.indication, procedure: created.procedure },
+    });
+
+    res.status(201).json(created);
+  } catch (e: any) {
+    console.error('create form-f', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.put('/form-f/:id', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const owned = await prisma.ultrasoundFormF.findFirst({
+      where: { id: req.params.id, tenantId: req.user!.tenantId },
+    });
+    if (!owned) return res.status(404).json({ error: 'Form-F not found' });
+    // Once signed, the legal artefact is frozen.
+    if (owned.signedAt) {
+      return res.status(400).json({ error: 'Form-F has been signed and is read-only. Create an amendment instead.' });
+    }
+    const data: any = { ...req.body };
+    delete data.tenantId;
+    delete data.id;
+    delete data.formFNumber;
+    delete data.signedAt;
+    if (data.indication && !FORMF_ALLOWED_INDICATIONS.includes(data.indication)) {
+      return res.status(400).json({ error: `indication must be one of: ${FORMF_ALLOWED_INDICATIONS.join('|')}` });
+    }
+    if (data.procedure && !FORMF_ALLOWED_PROCEDURES.includes(data.procedure)) {
+      return res.status(400).json({ error: `procedure must be one of: ${FORMF_ALLOWED_PROCEDURES.join('|')}` });
+    }
+    if (data.performedAt) data.performedAt = new Date(data.performedAt);
+    if (data.lmpDate) data.lmpDate = new Date(data.lmpDate);
+
+    const updated = await prisma.ultrasoundFormF.update({
+      where: { id: owned.id },
+      data,
+      include: { patient: { select: { id: true, name: true, mrn: true } } },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'FORMF_UPDATE',
+      resource: 'UltrasoundFormF',
+      resourceId: updated.id,
+      newValue: { indication: updated.indication, procedure: updated.procedure },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('update form-f', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/form-f/:id/sign', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const owned = await prisma.ultrasoundFormF.findFirst({
+      where: { id: req.params.id, tenantId: req.user!.tenantId },
+    });
+    if (!owned) return res.status(404).json({ error: 'Form-F not found' });
+    if (owned.signedAt) return res.status(400).json({ error: 'Form-F already signed' });
+    const updated = await prisma.ultrasoundFormF.update({
+      where: { id: owned.id },
+      data: { signedAt: new Date() },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'FORMF_SIGN',
+      resource: 'UltrasoundFormF',
+      resourceId: updated.id,
+      newValue: { signedAt: updated.signedAt },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('sign form-f', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+// ---------- MTP (Medical Termination of Pregnancy) REGISTER ----------
+
+const MTP_ALLOWED_INDICATIONS = [
+  'risk_to_life', 'risk_grave_injury', 'foetal_anomaly',
+  'contraceptive_failure', 'rape_pregnancy', 'mental_health',
+];
+const MTP_ALLOWED_METHODS = [
+  'medical_abortion', 'suction_aspiration', 'd_and_c', 'second_trimester_induction',
+];
+
+clinicalModulesRouter.get('/mtp', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { from, to, search } = req.query;
+    const where: any = { tenantId };
+    if (from || to) {
+      where.procedureAt = {};
+      if (from) where.procedureAt.gte = new Date(String(from));
+      if (to) where.procedureAt.lte = new Date(String(to));
+    }
+    if (search) {
+      const s = String(search);
+      where.OR = [
+        { registerNumber: { contains: s, mode: 'insensitive' } },
+        { primaryDoctorName: { contains: s, mode: 'insensitive' } },
+        { patient: { name: { contains: s, mode: 'insensitive' } } },
+      ];
+    }
+    const rows = await prisma.mTPRecord.findMany({
+      where,
+      take: 200,
+      orderBy: { procedureAt: 'desc' },
+      include: { patient: { select: { id: true, name: true, mrn: true } } },
+    });
+    // MTP Act confidentiality — log every read of the register, including
+    // the specific row IDs that the caller saw.
+    for (const r of rows) {
+      void writeAudit({
+        prisma, req,
+        action: 'MTP_READ',
+        resource: 'MTPRecord',
+        resourceId: r.id,
+      });
+    }
+    res.json(rows);
+  } catch (e: any) {
+    console.error('list mtp', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/mtp', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const b = req.body || {};
+    const tenantId = req.user!.tenantId;
+
+    if (!b.patientId) return res.status(400).json({ error: 'patientId is required' });
+    if (b.patientAge === undefined) return res.status(400).json({ error: 'patientAge is required' });
+    if (!b.husbandOrFatherName) return res.status(400).json({ error: 'husbandOrFatherName is required' });
+    if (!b.address) return res.status(400).json({ error: 'address is required' });
+    if (b.gestationWeeks === undefined || b.gestationWeeks === null) {
+      return res.status(400).json({ error: 'gestationWeeks is required' });
+    }
+    if (!b.indication) return res.status(400).json({ error: 'indication is required' });
+    if (!MTP_ALLOWED_INDICATIONS.includes(b.indication)) {
+      return res.status(400).json({ error: `indication must be one of: ${MTP_ALLOWED_INDICATIONS.join('|')}` });
+    }
+    if (!b.method) return res.status(400).json({ error: 'method is required' });
+    if (!MTP_ALLOWED_METHODS.includes(b.method)) {
+      return res.status(400).json({ error: `method must be one of: ${MTP_ALLOWED_METHODS.join('|')}` });
+    }
+    if (!b.primaryDoctorName) return res.status(400).json({ error: 'primaryDoctorName is required' });
+    if (!b.primaryDoctorRegNo) return res.status(400).json({ error: 'primaryDoctorRegNo is required' });
+    if (!b.procedureAt) return res.status(400).json({ error: 'procedureAt is required' });
+
+    const weeks = Number(b.gestationWeeks);
+
+    // MTP Act 2021: 20-24 weeks requires board concurrence by two
+    // registered medical practitioners.
+    if (weeks >= 20 && weeks <= 24) {
+      if (!b.secondDoctorName || !b.secondDoctorRegNo || b.boardConcurrence !== true) {
+        return res.status(400).json({
+          error: 'MTP Act: ≥20 weeks requires board concurrence by two registered medical practitioners.',
+        });
+      }
+    }
+    // >24 weeks: only substantial foetal abnormality (foetal_anomaly) is
+    // legal grounds for termination under the MTP Act 2021.
+    if (weeks > 24 && b.indication !== 'foetal_anomaly') {
+      return res.status(400).json({
+        error: 'MTP Act: termination beyond 24 weeks is permitted only on grounds of substantial foetal abnormality (indication=foetal_anomaly).',
+      });
+    }
+
+    // Tenant ownership of patient.
+    const patient = await prisma.patient.findFirst({
+      where: { id: b.patientId, tenantId },
+      select: { id: true },
+    });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+
+    // Mint registerNumber: MTP-YYYY-NNNN scoped to tenant + current year.
+    const now = new Date();
+    const yearStart = new Date(now.getFullYear(), 0, 1);
+    const yearEnd = new Date(now.getFullYear() + 1, 0, 1);
+    const yearCount = await prisma.mTPRecord.count({
+      where: { tenantId, createdAt: { gte: yearStart, lt: yearEnd } },
+    });
+    const registerNumber = `MTP-${now.getFullYear()}-${String(yearCount + 1).padStart(4, '0')}`;
+
+    const created = await prisma.mTPRecord.create({
+      data: {
+        tenantId,
+        patientId: patient.id,
+        registerNumber,
+        patientAge: Number(b.patientAge),
+        husbandOrFatherName: b.husbandOrFatherName,
+        address: b.address,
+        contact: b.contact || null,
+        gravida: b.gravida ?? null,
+        parity: b.parity ?? null,
+        livingChildren: b.livingChildren ?? null,
+        lmpDate: b.lmpDate ? new Date(b.lmpDate) : null,
+        gestationWeeks: weeks,
+        indication: b.indication,
+        indicationDetails: b.indicationDetails || null,
+        method: b.method,
+        primaryDoctorId: req.user!.userId,
+        primaryDoctorName: b.primaryDoctorName,
+        primaryDoctorRegNo: b.primaryDoctorRegNo,
+        secondDoctorName: b.secondDoctorName || null,
+        secondDoctorRegNo: b.secondDoctorRegNo || null,
+        boardConcurrence: b.boardConcurrence === true,
+        procedureAt: new Date(b.procedureAt),
+        outcome: b.outcome || null,
+        complications: b.complications || null,
+        notes: b.notes || null,
+      },
+    });
+
+    void writeAudit({
+      prisma, req,
+      action: 'MTP_CREATE',
+      resource: 'MTPRecord',
+      resourceId: created.id,
+      newValue: {
+        registerNumber: created.registerNumber,
+        gestationWeeks: created.gestationWeeks,
+        indication: created.indication,
+      },
+    });
+
+    res.status(201).json(created);
+  } catch (e: any) {
+    console.error('create mtp', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.put('/mtp/:id', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const owned = await prisma.mTPRecord.findFirst({
+      where: { id: req.params.id, tenantId: req.user!.tenantId },
+    });
+    if (!owned) return res.status(404).json({ error: 'MTP record not found' });
+    if (owned.signedAt) {
+      return res.status(400).json({ error: 'MTP record has been signed and is read-only.' });
+    }
+    const data: any = { ...req.body };
+    delete data.tenantId;
+    delete data.id;
+    delete data.registerNumber;
+    delete data.signedAt;
+    delete data.patientId;
+    if (data.indication && !MTP_ALLOWED_INDICATIONS.includes(data.indication)) {
+      return res.status(400).json({ error: `indication must be one of: ${MTP_ALLOWED_INDICATIONS.join('|')}` });
+    }
+    if (data.method && !MTP_ALLOWED_METHODS.includes(data.method)) {
+      return res.status(400).json({ error: `method must be one of: ${MTP_ALLOWED_METHODS.join('|')}` });
+    }
+    // Re-validate gestational-age gates on edit so partial updates can't
+    // sneak past the legal rule.
+    const weeks = data.gestationWeeks !== undefined ? Number(data.gestationWeeks) : owned.gestationWeeks;
+    const indication = data.indication ?? owned.indication;
+    const secondDoctorName = data.secondDoctorName !== undefined ? data.secondDoctorName : owned.secondDoctorName;
+    const secondDoctorRegNo = data.secondDoctorRegNo !== undefined ? data.secondDoctorRegNo : owned.secondDoctorRegNo;
+    const boardConcurrence = data.boardConcurrence !== undefined ? data.boardConcurrence === true : owned.boardConcurrence;
+    if (weeks >= 20 && weeks <= 24) {
+      if (!secondDoctorName || !secondDoctorRegNo || !boardConcurrence) {
+        return res.status(400).json({
+          error: 'MTP Act: ≥20 weeks requires board concurrence by two registered medical practitioners.',
+        });
+      }
+    }
+    if (weeks > 24 && indication !== 'foetal_anomaly') {
+      return res.status(400).json({
+        error: 'MTP Act: termination beyond 24 weeks is permitted only on grounds of substantial foetal abnormality (indication=foetal_anomaly).',
+      });
+    }
+    if (data.procedureAt) data.procedureAt = new Date(data.procedureAt);
+    if (data.lmpDate) data.lmpDate = new Date(data.lmpDate);
+
+    const updated = await prisma.mTPRecord.update({ where: { id: owned.id }, data });
+    void writeAudit({
+      prisma, req,
+      action: 'MTP_UPDATE',
+      resource: 'MTPRecord',
+      resourceId: updated.id,
+      newValue: { gestationWeeks: updated.gestationWeeks, indication: updated.indication },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('update mtp', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/mtp/:id/sign', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const owned = await prisma.mTPRecord.findFirst({
+      where: { id: req.params.id, tenantId: req.user!.tenantId },
+    });
+    if (!owned) return res.status(404).json({ error: 'MTP record not found' });
+    if (owned.signedAt) return res.status(400).json({ error: 'MTP record already signed' });
+    const updated = await prisma.mTPRecord.update({
+      where: { id: owned.id },
+      data: { signedAt: new Date() },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'MTP_SIGN',
+      resource: 'MTPRecord',
+      resourceId: updated.id,
+      newValue: { signedAt: updated.signedAt },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('sign mtp', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+// ---------- ABHA / ABDM (Ayushman Bharat Digital Mission) ----------
+// All gateway calls are STUBBED — a real deploy would call the ABDM M3
+// gateway here (link request → OTP → verify). We assume verified success
+// and record an AbdmLinkEvent so the audit trail looks identical to a
+// real link.
+
+const ABHA_REGEX = /^\d{14}$/;
+
+clinicalModulesRouter.post('/patients/:id/abha/link', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const patient = await prisma.patient.findFirst({
+      where: { id: req.params.id, tenantId },
+      select: { id: true, abhaNumber: true },
+    });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+
+    const abhaNumber: string = String(req.body?.abhaNumber || '').replace(/[-\s]/g, '');
+    if (!ABHA_REGEX.test(abhaNumber)) {
+      return res.status(400).json({ error: 'abhaNumber must be 14 digits' });
+    }
+    const abhaAddress: string | null = req.body?.abhaAddress ? String(req.body.abhaAddress) : null;
+
+    const updated = await prisma.patient.update({
+      where: { id: patient.id },
+      data: {
+        abhaNumber,
+        abhaAddress,
+        abhaLinkedAt: new Date(),
+      },
+      select: { id: true, abhaNumber: true, abhaAddress: true, abhaLinkedAt: true },
+    });
+
+    // Stub: real impl would record the ABDM gateway txn id here.
+    await prisma.abdmLinkEvent.create({
+      data: {
+        tenantId,
+        patientId: patient.id,
+        eventType: 'link_verified',
+        status: 'success',
+        payload: { abhaAddress, source: 'stub' } as any,
+      },
+    });
+
+    void writeAudit({
+      prisma, req,
+      action: 'ABHA_LINK',
+      resource: 'Patient',
+      resourceId: patient.id,
+      oldValue: { abhaNumber: patient.abhaNumber },
+      newValue: { abhaNumber: updated.abhaNumber, abhaAddress: updated.abhaAddress },
+    });
+
+    res.json(updated);
+  } catch (e: any) {
+    console.error('abha link', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.delete('/patients/:id/abha', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const patient = await prisma.patient.findFirst({
+      where: { id: req.params.id, tenantId },
+      select: { id: true, abhaNumber: true, abhaAddress: true },
+    });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+
+    const updated = await prisma.patient.update({
+      where: { id: patient.id },
+      data: { abhaNumber: null, abhaAddress: null, abhaLinkedAt: null },
+      select: { id: true, abhaNumber: true, abhaAddress: true, abhaLinkedAt: true },
+    });
+
+    await prisma.abdmLinkEvent.create({
+      data: {
+        tenantId,
+        patientId: patient.id,
+        eventType: 'link_revoked',
+        status: 'success',
+        payload: { previousAbhaAddress: patient.abhaAddress } as any,
+      },
+    });
+
+    void writeAudit({
+      prisma, req,
+      action: 'ABHA_UNLINK',
+      resource: 'Patient',
+      resourceId: patient.id,
+      oldValue: { abhaNumber: patient.abhaNumber },
+    });
+
+    res.json(updated);
+  } catch (e: any) {
+    console.error('abha unlink', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.get('/patients/:id/abdm-events', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const patient = await prisma.patient.findFirst({
+      where: { id: req.params.id, tenantId },
+      select: { id: true },
+    });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+    const events = await prisma.abdmLinkEvent.findMany({
+      where: { tenantId, patientId: patient.id },
+      orderBy: { occurredAt: 'desc' },
+      take: 200,
+    });
+    res.json(events);
+  } catch (e: any) {
+    console.error('abdm events', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+// ---------- PMJAY (Ayushman Bharat) CLAIMS ----------
+
+clinicalModulesRouter.get('/pmjay', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { status, search } = req.query;
+    const where: any = { tenantId };
+    if (status) where.status = String(status);
+    if (search) {
+      const s = String(search);
+      where.OR = [
+        { pmjayId: { contains: s, mode: 'insensitive' } },
+        { packageCode: { contains: s, mode: 'insensitive' } },
+        { packageName: { contains: s, mode: 'insensitive' } },
+        { patient: { name: { contains: s, mode: 'insensitive' } } },
+      ];
+    }
+    const rows = await prisma.pMJAYClaim.findMany({
+      where,
+      take: 200,
+      orderBy: { createdAt: 'desc' },
+      include: { patient: { select: { id: true, name: true, mrn: true } } },
+    });
+    res.json(rows);
+  } catch (e: any) {
+    console.error('list pmjay', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/pmjay', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const b = req.body || {};
+    const tenantId = req.user!.tenantId;
+    if (!b.patientId) return res.status(400).json({ error: 'patientId is required' });
+    if (!b.pmjayId) return res.status(400).json({ error: 'pmjayId is required' });
+    if (!b.packageCode) return res.status(400).json({ error: 'packageCode is required' });
+    if (!b.packageName) return res.status(400).json({ error: 'packageName is required' });
+    if (b.packageAmount === undefined || b.packageAmount === null) {
+      return res.status(400).json({ error: 'packageAmount is required' });
+    }
+
+    const patient = await prisma.patient.findFirst({
+      where: { id: b.patientId, tenantId },
+      select: { id: true },
+    });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+
+    const created = await prisma.pMJAYClaim.create({
+      data: {
+        tenantId,
+        patientId: patient.id,
+        admissionId: b.admissionId || null,
+        invoiceId: b.invoiceId || null,
+        pmjayId: String(b.pmjayId),
+        packageCode: String(b.packageCode),
+        packageName: String(b.packageName),
+        packageAmount: b.packageAmount,
+        status: 'eligibility_pending',
+      },
+      include: { patient: { select: { id: true, name: true, mrn: true } } },
+    });
+
+    void writeAudit({
+      prisma, req,
+      action: 'PMJAY_CREATE',
+      resource: 'PMJAYClaim',
+      resourceId: created.id,
+      newValue: { pmjayId: created.pmjayId, packageCode: created.packageCode, status: created.status },
+    });
+
+    res.status(201).json(created);
+  } catch (e: any) {
+    console.error('create pmjay', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+// Helper: load a tenant-owned PMJAY claim or 404.
+async function loadOwnedPMJAY(id: string, tenantId: string) {
+  return prisma.pMJAYClaim.findFirst({ where: { id, tenantId } });
+}
+
+clinicalModulesRouter.post('/pmjay/:id/request-preauth', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const claim = await loadOwnedPMJAY(req.params.id, req.user!.tenantId);
+    if (!claim) return res.status(404).json({ error: 'PMJAY claim not found' });
+    // STUB: real impl would POST to the TMS pre-auth endpoint.
+    const updated = await prisma.pMJAYClaim.update({
+      where: { id: claim.id },
+      data: {
+        status: 'pre_auth_requested',
+        preAuthAt: new Date(),
+        preAuthNumber: req.body?.preAuthNumber || null,
+      },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'PMJAY_PREAUTH_REQUEST',
+      resource: 'PMJAYClaim',
+      resourceId: updated.id,
+      oldValue: { status: claim.status },
+      newValue: { status: updated.status },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('pmjay preauth request', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/pmjay/:id/approve-preauth', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const claim = await loadOwnedPMJAY(req.params.id, req.user!.tenantId);
+    if (!claim) return res.status(404).json({ error: 'PMJAY claim not found' });
+    if (!req.body?.preAuthNumber) return res.status(400).json({ error: 'preAuthNumber is required' });
+    const updated = await prisma.pMJAYClaim.update({
+      where: { id: claim.id },
+      data: {
+        status: 'pre_auth_approved',
+        preAuthNumber: String(req.body.preAuthNumber),
+        preAuthApprovedAt: new Date(),
+      },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'PMJAY_PREAUTH_APPROVE',
+      resource: 'PMJAYClaim',
+      resourceId: updated.id,
+      oldValue: { status: claim.status },
+      newValue: { status: updated.status, preAuthNumber: updated.preAuthNumber },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('pmjay preauth approve', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/pmjay/:id/reject-preauth', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const claim = await loadOwnedPMJAY(req.params.id, req.user!.tenantId);
+    if (!claim) return res.status(404).json({ error: 'PMJAY claim not found' });
+    if (!req.body?.rejectionReason) return res.status(400).json({ error: 'rejectionReason is required' });
+    const updated = await prisma.pMJAYClaim.update({
+      where: { id: claim.id },
+      data: {
+        status: 'pre_auth_rejected',
+        rejectionReason: String(req.body.rejectionReason),
+      },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'PMJAY_PREAUTH_REJECT',
+      resource: 'PMJAYClaim',
+      resourceId: updated.id,
+      oldValue: { status: claim.status },
+      newValue: { status: updated.status, rejectionReason: updated.rejectionReason },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('pmjay preauth reject', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/pmjay/:id/submit-claim', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const claim = await loadOwnedPMJAY(req.params.id, req.user!.tenantId);
+    if (!claim) return res.status(404).json({ error: 'PMJAY claim not found' });
+    const updated = await prisma.pMJAYClaim.update({
+      where: { id: claim.id },
+      data: {
+        status: 'claim_submitted',
+        claimSubmittedAt: new Date(),
+        claimNumber: req.body?.claimNumber || null,
+        documents: req.body?.documents ?? claim.documents ?? undefined,
+      },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'PMJAY_CLAIM_SUBMIT',
+      resource: 'PMJAYClaim',
+      resourceId: updated.id,
+      oldValue: { status: claim.status },
+      newValue: { status: updated.status, claimNumber: updated.claimNumber },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('pmjay claim submit', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/pmjay/:id/approve-claim', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const claim = await loadOwnedPMJAY(req.params.id, req.user!.tenantId);
+    if (!claim) return res.status(404).json({ error: 'PMJAY claim not found' });
+    if (req.body?.amountApproved === undefined || req.body?.amountApproved === null) {
+      return res.status(400).json({ error: 'amountApproved is required' });
+    }
+    const updated = await prisma.pMJAYClaim.update({
+      where: { id: claim.id },
+      data: {
+        status: 'claim_approved',
+        amountApproved: req.body.amountApproved,
+        claimApprovedAt: new Date(),
+      },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'PMJAY_CLAIM_APPROVE',
+      resource: 'PMJAYClaim',
+      resourceId: updated.id,
+      oldValue: { status: claim.status },
+      newValue: { status: updated.status, amountApproved: req.body.amountApproved },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('pmjay claim approve', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/pmjay/:id/mark-paid', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const claim = await loadOwnedPMJAY(req.params.id, req.user!.tenantId);
+    if (!claim) return res.status(404).json({ error: 'PMJAY claim not found' });
+    if (req.body?.amountPaid === undefined || req.body?.amountPaid === null) {
+      return res.status(400).json({ error: 'amountPaid is required' });
+    }
+    const paidAt = req.body?.paidAt ? new Date(req.body.paidAt) : new Date();
+    const updated = await prisma.pMJAYClaim.update({
+      where: { id: claim.id },
+      data: {
+        status: 'paid',
+        amountPaid: req.body.amountPaid,
+        paidAt,
+      },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'PMJAY_PAID',
+      resource: 'PMJAYClaim',
+      resourceId: updated.id,
+      oldValue: { status: claim.status },
+      newValue: { status: updated.status, amountPaid: req.body.amountPaid, paidAt },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('pmjay mark paid', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+// ---------- GST / e-INVOICING HELPERS ----------
+
+clinicalModulesRouter.post('/invoices/:id/gst', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    // Invoice has no direct tenantId — scope via patient.
+    const invoice = await prisma.invoice.findFirst({
+      where: { id: req.params.id, patient: { tenantId } },
+    });
+    if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+
+    const b = req.body || {};
+    // Pull the hospital GSTIN from tenant.config if present. Tenant.config
+    // is JSON; we look for a top-level `gstin` key. Falls back to null.
+    let gstinHospital: string | null = null;
+    try {
+      const tenant = await prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { config: true },
+      });
+      const cfg = (tenant?.config as any) || {};
+      if (cfg && typeof cfg.gstin === 'string' && cfg.gstin.trim()) {
+        gstinHospital = cfg.gstin.trim();
+      }
+    } catch {
+      gstinHospital = null;
+    }
+
+    const updated = await prisma.invoice.update({
+      where: { id: invoice.id },
+      data: {
+        gstinPatient: b.gstinPatient ?? invoice.gstinPatient,
+        gstinHospital: gstinHospital ?? invoice.gstinHospital,
+        hsnSac: b.hsnSac ?? invoice.hsnSac,
+        cgst: b.cgst ?? invoice.cgst,
+        sgst: b.sgst ?? invoice.sgst,
+        igst: b.igst ?? invoice.igst,
+        placeOfSupply: b.placeOfSupply ?? invoice.placeOfSupply,
+      },
+    });
+
+    void writeAudit({
+      prisma, req,
+      action: 'INVOICE_GST_PATCH',
+      resource: 'Invoice',
+      resourceId: updated.id,
+      oldValue: {
+        gstinPatient: invoice.gstinPatient,
+        hsnSac: invoice.hsnSac,
+        placeOfSupply: invoice.placeOfSupply,
+      },
+      newValue: {
+        gstinPatient: updated.gstinPatient,
+        gstinHospital: updated.gstinHospital,
+        hsnSac: updated.hsnSac,
+        placeOfSupply: updated.placeOfSupply,
+      },
+    });
+
+    res.json(updated);
+  } catch (e: any) {
+    console.error('invoice gst patch', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+// STUB: generates a deterministic IRN locally so the e-invoice workflow
+// can be exercised without calling the IRP gateway. In production, this
+// handler would POST the invoice payload to the IRP / GSP API and stamp
+// the returned irn, ack number, ack date, and signed QR code onto the
+// invoice row. We mirror the same fields here.
+clinicalModulesRouter.post('/invoices/:id/generate-irn', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const invoice = await prisma.invoice.findFirst({
+      where: { id: req.params.id, patient: { tenantId } },
+    });
+    if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+    if (invoice.irn) {
+      return res.status(400).json({ error: 'IRN already generated for this invoice' });
+    }
+
+    // Deterministic 64-char hex hash of invoiceId + total + createdAt.
+    const totalStr = invoice.total.toString();
+    const seed = `${invoice.id}|${totalStr}|${invoice.createdAt.toISOString()}`;
+    const irn = createHash('sha256').update(seed).digest('hex'); // 64-char
+
+    // 14-digit numeric ack number (mirrors IRP shape).
+    const ackBytes = randomBytes(8);
+    let ackNum = 0n;
+    for (const byte of ackBytes) ackNum = (ackNum << 8n) | BigInt(byte);
+    const irnAckNumber = (ackNum % 100000000000000n).toString().padStart(14, '0');
+
+    const irnAckDate = new Date();
+    const qrPayload = `${irn}|${totalStr}|${invoice.gstinHospital || ''}|${invoice.placeOfSupply || ''}`;
+    const qrCode = Buffer.from(qrPayload, 'utf8').toString('base64');
+
+    const updated = await prisma.invoice.update({
+      where: { id: invoice.id },
+      data: { irn, irnAckNumber, irnAckDate, qrCode },
+    });
+
+    void writeAudit({
+      prisma, req,
+      action: 'INVOICE_IRN_GENERATE',
+      resource: 'Invoice',
+      resourceId: updated.id,
+      newValue: { irn: updated.irn, irnAckNumber: updated.irnAckNumber, irnAckDate: updated.irnAckDate },
+    });
+
+    res.json(updated);
+  } catch (e: any) {
+    console.error('invoice generate irn', e);
     res.status(500).json({ error: 'Internal server error', detail: e?.message });
   }
 });

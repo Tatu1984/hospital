@@ -25,6 +25,9 @@ model Tenant {
   haiCases     HAICase[]
   bmwLogs      BMWLog[]
   mnmReviews   MnMReview[]
+  ultrasoundForms UltrasoundFormF[]
+  mtpRecords     MTPRecord[]
+  pmjayClaims    PMJAYClaim[]
 
   @@map("tenants")
 }
@@ -273,6 +276,17 @@ model Patient {
   // backfilled by extracting that prefix.
   purpose           String?
   referralSourceId  String?
+  // ABHA / Ayushman Bharat Health Account — Government of India's
+  // unified patient ID under the Ayushman Bharat Digital Mission (ABDM).
+  // 14-digit number. We link patient → ABHA once verified via the ABDM
+  // gateway (sandbox or production). Optional; many patients won't have one.
+  abhaNumber        String?
+  abhaAddress       String?  // patient's @sbx.abdm.gov.in handle, e.g. 'sudipto.banerjee@sbx'
+  abhaLinkedAt      DateTime?
+  // Aadhaar (last 4 digits only — full PAN is PHI we deliberately don't store).
+  // For full Aadhaar-linked ABHA, the linking is done via OTP through ABDM
+  // gateway; we don't persist the Aadhaar number itself.
+  aadhaarLast4      String?
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
   admissions        Admission[]
@@ -305,6 +319,9 @@ model Patient {
   implants          Implant[]
   haiCases          HAICase[]
   mnmReviews        MnMReview[]
+  ultrasoundForms   UltrasoundFormF[]
+  mtpRecords        MTPRecord[]
+  pmjayClaims       PMJAYClaim[]
 
   @@unique([tenantId, mrn])
   @@map("patients")
@@ -509,6 +526,23 @@ model Invoice {
   paid           Decimal         @default(0) @db.Decimal(10, 2)
   balance        Decimal         @db.Decimal(10, 2)
   status         String          @default("draft")
+  // India GST compliance. gstinPatient is the patient/employer's GSTIN
+  // for B2B billing (corporates, TPAs). gstinHospital is our own GSTIN
+  // (denormalised from Branch for invoice immutability). hsnSac is the
+  // line-level HSN/SAC code; in practice we store it on the items JSON.
+  // cgst/sgst/igst splits the `tax` field for compliant printing.
+  gstinPatient   String?
+  gstinHospital  String?
+  hsnSac         String?
+  cgst           Decimal?        @db.Decimal(10, 2)
+  sgst           Decimal?        @db.Decimal(10, 2)
+  igst           Decimal?        @db.Decimal(10, 2)
+  placeOfSupply  String?         // state code, e.g. '29' for Karnataka
+  // IRP reference for e-invoicing (mandatory ≥ ₹5cr turnover).
+  irn            String?         // 64-char hash returned by IRP
+  irnAckNumber   String?
+  irnAckDate     DateTime?
+  qrCode         String?         // base64 of QR string returned by IRP
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
   encounter      Encounter?      @relation(fields: [encounterId], references: [id])
@@ -2628,4 +2662,199 @@ model MnMReview {
   @@index([tenantId, status])
   @@index([patientId])
   @@map("mnm_reviews")
+}
+
+// ===========================
+// PHASE 3 — INDIA STATUTORY COMPLIANCE
+// ===========================
+
+// PCPNDT Form-F — Pre-Conception and Pre-Natal Diagnostic Techniques Act.
+// MANDATORY for every ultrasound on a pregnant woman in India. Failure
+// to maintain Form-F is a criminal offence. We model it as a structured
+// table so a sonologist can fill it before signing off on a scan.
+//
+// Sex determination is prohibited — the form has a "purpose of ultrasound"
+// field that the doctor must select from the legally permissible list
+// (foetal anomaly screening, growth monitoring, placenta location, etc.).
+// We DON'T store any sex-determination output; even if the doctor knew,
+// it can't be entered. The legal artefact is the ink-signed printed form.
+model UltrasoundFormF {
+  id              String   @id @default(uuid())
+  tenantId        String
+  // Form-F registration number per the rules: serial / month / year.
+  formFNumber     String
+  // Section A — Patient / spouse / referrer.
+  patientId       String?  // optional link if registered in our system
+  patientName     String
+  patientAge      Int
+  patientHusbandOrFather String
+  patientAddress  String
+  spouseName      String?
+  // Number of prior children + their gender — Form-F asks for this so the
+  // authority can detect sex-selective abortion patterns.
+  priorChildren   Int      @default(0)
+  priorChildrenGender String? // free text, e.g. "1 girl, 1 boy"
+  referredById    String?  // referring doctor (FK User)
+  referredByName  String?
+  referrerRegNo   String?  // referring doctor's MCI/State council number
+  // Section B — Clinical history.
+  lmpDate         DateTime?
+  gestationWeeks  Int?
+  obstetricHistory String?
+  // Section C — Purpose / indication (the legally permissible options).
+  // 'anomaly_screening' | 'growth_monitoring' | 'placenta_location' |
+  // 'liquor_volume' | 'biophysical_profile' | 'twin_pregnancy' |
+  // 'cervical_length' | 'doppler_study' | 'other'
+  indication      String
+  indicationOther String?
+  // Section D — Procedure done. NO sex determination here by design.
+  procedure       String   // 'usg_abdominal' | 'usg_transvaginal' | 'doppler'
+  // Section E — Sonologist declaration & signature.
+  sonologistId    String?  // FK User
+  sonologistName  String
+  sonologistRegNo String
+  // Sonologist's PCPNDT registration certificate number (separate licence).
+  sonologistPcpndtCertNo String
+  performedAt     DateTime
+  // Findings are entered as free text — no sex disclosure.
+  findings        String?
+  // Signed = ready for register; unsigned = draft.
+  signedAt        DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant  Tenant   @relation(fields: [tenantId], references: [id])
+  patient Patient? @relation(fields: [patientId], references: [id])
+
+  @@unique([tenantId, formFNumber])
+  @@index([tenantId, performedAt])
+  @@map("ultrasound_form_f")
+}
+
+// MTP (Medical Termination of Pregnancy) statutory register per the
+// MTP Act 1971 (amended 2021). Every termination must be logged with
+// gestational age, indication, doctor's opinion, and (for >20 weeks)
+// approval from a board of two registered medical practitioners.
+model MTPRecord {
+  id              String    @id @default(uuid())
+  tenantId        String
+  patientId       String
+  // Sequential register number — mtp/YYYY/NNNN.
+  registerNumber  String
+  // Patient particulars at the time of the procedure (denormalised).
+  patientAge      Int
+  husbandOrFatherName String
+  address         String
+  contact         String?
+  // Maternal history.
+  gravida         Int?
+  parity          Int?
+  livingChildren  Int?
+  lmpDate         DateTime?
+  gestationWeeks  Int       // critical — drives single vs board approval
+  // Reason — legally permitted grounds (MTP Act 2021):
+  //   'risk_to_life' | 'risk_grave_injury' | 'foetal_anomaly' |
+  //   'contraceptive_failure' | 'rape_pregnancy' | 'mental_health'
+  indication      String
+  indicationDetails String?
+  // Method — 'medical_abortion' | 'suction_aspiration' | 'd_and_c' |
+  // 'second_trimester_induction'.
+  method          String
+  // Doctor(s). For ≤20 weeks: one doctor's opinion suffices.
+  // For 20-24 weeks: TWO doctors must concur in writing (board).
+  // We persist the boardConcurrence flag + second doctor for ≥20 wks.
+  primaryDoctorId String?
+  primaryDoctorName String
+  primaryDoctorRegNo String
+  secondDoctorName String?
+  secondDoctorRegNo String?
+  boardConcurrence Boolean  @default(false)
+  // Procedure timestamp + outcome.
+  procedureAt     DateTime
+  outcome         String?   // 'completed' | 'incomplete' | 'complications' | 'death'
+  complications   String?
+  // Confidentiality is the foundation of MTP Act — registers cannot
+  // be disclosed except to the authority. We audit-log every read.
+  signedAt        DateTime?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id])
+  patient Patient @relation(fields: [patientId], references: [id])
+
+  @@unique([tenantId, registerNumber])
+  @@index([tenantId, procedureAt])
+  @@map("mtp_records")
+}
+
+// ABDM (Ayushman Bharat Digital Mission) integration scaffold. The
+// patient → ABHA link itself is on Patient.abhaNumber. This table
+// records the linking transaction + any subsequent record sharing
+// events (linking care contexts, fetching health records via M3
+// gateway, etc.).
+model AbdmLinkEvent {
+  id           String   @id @default(uuid())
+  tenantId     String
+  patientId    String
+  // 'link_request' | 'link_otp_sent' | 'link_verified' |
+  // 'care_context_linked' | 'health_record_pushed' | 'health_record_fetched'
+  eventType    String
+  // Reference to the ABDM gateway txn id for traceability.
+  abdmTxnId    String?
+  // Free JSON for payload (link tokens, OTP refs, etc.) — never store OTPs.
+  payload      Json?
+  // 'success' | 'failed' | 'pending'
+  status       String   @default("pending")
+  errorMessage String?
+  occurredAt   DateTime @default(now())
+
+  @@index([tenantId, patientId])
+  @@index([patientId, occurredAt])
+  @@map("abdm_link_events")
+}
+
+// PMJAY (Pradhan Mantri Jan Arogya Yojana / Ayushman Bharat) claim.
+// Government insurance ₹5 lakh/family/year covering ~1500 packages.
+// Each claim flows: eligibility check → pre-auth → admission →
+// procedure → claim submission → adjudication → payment.
+model PMJAYClaim {
+  id              String    @id @default(uuid())
+  tenantId        String
+  patientId       String
+  admissionId     String?
+  invoiceId       String?
+  // PMJAY identifiers.
+  pmjayId         String    // beneficiary's 9-char PMJAY ID
+  hospitalCode    String?   // hospital's empanelment code
+  packageCode     String    // chosen package, e.g. 'M1.01.001' (mastectomy)
+  packageName     String
+  packageAmount   Decimal   @db.Decimal(12, 2)
+  // Workflow status.
+  // 'eligibility_pending' | 'pre_auth_requested' | 'pre_auth_approved' |
+  // 'pre_auth_rejected' | 'claim_submitted' | 'claim_approved' |
+  // 'claim_rejected' | 'paid' | 'cancelled'
+  status          String    @default("eligibility_pending")
+  preAuthAt       DateTime?
+  preAuthNumber   String?
+  preAuthApprovedAt DateTime?
+  claimSubmittedAt DateTime?
+  claimNumber     String?
+  claimApprovedAt DateTime?
+  amountApproved  Decimal?  @db.Decimal(12, 2)
+  paidAt          DateTime?
+  amountPaid      Decimal?  @db.Decimal(12, 2)
+  // Free-form notes / rejection reason.
+  rejectionReason String?
+  documents       Json?     // [{type, name, url}] — discharge summary, bills, etc.
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id])
+  patient Patient @relation(fields: [patientId], references: [id])
+
+  @@index([tenantId, status])
+  @@index([patientId])
+  @@map("pmjay_claims")
 }
