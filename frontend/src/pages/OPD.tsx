@@ -26,14 +26,19 @@ interface OpdAppointment {
   doctor?: { id: string; name: string };
 }
 
+// Status badge tinting. Normalises the lowercase + hyphen + underscore
+// zoo of stored values into a small palette.
 const statusBadgeColor = (s: string) => {
-  switch ((s || '').toUpperCase()) {
-    case 'CHECKED_IN': return 'bg-blue-100 text-blue-800';
-    case 'IN_PROGRESS': return 'bg-amber-100 text-amber-800';
-    case 'COMPLETED': return 'bg-emerald-100 text-emerald-800';
-    case 'CANCELLED': return 'bg-red-100 text-red-700';
-    case 'NO_SHOW': return 'bg-slate-200 text-slate-600';
-    default: return 'bg-slate-100 text-slate-800';
+  const norm = (s || '').toLowerCase().replace(/_/g, '-');
+  switch (norm) {
+    case 'scheduled':    return 'bg-slate-100 text-slate-800';
+    case 'confirmed':    return 'bg-emerald-100 text-emerald-800';
+    case 'checked-in':   return 'bg-blue-100 text-blue-800';
+    case 'in-progress':  return 'bg-amber-100 text-amber-800';
+    case 'completed':    return 'bg-emerald-100 text-emerald-800';
+    case 'cancelled':    return 'bg-red-100 text-red-700';
+    case 'no-show':      return 'bg-slate-200 text-slate-600';
+    default:             return 'bg-slate-100 text-slate-800';
   }
 };
 
@@ -44,20 +49,29 @@ export default function OPD() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
-  // YYYY-MM-DD for today, in the user's local timezone
-  const today = useMemo(() => {
+  // YYYY-MM-DD for today, in the user's local timezone. We use this as
+  // the default for the date picker; the user can change it.
+  const todayStr = useMemo(() => {
     const d = new Date();
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
     return `${y}-${m}-${day}`;
   }, []);
+  // `viewMode='day'` shows one selected day; `'upcoming'` shows the next
+  // 30 days so the user can see scheduled-but-not-today appointments
+  // (the original bug: a confirmed appointment for tomorrow was invisible).
+  const [viewMode, setViewMode] = useState<'day' | 'upcoming'>('day');
+  const [pickedDate, setPickedDate] = useState<string>(todayStr);
 
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await api.get('/api/appointments', { params: { date: today } });
+      const params: Record<string, string> = viewMode === 'upcoming'
+        ? { upcoming: 'true' }
+        : { date: pickedDate };
+      const res = await api.get('/api/appointments', { params });
       setAppointments(toArray<OpdAppointment>(res.data));
     } catch (e: any) {
       setError(e?.response?.data?.error || e?.message || 'Failed to load OPD queue');
@@ -69,7 +83,8 @@ export default function OPD() {
 
   useEffect(() => {
     load();
-  }, [today]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, pickedDate]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -82,15 +97,25 @@ export default function OPD() {
     );
   }, [appointments, search]);
 
-  const stats = useMemo(() => {
-    const norm = (s: string) => (s || '').toUpperCase();
-    return {
-      today: appointments.length,
-      waiting: appointments.filter((a) => ['SCHEDULED', 'CHECKED_IN'].includes(norm(a.status))).length,
-      inProgress: appointments.filter((a) => norm(a.status) === 'IN_PROGRESS').length,
-      completed: appointments.filter((a) => norm(a.status) === 'COMPLETED').length,
-    };
-  }, [appointments]);
+  // Status normalisation — the backend stores statuses in lowercase
+  // with a mix of hyphen and underscore separators
+  // ('scheduled' | 'confirmed' | 'checked-in' | 'in_progress' |
+  //  'in-progress' | 'completed' | 'cancelled' | 'no-show' | 'no_show').
+  // We collapse the whole zoo into 4 visible buckets so the tile counts
+  // line up with what the user actually sees in the table.
+  const statusBucket = (raw: string): 'waiting' | 'inProgress' | 'completed' | 'other' => {
+    const s = (raw || '').toLowerCase().replace(/_/g, '-');
+    if (['scheduled', 'confirmed', 'checked-in'].includes(s)) return 'waiting';
+    if (s === 'in-progress') return 'inProgress';
+    if (s === 'completed') return 'completed';
+    return 'other'; // cancelled / no-show / unknown — visible in table but not counted
+  };
+  const stats = useMemo(() => ({
+    today:      appointments.length,
+    waiting:    appointments.filter((a) => statusBucket(a.status) === 'waiting').length,
+    inProgress: appointments.filter((a) => statusBucket(a.status) === 'inProgress').length,
+    completed:  appointments.filter((a) => statusBucket(a.status) === 'completed').length,
+  }), [appointments]);
 
   const onCheckIn = async (id: string) => {
     try {
@@ -179,13 +204,52 @@ export default function OPD() {
           </div>
           <div>
             <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">OutPatient Department</h1>
-            <p className="text-sm text-slate-500 mt-0.5">Today's appointments and consultations</p>
+            <p className="text-sm text-slate-500 mt-0.5">
+              {viewMode === 'upcoming'
+                ? 'Upcoming appointments — next 30 days'
+                : pickedDate === todayStr
+                  ? "Today's appointments and consultations"
+                  : `Appointments for ${pickedDate}`}
+            </p>
           </div>
         </div>
-        <Button variant="outline" onClick={load} disabled={loading} className="gap-1.5 h-10 rounded-xl">
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Segmented toggle — switch between a single date and the
+              30-day upcoming queue. The upcoming view was added because
+              users complained that confirmed appointments for tomorrow
+              were invisible on OPD (which was hard-coded to today). */}
+          <div className="inline-flex rounded-xl border border-slate-200 bg-white p-0.5">
+            <button
+              onClick={() => setViewMode('day')}
+              className={`text-[12px] px-3 h-8 rounded-lg transition-colors ${
+                viewMode === 'day' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'
+              }`}
+            >Single day</button>
+            <button
+              onClick={() => setViewMode('upcoming')}
+              className={`text-[12px] px-3 h-8 rounded-lg transition-colors ${
+                viewMode === 'upcoming' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'
+              }`}
+            >Upcoming (30d)</button>
+          </div>
+          {viewMode === 'day' && (
+            <Input
+              type="date"
+              value={pickedDate}
+              onChange={(e) => setPickedDate(e.target.value || todayStr)}
+              className="h-10 w-[160px] rounded-xl"
+            />
+          )}
+          {viewMode === 'day' && pickedDate !== todayStr && (
+            <Button variant="outline" onClick={() => setPickedDate(todayStr)} className="h-10 rounded-xl text-xs">
+              Today
+            </Button>
+          )}
+          <Button variant="outline" onClick={load} disabled={loading} className="gap-1.5 h-10 rounded-xl">
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -241,7 +305,9 @@ export default function OPD() {
             <div>
               <CardTitle>OPD Queue</CardTitle>
               <CardDescription>
-                {loading ? 'Loading…' : `${filtered.length} appointment(s) for today (${today})`}
+                {loading
+                  ? 'Loading…'
+                  : `${filtered.length} appointment(s) — ${viewMode === 'upcoming' ? 'next 30 days' : pickedDate}`}
               </CardDescription>
             </div>
             <Input
@@ -274,7 +340,15 @@ export default function OPD() {
                 <TableRow><TableCell colSpan={6} className="py-10 text-center text-slate-500">Loading appointments…</TableCell></TableRow>
               ) : encounters.length === 0 ? (
                 <TableRow><TableCell colSpan={6} className="py-10 text-center text-slate-500">
-                  No appointments for today. Book one from <a href="/appointment" className="text-blue-600 hover:underline">Appointments</a> or register a patient first.
+                  {viewMode === 'upcoming'
+                    ? 'No upcoming appointments in the next 30 days.'
+                    : pickedDate === todayStr
+                      ? 'No appointments for today.'
+                      : `No appointments for ${pickedDate}.`}{' '}
+                  Book one from <a href="/app/appointment" className="text-blue-600 hover:underline">Appointments</a>{' '}
+                  {viewMode === 'day' && pickedDate === todayStr && (
+                    <> or switch to <button type="button" onClick={() => setViewMode('upcoming')} className="text-blue-600 hover:underline">Upcoming (30d)</button> to see future bookings.</>
+                  )}
                 </TableCell></TableRow>
               ) : (
                 encounters.map((encounter) => (

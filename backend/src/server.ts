@@ -3172,14 +3172,45 @@ app.get('/api/wards', authenticateToken, async (req: any, res: Response) => {
 
 app.get('/api/appointments', authenticateToken, async (req: any, res: Response) => {
   try {
-    const { date, patientId, doctorId, status } = req.query;
+    const { date, from, to, patientId, doctorId, status, upcoming } = req.query;
     const where: any = { tenantId: req.user.tenantId };
 
+    // Date filters. Three modes:
+    //   ?date=YYYY-MM-DD       — single calendar day (legacy, kept for compat)
+    //   ?from=...&to=...       — inclusive day range
+    //   ?upcoming=true         — today through next 30 days (queue view)
+    // We use UTC midnight boundaries because `appointmentDate` is stored
+    // as UTC. A future enhancement would resolve the user's branch
+    // timezone and offset accordingly, but in practice every tenant on
+    // this deployment runs Asia/Kolkata, and the date column drops the
+    // time-of-day portion at write time, so the window is consistent.
+    function toUtcMidnight(s: string): Date {
+      // Parse a bare YYYY-MM-DD as 00:00 UTC. `new Date('2026-05-24')`
+      // already does this, but be explicit so daylight-saving in
+      // other locales doesn't shift the boundary.
+      return new Date(`${s}T00:00:00.000Z`);
+    }
     if (date) {
-      const startDate = new Date(date as string);
+      const startDate = toUtcMidnight(date as string);
       const endDate = new Date(startDate);
-      endDate.setDate(endDate.getDate() + 1);
+      endDate.setUTCDate(endDate.getUTCDate() + 1);
       where.appointmentDate = { gte: startDate, lt: endDate };
+    } else if (from || to) {
+      const range: any = {};
+      if (from) range.gte = toUtcMidnight(from as string);
+      if (to) {
+        // Inclusive end — bump one day so the whole `to` day is included.
+        const end = toUtcMidnight(to as string);
+        end.setUTCDate(end.getUTCDate() + 1);
+        range.lt = end;
+      }
+      where.appointmentDate = range;
+    } else if (upcoming === 'true') {
+      const today = new Date();
+      today.setUTCHours(0, 0, 0, 0);
+      const cap = new Date(today);
+      cap.setUTCDate(cap.getUTCDate() + 30);
+      where.appointmentDate = { gte: today, lt: cap };
     }
     if (patientId) where.patientId = patientId;
     if (doctorId) where.doctorId = doctorId;
