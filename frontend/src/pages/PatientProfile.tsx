@@ -61,6 +61,7 @@ import api from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/Toast';
 import PrescribeDialog from '../components/PrescribeDialog';
+import ClinicalCopilot from '../components/ClinicalCopilot';
 
 // --- DTO shapes (mirror backend/src/modules/patients/patient.service.ts getChart) ---
 
@@ -551,7 +552,8 @@ function OverviewSection({ data, onRefresh }: { data: ChartData; onRefresh: () =
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      <div className="lg:col-span-2 flex items-center justify-end -mb-2">
+      <div className="lg:col-span-2 flex items-center justify-end gap-2 -mb-2">
+        <ClinicalCopilot patientId={data.patient.id} />
         <button
           type="button"
           onClick={() => setRxOpen(true)}

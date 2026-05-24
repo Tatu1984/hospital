@@ -406,6 +406,8 @@ app.use('/api/mobile/v1', mobileRouter);
 // health) by mounting auth at /api globally. RBAC keys are registered
 // in routes/index.ts.
 import { clinicalModulesRouter } from './clinical-modules';
+// Side-effect import — registers Claude-API copilot routes onto the shared router.
+import './clinical-copilot';
 app.use('/api', clinicalModulesRouter);
 
 app.get('/api/health', async (req: Request, res: Response) => {
