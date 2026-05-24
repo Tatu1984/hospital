@@ -1723,3 +1723,875 @@ clinicalModulesRouter.put('/maintenance/tickets/:id', auth, async (req: AuthedRe
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// =============== PHASE 2: SURGICAL & NABH ===============
+// Surgical Safety Checklist (WHO SSC), Anesthesia Record, Implant
+// traceability, HAI surveillance, BMW segregation/handover, M&M
+// committee reviews, and the NABH KPI dashboard. Each section follows
+// the existing per-route auth pattern; tenant scoping is enforced via
+// the parent Surgery / Patient row for child resources.
+
+// Tenant-bound surgery lookup. Returns null if not owned by the user's
+// tenant; callers should 404. Used by both checklist and anesthesia.
+async function findOwnedSurgery(surgeryId: string, tenantId: string) {
+  return prisma.surgery.findFirst({ where: { id: surgeryId, tenantId } });
+}
+
+// ---------- SURGICAL SAFETY CHECKLIST (WHO SSC) ----------
+// One row per surgery (unique). Auto-created on first GET so the
+// frontend doesn't need to know whether the row exists.
+clinicalModulesRouter.get('/surgeries/:id/safety-checklist', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const surgery = await findOwnedSurgery(req.params.id, req.user!.tenantId);
+    if (!surgery) return res.status(404).json({ error: 'Surgery not found' });
+    let row = await prisma.surgicalSafetyChecklist.findUnique({ where: { surgeryId: surgery.id } });
+    if (!row) {
+      row = await prisma.surgicalSafetyChecklist.create({ data: { surgeryId: surgery.id } });
+    }
+    res.json(row);
+  } catch (e: any) {
+    console.error('get safety checklist', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.put('/surgeries/:id/safety-checklist/sign-in', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const surgery = await findOwnedSurgery(req.params.id, req.user!.tenantId);
+    if (!surgery) return res.status(404).json({ error: 'Surgery not found' });
+    const data = req.body?.data ?? {};
+    const existing = await prisma.surgicalSafetyChecklist.findUnique({ where: { surgeryId: surgery.id } });
+    const upserted = await prisma.surgicalSafetyChecklist.upsert({
+      where: { surgeryId: surgery.id },
+      create: { surgeryId: surgery.id, signInAt: new Date(), signInById: req.user!.userId, signInData: data },
+      update: { signInAt: new Date(), signInById: req.user!.userId, signInData: data },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'SSC_SIGN_IN',
+      resource: 'SurgicalSafetyChecklist',
+      resourceId: upserted.id,
+      oldValue: existing ? { signInAt: existing.signInAt } : null,
+      newValue: { signInAt: upserted.signInAt },
+    });
+    res.json(upserted);
+  } catch (e: any) {
+    console.error('ssc sign-in', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.put('/surgeries/:id/safety-checklist/time-out', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const surgery = await findOwnedSurgery(req.params.id, req.user!.tenantId);
+    if (!surgery) return res.status(404).json({ error: 'Surgery not found' });
+    const data = req.body?.data ?? {};
+    const existing = await prisma.surgicalSafetyChecklist.findUnique({ where: { surgeryId: surgery.id } });
+    if (!existing || !existing.signInAt) {
+      return res.status(400).json({ error: 'Sign-in must be completed first' });
+    }
+    const updated = await prisma.surgicalSafetyChecklist.update({
+      where: { surgeryId: surgery.id },
+      data: { timeOutAt: new Date(), timeOutById: req.user!.userId, timeOutData: data },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'SSC_TIME_OUT',
+      resource: 'SurgicalSafetyChecklist',
+      resourceId: updated.id,
+      newValue: { timeOutAt: updated.timeOutAt },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('ssc time-out', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.put('/surgeries/:id/safety-checklist/sign-out', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const surgery = await findOwnedSurgery(req.params.id, req.user!.tenantId);
+    if (!surgery) return res.status(404).json({ error: 'Surgery not found' });
+    const data = req.body?.data ?? {};
+    const existing = await prisma.surgicalSafetyChecklist.findUnique({ where: { surgeryId: surgery.id } });
+    if (!existing || !existing.timeOutAt) {
+      return res.status(400).json({ error: 'Time-out must be completed first' });
+    }
+    const updated = await prisma.surgicalSafetyChecklist.update({
+      where: { surgeryId: surgery.id },
+      data: {
+        signOutAt: new Date(),
+        signOutById: req.user!.userId,
+        signOutData: data,
+        isComplete: true,
+      },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'SSC_SIGN_OUT',
+      resource: 'SurgicalSafetyChecklist',
+      resourceId: updated.id,
+      newValue: { signOutAt: updated.signOutAt, isComplete: true },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('ssc sign-out', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+// ---------- ANESTHESIA RECORD ----------
+// One row per surgery. Locked once `signedAt` is set.
+clinicalModulesRouter.get('/surgeries/:id/anesthesia', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const surgery = await findOwnedSurgery(req.params.id, req.user!.tenantId);
+    if (!surgery) return res.status(404).json({ error: 'Surgery not found' });
+    const row = await prisma.anesthesiaRecord.findUnique({ where: { surgeryId: surgery.id } });
+    res.json(row);
+  } catch (e: any) {
+    console.error('get anesthesia', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.put('/surgeries/:id/anesthesia', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const surgery = await findOwnedSurgery(req.params.id, req.user!.tenantId);
+    if (!surgery) return res.status(404).json({ error: 'Surgery not found' });
+    const existing = await prisma.anesthesiaRecord.findUnique({ where: { surgeryId: surgery.id } });
+    if (existing?.signedAt) return res.status(400).json({ error: 'Anesthesia record is locked (signed)' });
+    if (!req.body?.type) return res.status(400).json({ error: 'type is required' });
+
+    const body = req.body || {};
+    const data: any = {
+      anesthetistId: body.anesthetistId ?? null,
+      type: body.type,
+      asaScore: body.asaScore ?? null,
+      preOpAssessment: body.preOpAssessment ?? null,
+      inductionDrugs: body.inductionDrugs ?? undefined,
+      inductionAt: body.inductionAt ? new Date(body.inductionAt) : null,
+      maintenanceDrugs: body.maintenanceDrugs ?? undefined,
+      reversalDrugs: body.reversalDrugs ?? undefined,
+      reversalAt: body.reversalAt ? new Date(body.reversalAt) : null,
+      intraOpEvents: body.intraOpEvents ?? undefined,
+      pacuStart: body.pacuStart ? new Date(body.pacuStart) : null,
+      pacuEnd: body.pacuEnd ? new Date(body.pacuEnd) : null,
+      aldreteScore: body.aldreteScore ?? null,
+      complications: body.complications ?? null,
+      notes: body.notes ?? null,
+    };
+
+    const upserted = await prisma.anesthesiaRecord.upsert({
+      where: { surgeryId: surgery.id },
+      create: { surgeryId: surgery.id, ...data },
+      update: data,
+    });
+    void writeAudit({
+      prisma, req,
+      action: existing ? 'ANESTHESIA_UPDATE' : 'ANESTHESIA_CREATE',
+      resource: 'AnesthesiaRecord',
+      resourceId: upserted.id,
+      newValue: { type: upserted.type },
+    });
+    res.json(upserted);
+  } catch (e: any) {
+    console.error('upsert anesthesia', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/surgeries/:id/anesthesia/event', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const surgery = await findOwnedSurgery(req.params.id, req.user!.tenantId);
+    if (!surgery) return res.status(404).json({ error: 'Surgery not found' });
+    const existing = await prisma.anesthesiaRecord.findUnique({ where: { surgeryId: surgery.id } });
+    if (!existing) return res.status(404).json({ error: 'Anesthesia record not found — create it first' });
+    if (existing.signedAt) return res.status(400).json({ error: 'Anesthesia record is locked (signed)' });
+
+    const { type, bp, hr, spo2, etco2, notes } = req.body || {};
+    if (!type) return res.status(400).json({ error: 'event type is required' });
+
+    const events = Array.isArray(existing.intraOpEvents) ? [...(existing.intraOpEvents as any[])] : [];
+    events.push({
+      at: new Date().toISOString(),
+      type,
+      bp: bp ?? null,
+      hr: hr ?? null,
+      spo2: spo2 ?? null,
+      etco2: etco2 ?? null,
+      notes: notes ?? null,
+    });
+    const updated = await prisma.anesthesiaRecord.update({
+      where: { surgeryId: surgery.id },
+      data: { intraOpEvents: events as any },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('append anesthesia event', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/surgeries/:id/anesthesia/sign', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const surgery = await findOwnedSurgery(req.params.id, req.user!.tenantId);
+    if (!surgery) return res.status(404).json({ error: 'Surgery not found' });
+    const existing = await prisma.anesthesiaRecord.findUnique({ where: { surgeryId: surgery.id } });
+    if (!existing) return res.status(404).json({ error: 'Anesthesia record not found' });
+    if (existing.signedAt) return res.status(400).json({ error: 'Already signed' });
+    const updated = await prisma.anesthesiaRecord.update({
+      where: { surgeryId: surgery.id },
+      data: { signedAt: new Date() },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'ANESTHESIA_SIGN',
+      resource: 'AnesthesiaRecord',
+      resourceId: updated.id,
+      newValue: { signedAt: updated.signedAt },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('sign anesthesia', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+// ---------- IMPLANTS (lifetime register) ----------
+clinicalModulesRouter.get('/implants', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const { patientId, type, search } = req.query;
+    const where: any = { tenantId: req.user!.tenantId };
+    if (patientId) where.patientId = patientId;
+    if (type) where.implantType = type;
+    if (search) {
+      where.OR = [
+        { manufacturer: { contains: String(search), mode: 'insensitive' } },
+        { brandName: { contains: String(search), mode: 'insensitive' } },
+        { modelNumber: { contains: String(search), mode: 'insensitive' } },
+        { serialNumber: { contains: String(search), mode: 'insensitive' } },
+      ];
+    }
+    const items = await prisma.implant.findMany({
+      where,
+      include: {
+        patient: { select: { id: true, name: true, mrn: true } },
+        surgery: { select: { id: true, procedureName: true } },
+      },
+      orderBy: { implantedAt: 'desc' },
+      take: 200,
+    });
+    res.json(items);
+  } catch (e: any) {
+    console.error('list implants', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/implants', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const body = req.body || {};
+    if (!body.patientId || !body.implantType || !body.manufacturer || !body.serialNumber || !body.implantedAt) {
+      return res.status(400).json({ error: 'patientId, implantType, manufacturer, serialNumber, implantedAt are required' });
+    }
+    // Verify patient is in tenant.
+    const patient = await prisma.patient.findFirst({ where: { id: body.patientId, tenantId: req.user!.tenantId } });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+
+    const data: any = {
+      tenantId: req.user!.tenantId,
+      patientId: body.patientId,
+      surgeryId: body.surgeryId ?? null,
+      implantType: body.implantType,
+      manufacturer: body.manufacturer,
+      brandName: body.brandName ?? null,
+      modelNumber: body.modelNumber ?? null,
+      serialNumber: body.serialNumber,
+      batchLotNumber: body.batchLotNumber ?? null,
+      expiryDate: body.expiryDate ? new Date(body.expiryDate) : null,
+      side: body.side ?? 'na',
+      anatomicalSite: body.anatomicalSite ?? null,
+      implantedAt: new Date(body.implantedAt),
+      implantedById: req.user!.userId,
+      warrantyExpiresAt: body.warrantyExpiresAt ? new Date(body.warrantyExpiresAt) : null,
+      notes: body.notes ?? null,
+    };
+
+    const created = await prisma.implant.create({ data });
+    void writeAudit({
+      prisma, req,
+      action: 'IMPLANT_CREATE',
+      resource: 'Implant',
+      resourceId: created.id,
+      newValue: { manufacturer: created.manufacturer, serialNumber: created.serialNumber, patientId: created.patientId },
+    });
+    res.status(201).json(created);
+  } catch (e: any) {
+    if (e.code === 'P2002') return res.status(409).json({ error: 'Implant with this manufacturer + serial number already exists' });
+    console.error('create implant', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/implants/:id/remove', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const owned = await prisma.implant.findFirst({ where: { id: req.params.id, tenantId: req.user!.tenantId } });
+    if (!owned) return res.status(404).json({ error: 'Implant not found' });
+    if (owned.removedAt) return res.status(400).json({ error: 'Implant already marked removed' });
+    const { removalReason, removedAt } = req.body || {};
+    if (!removalReason) return res.status(400).json({ error: 'removalReason is required' });
+
+    const updated = await prisma.implant.update({
+      where: { id: owned.id },
+      data: {
+        removedAt: removedAt ? new Date(removedAt) : new Date(),
+        removedById: req.user!.userId,
+        removalReason,
+      },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'IMPLANT_REMOVE',
+      resource: 'Implant',
+      resourceId: updated.id,
+      newValue: { removedAt: updated.removedAt, removalReason },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('remove implant', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+// ---------- HAI CASES ----------
+clinicalModulesRouter.get('/hai-cases', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const { status, type, from, to } = req.query;
+    const where: any = { tenantId: req.user!.tenantId };
+    if (status) where.outcomeStatus = status;
+    if (type) where.infectionType = type;
+
+    // Default to last 90 days unless `from` provided.
+    const fromDate = from ? new Date(String(from)) : (() => { const d = new Date(); d.setDate(d.getDate() - 90); return d; })();
+    const toDate = to ? new Date(String(to)) : new Date();
+    where.identifiedDate = { gte: fromDate, lte: toDate };
+
+    const items = await prisma.hAICase.findMany({
+      where,
+      include: { patient: { select: { id: true, name: true, mrn: true } } },
+      orderBy: { identifiedDate: 'desc' },
+      take: 200,
+    });
+    res.json(items);
+  } catch (e: any) {
+    console.error('list hai cases', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/hai-cases', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const body = req.body || {};
+    if (!body.patientId || !body.infectionType || !body.onsetDate) {
+      return res.status(400).json({ error: 'patientId, infectionType, onsetDate are required' });
+    }
+    const patient = await prisma.patient.findFirst({ where: { id: body.patientId, tenantId: req.user!.tenantId } });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+
+    const data: any = {
+      tenantId: req.user!.tenantId,
+      patientId: body.patientId,
+      encounterId: body.encounterId ?? null,
+      admissionId: body.admissionId ?? null,
+      infectionType: body.infectionType,
+      organism: body.organism ?? null,
+      sensitivityPattern: body.sensitivityPattern ?? null,
+      onsetDate: new Date(body.onsetDate),
+      identifiedById: req.user!.userId,
+      isolationRequired: !!body.isolationRequired,
+      isolationStarted: body.isolationStarted ? new Date(body.isolationStarted) : null,
+      notes: body.notes ?? null,
+    };
+    const created = await prisma.hAICase.create({ data });
+    void writeAudit({
+      prisma, req,
+      action: 'HAI_CREATE',
+      resource: 'HAICase',
+      resourceId: created.id,
+      newValue: { infectionType: created.infectionType, patientId: created.patientId },
+    });
+    res.status(201).json(created);
+  } catch (e: any) {
+    console.error('create hai case', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.put('/hai-cases/:id', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const owned = await prisma.hAICase.findFirst({ where: { id: req.params.id, tenantId: req.user!.tenantId } });
+    if (!owned) return res.status(404).json({ error: 'HAI case not found' });
+    const body = req.body || {};
+    const data: any = {};
+    const passthrough = ['infectionType', 'organism', 'sensitivityPattern', 'isolationRequired', 'outcomeStatus', 'notes'];
+    for (const k of passthrough) if (k in body) data[k] = body[k];
+    if (body.onsetDate) data.onsetDate = new Date(body.onsetDate);
+    if (body.isolationStarted) data.isolationStarted = new Date(body.isolationStarted);
+    if (body.isolationEnded) data.isolationEnded = new Date(body.isolationEnded);
+    if (body.reportedToICCAt) data.reportedToICCAt = new Date(body.reportedToICCAt);
+
+    const updated = await prisma.hAICase.update({ where: { id: owned.id }, data });
+    void writeAudit({
+      prisma, req,
+      action: 'HAI_UPDATE',
+      resource: 'HAICase',
+      resourceId: updated.id,
+      newValue: data,
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('update hai case', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.get('/hai-cases/summary', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const { from, to } = req.query;
+    const fromDate = from ? new Date(String(from)) : (() => { const d = new Date(); d.setDate(d.getDate() - 90); return d; })();
+    const toDate = to ? new Date(String(to)) : new Date();
+    const where: any = {
+      tenantId: req.user!.tenantId,
+      identifiedDate: { gte: fromDate, lte: toDate },
+    };
+    const cases = await prisma.hAICase.findMany({
+      where,
+      select: { infectionType: true, outcomeStatus: true, isolationStarted: true, isolationEnded: true },
+    });
+    const byType: Record<string, number> = {};
+    const byOutcome: Record<string, number> = {};
+    let isolationActive = 0;
+    for (const c of cases) {
+      byType[c.infectionType] = (byType[c.infectionType] || 0) + 1;
+      byOutcome[c.outcomeStatus] = (byOutcome[c.outcomeStatus] || 0) + 1;
+      if (c.isolationStarted && !c.isolationEnded) isolationActive++;
+    }
+    res.json({ total: cases.length, byType, byOutcome, isolationActive });
+  } catch (e: any) {
+    console.error('hai summary', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+// ---------- BMW LOGS ----------
+clinicalModulesRouter.get('/bmw', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const { category, from, to } = req.query;
+    const where: any = { tenantId: req.user!.tenantId };
+    if (category) where.category = category;
+    const fromDate = from ? new Date(String(from)) : (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d; })();
+    const toDate = to ? new Date(String(to)) : new Date();
+    where.collectedAt = { gte: fromDate, lte: toDate };
+    const items = await prisma.bMWLog.findMany({ where, orderBy: { collectedAt: 'desc' }, take: 500 });
+    res.json(items);
+  } catch (e: any) {
+    console.error('list bmw', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/bmw', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const body = req.body || {};
+    if (!body.category || body.weightKg == null || !body.source) {
+      return res.status(400).json({ error: 'category, weightKg, source are required' });
+    }
+    const branchId = body.branchId || req.user!.branchId;
+    if (!branchId) return res.status(400).json({ error: 'branchId is required (and missing on user)' });
+
+    const data: any = {
+      tenantId: req.user!.tenantId,
+      branchId,
+      category: body.category,
+      weightKg: Number(body.weightKg),
+      source: body.source,
+      collectedAt: body.collectedAt ? new Date(body.collectedAt) : new Date(),
+      collectedById: req.user!.userId,
+      notes: body.notes ?? null,
+    };
+    const created = await prisma.bMWLog.create({ data });
+    void writeAudit({
+      prisma, req,
+      action: 'BMW_CREATE',
+      resource: 'BMWLog',
+      resourceId: created.id,
+      newValue: { category: created.category, weightKg: created.weightKg, source: created.source },
+    });
+    res.status(201).json(created);
+  } catch (e: any) {
+    console.error('create bmw', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/bmw/:id/handover', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const owned = await prisma.bMWLog.findFirst({ where: { id: req.params.id, tenantId: req.user!.tenantId } });
+    if (!owned) return res.status(404).json({ error: 'BMW log not found' });
+    if (owned.handoverAt) return res.status(400).json({ error: 'BMW log already handed over' });
+    const { handoverTo, bspName, bspManifestNumber, handoverAt } = req.body || {};
+    if (!handoverTo || !bspName || !bspManifestNumber) {
+      return res.status(400).json({ error: 'handoverTo, bspName, bspManifestNumber are required' });
+    }
+    const updated = await prisma.bMWLog.update({
+      where: { id: owned.id },
+      data: {
+        handoverAt: handoverAt ? new Date(handoverAt) : new Date(),
+        handoverTo,
+        bspName,
+        bspManifestNumber,
+      },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'BMW_HANDOVER',
+      resource: 'BMWLog',
+      resourceId: updated.id,
+      newValue: { handoverAt: updated.handoverAt, bspName, bspManifestNumber },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('bmw handover', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.get('/bmw/summary', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const { from, to } = req.query;
+    const fromDate = from ? new Date(String(from)) : (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d; })();
+    const toDate = to ? new Date(String(to)) : new Date();
+    const where: any = {
+      tenantId: req.user!.tenantId,
+      collectedAt: { gte: fromDate, lte: toDate },
+    };
+    const logs = await prisma.bMWLog.findMany({
+      where,
+      select: { category: true, weightKg: true, handoverAt: true },
+    });
+    let totalKg = 0;
+    const byCategory: Record<string, number> = {};
+    let pendingHandoverCount = 0;
+    for (const l of logs) {
+      totalKg += l.weightKg;
+      byCategory[l.category] = (byCategory[l.category] || 0) + l.weightKg;
+      if (!l.handoverAt) pendingHandoverCount++;
+    }
+    res.json({ totalKg, byCategory, pendingHandoverCount });
+  } catch (e: any) {
+    console.error('bmw summary', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+// ---------- M&M REVIEWS ----------
+clinicalModulesRouter.get('/mnm', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const { status, isMortality, from, to } = req.query;
+    const where: any = { tenantId: req.user!.tenantId };
+    if (status) where.status = status;
+    if (typeof isMortality !== 'undefined') where.isMortality = String(isMortality) === 'true';
+    if (from || to) {
+      where.createdAt = {};
+      if (from) where.createdAt.gte = new Date(String(from));
+      if (to) where.createdAt.lte = new Date(String(to));
+    }
+    const items = await prisma.mnMReview.findMany({
+      where,
+      include: { patient: { select: { id: true, name: true, mrn: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    });
+    res.json(items);
+  } catch (e: any) {
+    console.error('list mnm', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/mnm', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const body = req.body || {};
+    if (!body.patientId || typeof body.isMortality === 'undefined') {
+      return res.status(400).json({ error: 'patientId and isMortality are required' });
+    }
+    const patient = await prisma.patient.findFirst({ where: { id: body.patientId, tenantId: req.user!.tenantId } });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+
+    const data: any = {
+      tenantId: req.user!.tenantId,
+      patientId: body.patientId,
+      admissionId: body.admissionId ?? null,
+      isMortality: !!body.isMortality,
+      presentationSummary: body.presentationSummary ?? null,
+      diagnosis: body.diagnosis ?? null,
+      clinicalCourse: body.clinicalCourse ?? null,
+      outcome: body.outcome ?? null,
+      notes: body.notes ?? null,
+      status: 'pending',
+    };
+    const created = await prisma.mnMReview.create({ data });
+    void writeAudit({
+      prisma, req,
+      action: 'MNM_CREATE',
+      resource: 'MnMReview',
+      resourceId: created.id,
+      newValue: { patientId: created.patientId, isMortality: created.isMortality },
+    });
+    res.status(201).json(created);
+  } catch (e: any) {
+    console.error('create mnm', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.put('/mnm/:id/review', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const owned = await prisma.mnMReview.findFirst({ where: { id: req.params.id, tenantId: req.user!.tenantId } });
+    if (!owned) return res.status(404).json({ error: 'M&M review not found' });
+    const body = req.body || {};
+    const data: any = {};
+    for (const k of ['rootCause', 'learningPoints', 'preventabilityScore', 'reviewers', 'status', 'notes']) {
+      if (k in body) data[k] = body[k];
+    }
+    // Stamp reviewedAt if status moves to reviewed/closed.
+    if (data.status === 'reviewed' || data.status === 'closed') {
+      data.reviewedAt = new Date();
+    }
+    const updated = await prisma.mnMReview.update({ where: { id: owned.id }, data });
+    void writeAudit({
+      prisma, req,
+      action: 'MNM_REVIEW',
+      resource: 'MnMReview',
+      resourceId: updated.id,
+      newValue: { status: updated.status, reviewedAt: updated.reviewedAt },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('mnm review', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+// ---------- NABH KPI DASHBOARD ----------
+// One read-only endpoint that runs all KPI computations in parallel
+// and gracefully degrades — a failed sub-query returns 0 instead of
+// 500-ing the whole dashboard.
+clinicalModulesRouter.get('/nabh/kpis', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { from, to } = req.query;
+    const fromDate = from ? new Date(String(from)) : (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d; })();
+    const toDate = to ? new Date(String(to)) : new Date();
+
+    // Current month bounds for "this month" buckets.
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+    const safe = async <T>(p: Promise<T>, fallback: T): Promise<T> => p.catch(() => fallback);
+
+    // --- mortality + LAMA + LOS use patient.tenantId because Admission has none.
+    const admissionWhere: any = {
+      patient: { tenantId },
+      admissionDate: { gte: fromDate, lte: toDate },
+    };
+
+    const [
+      dischargesInWindow,
+      deathsInWindow,
+      lamaCount,
+      totalBeds,
+      occupiedAdmissions,
+      admissionsForLOS,
+      surgeriesInWindow,
+      returnOTGroups,
+      haiInWindow,
+      admissionsCountInWindow,
+      medErrorCount,
+      checklistComplete,
+      surgeriesScheduled,
+      iccReportsThisMonth,
+      bmwSumThisMonth,
+    ] = await Promise.all([
+      // dischargesInWindow
+      safe(
+        prisma.admission.count({
+          where: { patient: { tenantId }, dischargeDate: { gte: fromDate, lte: toDate } },
+        }),
+        0,
+      ),
+      // deathsInWindow — discharges with status='died' or 'expired'
+      safe(
+        prisma.admission.count({
+          where: {
+            patient: { tenantId },
+            dischargeDate: { gte: fromDate, lte: toDate },
+            status: { in: ['died', 'expired'] },
+          },
+        }),
+        0,
+      ),
+      // lamaCount
+      safe(
+        prisma.admission.count({
+          where: {
+            patient: { tenantId },
+            dischargeDate: { gte: fromDate, lte: toDate },
+            status: 'lama',
+          },
+        }),
+        0,
+      ),
+      // totalBeds (tenant via branch)
+      safe(
+        prisma.bed.count({ where: { branch: { tenantId } } }),
+        0,
+      ),
+      // occupiedAdmissions — active admissions right now
+      safe(
+        prisma.admission.count({
+          where: { patient: { tenantId }, status: 'active', dischargeDate: null },
+        }),
+        0,
+      ),
+      // admissionsForLOS — completed admissions in the window
+      safe(
+        prisma.admission.findMany({
+          where: { patient: { tenantId }, admissionDate: { gte: fromDate, lte: toDate }, dischargeDate: { not: null } },
+          select: { admissionDate: true, dischargeDate: true },
+        }),
+        [] as { admissionDate: Date; dischargeDate: Date | null }[],
+      ),
+      // surgeriesInWindow
+      safe(
+        prisma.surgery.findMany({
+          where: { tenantId, scheduledDate: { gte: fromDate, lte: toDate } },
+          select: { id: true, patientId: true },
+        }),
+        [] as { id: string; patientId: string | null }[],
+      ),
+      // returnOTGroups — group surgeries by patient where same patient has >=2 in window
+      safe(
+        prisma.surgery.groupBy({
+          by: ['patientId'],
+          where: { tenantId, scheduledDate: { gte: fromDate, lte: toDate }, patientId: { not: null } },
+          _count: { _all: true },
+        }),
+        [] as Array<{ patientId: string | null; _count: { _all: number } }>,
+      ),
+      // haiInWindow
+      safe(
+        prisma.hAICase.count({ where: { tenantId, identifiedDate: { gte: fromDate, lte: toDate } } }),
+        0,
+      ),
+      // admissionsCountInWindow — for HAI rate denominator
+      safe(prisma.admission.count({ where: admissionWhere }), 0),
+      // medErrorCount — from audit log
+      safe(
+        prisma.auditLog.count({
+          where: { tenantId, action: 'MEDICATION_ERROR', timestamp: { gte: fromDate, lte: toDate } },
+        }),
+        0,
+      ),
+      // checklistComplete — completed checklists for surgeries in window
+      safe(
+        prisma.surgicalSafetyChecklist.count({
+          where: {
+            isComplete: true,
+            surgery: { tenantId, scheduledDate: { gte: fromDate, lte: toDate } },
+          },
+        }),
+        0,
+      ),
+      // surgeriesScheduled — denominator for checklist compliance
+      safe(
+        prisma.surgery.count({ where: { tenantId, scheduledDate: { gte: fromDate, lte: toDate } } }),
+        0,
+      ),
+      // iccReportsThisMonth
+      safe(
+        prisma.hAICase.count({
+          where: { tenantId, reportedToICCAt: { gte: monthStart, lt: monthEnd } },
+        }),
+        0,
+      ),
+      // bmwSumThisMonth
+      safe(
+        prisma.bMWLog.aggregate({
+          _sum: { weightKg: true },
+          where: { tenantId, collectedAt: { gte: monthStart, lt: monthEnd } },
+        }),
+        { _sum: { weightKg: 0 } } as any,
+      ),
+    ]);
+
+    const mortalityRate = dischargesInWindow > 0 ? (deathsInWindow / dischargesInWindow) * 100 : 0;
+    const lamaRate = dischargesInWindow > 0 ? (lamaCount / dischargesInWindow) * 100 : 0;
+    const bedOccupancyPct = totalBeds > 0 ? (occupiedAdmissions / totalBeds) * 100 : 0;
+
+    let totalLOSDays = 0;
+    let losSampleCount = 0;
+    for (const a of admissionsForLOS) {
+      if (a.dischargeDate && a.admissionDate) {
+        const ms = a.dischargeDate.getTime() - a.admissionDate.getTime();
+        if (ms > 0) {
+          totalLOSDays += ms / (1000 * 60 * 60 * 24);
+          losSampleCount++;
+        }
+      }
+    }
+    const averageLOS = losSampleCount > 0 ? totalLOSDays / losSampleCount : 0;
+
+    const returnToOTPatients = returnOTGroups.filter(g => (g._count?._all ?? 0) >= 2).length;
+    const totalSurgeries = surgeriesInWindow.length;
+    const returnToOTRate = totalSurgeries > 0 ? (returnToOTPatients / totalSurgeries) * 100 : 0;
+
+    const haiRatePerHundredAdmissions = admissionsCountInWindow > 0
+      ? (haiInWindow / admissionsCountInWindow) * 100
+      : 0;
+
+    const surgicalChecklistCompliancePct = surgeriesScheduled > 0
+      ? (checklistComplete / surgeriesScheduled) * 100
+      : 0;
+
+    res.json({
+      windowFrom: fromDate.toISOString(),
+      windowTo: toDate.toISOString(),
+      mortalityRate: Number(mortalityRate.toFixed(2)),
+      lamaRate: Number(lamaRate.toFixed(2)),
+      bedOccupancyPct: Number(bedOccupancyPct.toFixed(2)),
+      averageLOS: Number(averageLOS.toFixed(2)),
+      returnToOTRate: Number(returnToOTRate.toFixed(2)),
+      haiCount: haiInWindow,
+      haiRatePerHundredAdmissions: Number(haiRatePerHundredAdmissions.toFixed(2)),
+      medicationErrorCount: medErrorCount,
+      surgicalChecklistCompliancePct: Number(surgicalChecklistCompliancePct.toFixed(2)),
+      infectionControlReportsThisMonth: iccReportsThisMonth,
+      bmwTotalKgThisMonth: Number(((bmwSumThisMonth as any)?._sum?.weightKg ?? 0).toFixed(2)),
+      _meta: {
+        dischargesInWindow,
+        deathsInWindow,
+        totalBeds,
+        occupiedAdmissions,
+        admissionsCountInWindow,
+        totalSurgeries,
+        checklistComplete,
+        surgeriesScheduled,
+      },
+    });
+  } catch (e: any) {
+    console.error('nabh kpis', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});

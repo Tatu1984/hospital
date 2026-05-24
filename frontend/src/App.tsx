@@ -79,6 +79,11 @@ const Dialysis = lazy(() => import('./pages/Dialysis'));
 const ActivityMonitor = lazy(() => import('./pages/ActivityMonitor'));
 const BirthRecords = lazy(() => import('./pages/BirthRecords'));
 const Consultations = lazy(() => import('./pages/Consultations'));
+const Implants = lazy(() => import('./pages/Implants'));
+const HAISurveillance = lazy(() => import('./pages/HAISurveillance'));
+const BMWTracking = lazy(() => import('./pages/BMWTracking'));
+const MnMReviews = lazy(() => import('./pages/MnMReviews'));
+const NABHDashboard = lazy(() => import('./pages/NABHDashboard'));
 
 // Some smaller modules still live in AllModules.tsx — split that into one
 // async chunk. Each named import resolves once the chunk loads.
@@ -255,6 +260,11 @@ const AppRoutes = () => {
         <Route path="icu" element={<RoleProtectedRoute path="icu"><ICU /></RoleProtectedRoute>} />
         <Route path="operation-theatre" element={<RoleProtectedRoute path="operation-theatre"><OperationTheatre /></RoleProtectedRoute>} />
         <Route path="birth-records" element={<RoleProtectedRoute path="birth-records"><BirthRecords /></RoleProtectedRoute>} />
+        <Route path="implants" element={<RoleProtectedRoute path="implants"><Implants /></RoleProtectedRoute>} />
+        <Route path="hai-surveillance" element={<RoleProtectedRoute path="hai-surveillance"><HAISurveillance /></RoleProtectedRoute>} />
+        <Route path="bmw-tracking" element={<RoleProtectedRoute path="bmw-tracking"><BMWTracking /></RoleProtectedRoute>} />
+        <Route path="mnm-reviews" element={<RoleProtectedRoute path="mnm-reviews"><MnMReviews /></RoleProtectedRoute>} />
+        <Route path="nabh-dashboard" element={<RoleProtectedRoute path="nabh-dashboard"><NABHDashboard /></RoleProtectedRoute>} />
 
         {/* Support Services */}
         <Route path="blood-bank" element={<RoleProtectedRoute path="blood-bank"><BloodBank /></RoleProtectedRoute>} />

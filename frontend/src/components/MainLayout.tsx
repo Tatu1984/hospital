@@ -47,6 +47,10 @@ import {
   Search,
   Network,
   Baby,
+  Box,
+  AlertOctagon,
+  Trash2,
+  Scale,
 } from 'lucide-react';
 
 // Roles for which the "My Earnings" finance entry shows in the sidebar.
@@ -141,6 +145,7 @@ const MainLayout = () => {
         { path: '/operation-theatre', icon: Scissors, label: 'OT' },
         { path: '/dialysis', icon: Activity, label: 'Dialysis' },
         { path: '/birth-records', icon: Baby, label: 'Birth Records' },
+        { path: '/implants', icon: Box, label: 'Implants' },
       ]
     },
     {
@@ -184,6 +189,10 @@ const MainLayout = () => {
       title: 'Admin & Reports',
       items: [
         { path: '/mis-report', icon: BarChart3, label: 'Analytics' },
+        { path: '/nabh-dashboard', icon: Star, label: 'NABH Quality' },
+        { path: '/hai-surveillance', icon: AlertOctagon, label: 'HAI Surveillance' },
+        { path: '/bmw-tracking', icon: Trash2, label: 'BMW Tracking' },
+        { path: '/mnm-reviews', icon: Scale, label: 'M&M Reviews' },
         { path: '/quality', icon: Star, label: 'Quality' },
         { path: '/master-data', icon: Settings, label: 'Master Data' },
         { path: '/audit-log', icon: ShieldCheck, label: 'Audit Log' },

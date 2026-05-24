@@ -85,12 +85,16 @@ export const rolePermissions: Record<Role, string[]> = {
     'my-earnings',
     // New clinical modules
     'dialysis', 'physiotherapy', 'mortuary', 'birth-records', 'consultations',
+    // Phase-2 clinical quality modules
+    'implants', 'hai-surveillance', 'mnm-reviews',
   ],
 
   // NURSE - Patient care focus
   NURSE: [
     '/', 'live-dashboard', 'patients', 'appointment', 'nurse-station', 'inpatient', 'emergency', 'icu',
-    'laboratory', 'radiology', 'pharmacy', 'diet', 'blood-bank', 'birth-records', 'consultations'
+    'laboratory', 'radiology', 'pharmacy', 'diet', 'blood-bank', 'birth-records', 'consultations',
+    // Nurses log biomedical waste on every shift.
+    'bmw-tracking',
   ],
 
   // FRONT_OFFICE - Registration & Appointments
@@ -134,7 +138,9 @@ export const rolePermissions: Record<Role, string[]> = {
   // OT - Operation Theatre staff
   OT: [
     '/', 'patients', 'inpatient', 'operation-theatre', 'cssd', 'blood-bank',
-    'equipment-maintenance', 'inventory'
+    'equipment-maintenance', 'inventory',
+    // OT logs implants at the time of surgery.
+    'implants',
   ],
 
   // IPD - Inpatient department
@@ -176,7 +182,9 @@ export const rolePermissions: Record<Role, string[]> = {
 
   // QUALITY - Quality management
   QUALITY: [
-    '/', 'quality', 'mis-report', 'audit-log', 'activity-monitor'
+    '/', 'quality', 'mis-report', 'audit-log', 'activity-monitor',
+    // Phase-2 clinical quality modules
+    'hai-surveillance', 'mnm-reviews', 'nabh-dashboard', 'bmw-tracking',
   ],
 
   // ===========================================================================
@@ -205,6 +213,8 @@ export const rolePermissions: Record<Role, string[]> = {
     'doctor-accounting', 'tally',
     'mis-report', 'quality', 'audit-log', 'activity-monitor',
     'consultations',
+    // Phase-2 quality / governance modules
+    'implants', 'hai-surveillance', 'bmw-tracking', 'mnm-reviews', 'nabh-dashboard',
   ],
 
   // MEDICAL_DIRECTOR (CMO) — clinical leadership across all modules.
@@ -217,6 +227,8 @@ export const rolePermissions: Record<Role, string[]> = {
     'nurse-station', 'mrd-management', 'dicom-pacs',
     'billing', 'dialysis', 'physiotherapy', 'mortuary', 'birth-records',
     'doctor-registration', 'mis-report', 'consultations',
+    // Phase-2 — CMO owns clinical quality reporting.
+    'implants', 'hai-surveillance', 'mnm-reviews', 'nabh-dashboard', 'bmw-tracking',
   ],
 
   // NURSING_DIRECTOR (CNO) — nursing operations + ward management.
@@ -226,6 +238,8 @@ export const rolePermissions: Record<Role, string[]> = {
     'laboratory', 'radiology', 'pharmacy',
     'diet', 'blood-bank', 'housekeeping',
     'hr', 'biometric-attendance', 'mis-report', 'consultations',
+    // Phase-2 — infection control + waste tracking are nurse-led.
+    'hai-surveillance', 'bmw-tracking', 'mnm-reviews',
   ],
 
   // DEPARTMENT_HEAD (HOD) — like DOCTOR + dept-scoped admin.

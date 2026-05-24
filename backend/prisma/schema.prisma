@@ -21,6 +21,10 @@ model Tenant {
   users        User[]
   birthRecords BirthRecord[]
   alerts       Alert[]
+  implants     Implant[]
+  haiCases     HAICase[]
+  bmwLogs      BMWLog[]
+  mnmReviews   MnMReview[]
 
   @@map("tenants")
 }
@@ -44,6 +48,7 @@ model Branch {
   patients       Patient[]
   users          User[]
   birthRecords   BirthRecord[]
+  bmwLogs        BMWLog[]
 
   @@map("branches")
 }
@@ -141,6 +146,11 @@ model User {
   consultsAssignedTo  Consultation[]     @relation("ConsultAssignee")
   consultsResponded   Consultation[]     @relation("ConsultResponder")
   dischargesSigned    DischargeSummary[] @relation("DischargeSigner")
+  implantsImplanted   Implant[]          @relation("ImplantImplanter")
+  implantsRemoved     Implant[]          @relation("ImplantRemover")
+  haiIdentified       HAICase[]          @relation("HAIIdentifier")
+  bmwCollected        BMWLog[]           @relation("BMWCollector")
+  anesthesiaRecords   AnesthesiaRecord[] @relation("Anesthetist")
 
   @@map("users")
 }
@@ -292,6 +302,9 @@ model Patient {
   allergyRecords    Allergy[]
   diagnoses         Diagnosis[]
   Consultation      Consultation[]
+  implants          Implant[]
+  haiCases          HAICase[]
+  mnmReviews        MnMReview[]
 
   @@unique([tenantId, mrn])
   @@map("patients")
@@ -2068,6 +2081,9 @@ model Surgery {
 
   stageEvents    SurgeryStageEvent[]
   familyContacts SurgeryFamilyContact[]
+  safetyChecklist  SurgicalSafetyChecklist?
+  anesthesiaRecord AnesthesiaRecord?
+  implants_        Implant[]                @relation("SurgeryImplants")
 
   @@index([tenantId])
   @@map("surgeries")
@@ -2384,4 +2400,232 @@ model DrugInteraction {
   @@index([drugAId])
   @@index([drugBId])
   @@map("drug_interactions")
+}
+
+// ===========================
+// PHASE 2 — SURGICAL & NABH
+// ===========================
+
+// WHO Surgical Safety Checklist — three timed phases per case. NABH
+// SCIP mandate: every OT case MUST have all three phases completed
+// with the team's verbal confirmation before the next phase starts.
+// We model each phase as a row of structured checks (JSON for the
+// individual items so the list can evolve without a migration), plus
+// who-signed-when stamps. If a phase is incomplete, the surgery
+// shouldn't proceed past it — UI enforces, backend records.
+model SurgicalSafetyChecklist {
+  id          String   @id @default(uuid())
+  surgeryId   String   @unique
+  // Sign-in (before induction of anaesthesia)
+  signInAt    DateTime?
+  signInById  String?
+  signInData  Json?    // patient ID, site marked, allergies known, anaesthetic check, pulse-oximeter, airway risk, blood-loss risk
+  // Time-out (before skin incision)
+  timeOutAt   DateTime?
+  timeOutById String?
+  timeOutData Json?    // team intro, patient/site/procedure, antibiotic, imaging
+  // Sign-out (before patient leaves OR)
+  signOutAt   DateTime?
+  signOutById String?
+  signOutData Json?    // procedure recorded, instrument/sponge counts, specimen labels, equipment issues, key concerns for recovery
+  // Convenience aggregate — true when all three phases done.
+  isComplete  Boolean  @default(false)
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  surgery Surgery @relation(fields: [surgeryId], references: [id], onDelete: Cascade)
+
+  @@map("surgical_safety_checklists")
+}
+
+// Anaesthesia record — pre-op assessment, induction, maintenance,
+// intra-op vitals trend (timestamped JSON events), recovery,
+// complications. One per surgery. Legal artefact; the anaesthetist
+// signs digitally + wet-ink on print.
+model AnesthesiaRecord {
+  id              String    @id @default(uuid())
+  surgeryId       String    @unique
+  anesthetistId   String?
+  // 'general' | 'regional' | 'spinal' | 'epidural' | 'local' | 'MAC'
+  type            String
+  // ASA physical status: 1 = healthy, 6 = brain-dead organ donor.
+  asaScore        Int?
+  // Free-text pre-op assessment — comorbidities, prior anaesthesia history,
+  // airway grading (Mallampati), nil-by-mouth status, premedication.
+  preOpAssessment String?
+  preOpAt         DateTime?
+  // Induction, maintenance, reversal drug log (JSON: [{drug, dose, time}]).
+  inductionDrugs  Json?
+  inductionAt     DateTime?
+  maintenanceDrugs Json?
+  reversalDrugs   Json?
+  reversalAt      DateTime?
+  // Intra-op events log (JSON: [{at, type, bp, hr, spo2, etco2, notes}]).
+  intraOpEvents   Json?
+  // PACU / recovery
+  pacuStart       DateTime?
+  pacuEnd         DateTime?
+  // Aldrete recovery score at discharge from PACU (0-10).
+  aldreteScore    Int?
+  complications   String?
+  notes           String?
+  // Signed by the responsible anaesthetist; locks the record from edit.
+  signedAt        DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  surgery      Surgery @relation(fields: [surgeryId], references: [id], onDelete: Cascade)
+  anesthetist  User?   @relation("Anesthetist", fields: [anesthetistId], references: [id])
+
+  @@index([anesthetistId])
+  @@map("anesthesia_records")
+}
+
+// Implant traceability per Medical Device Rules 2017. Every implant
+// (joint, stent, mesh, IOL, pacemaker, etc.) gets a serial-number-
+// scoped row tied to the patient + the surgery that put it in.
+// Removal also tracked so a patient's "lifetime implant list" stays
+// current.
+model Implant {
+  id               String    @id @default(uuid())
+  tenantId         String
+  patientId        String
+  surgeryId        String?
+  // 'hip' | 'knee' | 'cardiac_stent' | 'mesh' | 'iol' | 'pacemaker' | etc.
+  implantType      String
+  manufacturer     String
+  brandName        String?
+  modelNumber      String?
+  serialNumber     String    // legally required — manufacturer's serial
+  batchLotNumber   String?
+  expiryDate       DateTime?
+  // 'left' | 'right' | 'bilateral' | 'na'
+  side             String    @default("na")
+  anatomicalSite   String?
+  implantedAt      DateTime
+  implantedById    String?
+  removedAt        DateTime?
+  removedById      String?
+  removalReason    String?
+  warrantyExpiresAt DateTime?
+  notes            String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  tenant       Tenant   @relation(fields: [tenantId], references: [id])
+  patient      Patient  @relation(fields: [patientId], references: [id])
+  surgery      Surgery? @relation("SurgeryImplants", fields: [surgeryId], references: [id])
+  implantedBy  User?    @relation("ImplantImplanter", fields: [implantedById], references: [id])
+  removedBy    User?    @relation("ImplantRemover",   fields: [removedById],   references: [id])
+
+  @@unique([tenantId, manufacturer, serialNumber])
+  @@index([tenantId])
+  @@index([patientId])
+  @@map("implants")
+}
+
+// Hospital-Acquired Infection surveillance. Required by NABH NS4.
+// Each suspected/confirmed infection gets a row; aggregated for the
+// monthly Infection Control Committee report.
+model HAICase {
+  id                String    @id @default(uuid())
+  tenantId          String
+  patientId         String
+  encounterId       String?
+  admissionId       String?
+  // CDC categories common in India:
+  //   CLABSI | CAUTI | VAP | SSI | C_DIFF | MDRO | OTHER
+  infectionType     String
+  organism          String?
+  // Free text — antibiogram (e.g. "MRSA, sensitive to vancomycin")
+  sensitivityPattern String?
+  onsetDate         DateTime
+  identifiedDate    DateTime  @default(now())
+  identifiedById    String?
+  isolationRequired Boolean   @default(false)
+  isolationStarted  DateTime?
+  isolationEnded    DateTime?
+  // 'recovering' | 'recovered' | 'transferred' | 'died'
+  outcomeStatus     String    @default("recovering")
+  notes             String?
+  reportedToICCAt   DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  tenant       Tenant    @relation(fields: [tenantId], references: [id])
+  patient      Patient   @relation(fields: [patientId], references: [id])
+  identifiedBy User?     @relation("HAIIdentifier", fields: [identifiedById], references: [id])
+
+  @@index([tenantId, identifiedDate])
+  @@index([patientId])
+  @@map("hai_cases")
+}
+
+// Biomedical Waste tracking per BMW Rules 2016. Color-coded
+// segregation mandatory; each disposal must be weighed, attributed
+// to a source (ward/lab/OT), and handed over to a BMW Service
+// Provider (BSP) with sign-off.
+model BMWLog {
+  id            String    @id @default(uuid())
+  tenantId      String
+  branchId      String
+  // 'yellow' (anatomical / infectious lab waste / soiled)
+  // 'red'    (contaminated recyclables — tubing, bottles)
+  // 'white'  (translucent — sharps)
+  // 'blue'   (glass / metal implants)
+  category      String
+  weightKg      Float
+  source        String     // 'ward' | 'lab' | 'OT' | 'labour-room' | 'OPD' | etc.
+  collectedAt   DateTime   @default(now())
+  collectedById String?
+  // Handover to BMW Service Provider
+  handoverAt    DateTime?
+  handoverTo    String?    // BSP collection-agent name
+  bspName       String?    // BSP company name
+  bspManifestNumber String? // statutory manifest reference
+  notes         String?
+
+  tenant       Tenant  @relation(fields: [tenantId], references: [id])
+  branch       Branch  @relation(fields: [branchId], references: [id])
+  collectedBy  User?   @relation("BMWCollector", fields: [collectedById], references: [id])
+
+  @@index([tenantId, collectedAt])
+  @@index([branchId, collectedAt])
+  @@map("bmw_logs")
+}
+
+// Mortality & Morbidity review — NABH PSQ committee artefact. Every
+// in-hospital death (and select significant morbidities — return to
+// OT, unplanned ICU transfer, etc.) goes here. Committee reviews
+// root cause + learning + preventability.
+model MnMReview {
+  id                 String    @id @default(uuid())
+  tenantId           String
+  patientId          String
+  admissionId        String?
+  isMortality        Boolean   @default(true) // false = morbidity
+  presentationSummary String?
+  diagnosis          String?
+  clinicalCourse     String?
+  outcome            String?
+  rootCause          String?
+  learningPoints     String?
+  // 1 = clearly preventable, 5 = not preventable.
+  preventabilityScore Int?
+  // Committee composition snapshot (json: [{userId, name, role}]).
+  reviewers          Json?
+  reviewedAt         DateTime?
+  // 'pending' | 'reviewed' | 'closed'
+  status             String    @default("pending")
+  notes              String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  patient   Patient  @relation(fields: [patientId], references: [id])
+
+  @@index([tenantId, status])
+  @@index([patientId])
+  @@map("mnm_reviews")
 }

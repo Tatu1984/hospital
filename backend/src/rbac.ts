@@ -829,6 +829,18 @@ export const ROUTE_MODULES: Record<string, Permission[]> = {
   // Inter-department consultations reuse the IPD permission family — same
   // clinical context, same audience (doctors, nurses, ward staff).
   '/consultations': ['ipd:view'],
+  // Phase-2 clinical quality modules.
+  // Implants register — surfaces inside IPD/OT workflow.
+  '/implants': ['ipd:view'],
+  // HAI surveillance & M&M reviews are infection-control / clinical
+  // governance pages — gated to the quality umbrella.
+  '/hai-surveillance': ['quality:view'],
+  '/mnm-reviews': ['quality:view'],
+  // BMW tracking is operational waste handling — IPD nurses log it on
+  // every shift.
+  '/bmw-tracking': ['ipd:view'],
+  // NABH KPI dashboard exposes hospital-wide analytics.
+  '/nabh-dashboard': ['analytics:view'],
   '/billing': ['billing:view'],
   '/ipd-billing': ['billing:view'],
   '/referral-commission': ['commissions:view'],

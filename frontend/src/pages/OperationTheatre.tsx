@@ -8,11 +8,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Clock, CheckCircle, AlertCircle, Calendar, FileText, Plus, Activity, Radio, Scissors } from 'lucide-react';
+import { Clock, CheckCircle, AlertCircle, Calendar, FileText, Plus, Activity, Radio, Scissors, ClipboardCheck, Stethoscope } from 'lucide-react';
 import api from '../services/api';
 import { useToast } from '../components/Toast';
 import OTLiveStatusDialog from '../components/OTLiveStatusDialog';
 import { DoctorLabel } from '../components/DoctorLabel';
+import SurgicalSafetyChecklistDialog from '../components/SurgicalSafetyChecklistDialog';
+import AnesthesiaRecordDialog from '../components/AnesthesiaRecordDialog';
 
 interface Surgery {
   id: string;
@@ -76,6 +78,9 @@ export default function OperationTheatre() {
   const [isScheduleDialogOpen, setIsScheduleDialogOpen] = useState(false);
   const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false);
   const [liveStatusSurgery, setLiveStatusSurgery] = useState<Surgery | null>(null);
+  // Phase-2 add-ons: WHO safety checklist + anesthesia record per surgery.
+  const [checklistSurgery, setChecklistSurgery] = useState<Surgery | null>(null);
+  const [anesthesiaSurgery, setAnesthesiaSurgery] = useState<Surgery | null>(null);
   const [loading, setLoading] = useState(false);
 
   const [surgeryFormData, setSurgeryFormData] = useState<SurgeryFormData>({
@@ -532,6 +537,12 @@ export default function OperationTheatre() {
                                 Complete
                               </Button>
                             )}
+                            <Button size="sm" variant="outline" onClick={() => setChecklistSurgery(surgery)} title="WHO Safety Checklist">
+                              <ClipboardCheck className="w-4 h-4" />
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => setAnesthesiaSurgery(surgery)} title="Anesthesia record">
+                              <Stethoscope className="w-4 h-4" />
+                            </Button>
                             <Button size="sm" variant="outline" onClick={() => openDetailsDialog(surgery)}>
                               <FileText className="w-4 h-4" />
                             </Button>
@@ -589,6 +600,12 @@ export default function OperationTheatre() {
                             <Button size="sm" variant="outline" onClick={() => setLiveStatusSurgery(surgery)}>
                               <Radio className="w-3 h-3 mr-1" /> Live
                             </Button>
+                            <Button size="sm" variant="outline" onClick={() => setChecklistSurgery(surgery)} title="WHO Safety Checklist">
+                              <ClipboardCheck className="w-4 h-4" />
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => setAnesthesiaSurgery(surgery)} title="Anesthesia record">
+                              <Stethoscope className="w-4 h-4" />
+                            </Button>
                             <Button size="sm" variant="outline" onClick={() => handleCancelSurgery(surgery.id)}>
                               Cancel
                             </Button>
@@ -638,6 +655,12 @@ export default function OperationTheatre() {
                             <Button size="sm" variant="outline" onClick={() => setLiveStatusSurgery(surgery)}>
                               <Radio className="w-3 h-3 mr-1" /> Live status
                             </Button>
+                            <Button size="sm" variant="outline" onClick={() => setChecklistSurgery(surgery)} title="WHO Safety Checklist">
+                              <ClipboardCheck className="w-4 h-4" />
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => setAnesthesiaSurgery(surgery)} title="Anesthesia record">
+                              <Stethoscope className="w-4 h-4" />
+                            </Button>
                             <Button size="sm" onClick={() => handleCompleteSurgery(surgery.id)}>
                               Complete
                             </Button>
@@ -678,9 +701,17 @@ export default function OperationTheatre() {
                         <TableCell><DoctorLabel doctorId={surgery.surgeonId} fallbackName={surgery.surgeonName} mode="stacked" /></TableCell>
                         <TableCell>{getStatusBadge(surgery.status)}</TableCell>
                         <TableCell>
-                          <Button size="sm" variant="outline" onClick={() => openDetailsDialog(surgery)}>
-                            Details
-                          </Button>
+                          <div className="flex gap-2">
+                            <Button size="sm" variant="outline" onClick={() => setChecklistSurgery(surgery)} title="WHO Safety Checklist">
+                              <ClipboardCheck className="w-4 h-4" />
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => setAnesthesiaSurgery(surgery)} title="Anesthesia record">
+                              <Stethoscope className="w-4 h-4" />
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => openDetailsDialog(surgery)}>
+                              Details
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))
@@ -976,6 +1007,20 @@ export default function OperationTheatre() {
             fetchSurgeries();
           }
         }}
+      />
+
+      <SurgicalSafetyChecklistDialog
+        open={checklistSurgery !== null}
+        surgeryId={checklistSurgery?.id ?? null}
+        surgeryLabel={checklistSurgery ? `${checklistSurgery.patientName} — ${checklistSurgery.procedureName}` : ''}
+        onOpenChange={(open) => { if (!open) setChecklistSurgery(null); }}
+      />
+
+      <AnesthesiaRecordDialog
+        open={anesthesiaSurgery !== null}
+        surgeryId={anesthesiaSurgery?.id ?? null}
+        surgeryLabel={anesthesiaSurgery ? `${anesthesiaSurgery.patientName} — ${anesthesiaSurgery.procedureName}` : ''}
+        onOpenChange={(open) => { if (!open) setAnesthesiaSurgery(null); }}
       />
     </div>
   );
