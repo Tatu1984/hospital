@@ -84,13 +84,13 @@ export const rolePermissions: Record<Role, string[]> = {
     // My Earnings — doctor's personal payout/finance page.
     'my-earnings',
     // New clinical modules
-    'dialysis', 'physiotherapy', 'mortuary', 'birth-records',
+    'dialysis', 'physiotherapy', 'mortuary', 'birth-records', 'consultations',
   ],
 
   // NURSE - Patient care focus
   NURSE: [
     '/', 'live-dashboard', 'patients', 'appointment', 'nurse-station', 'inpatient', 'emergency', 'icu',
-    'laboratory', 'radiology', 'pharmacy', 'diet', 'blood-bank', 'birth-records'
+    'laboratory', 'radiology', 'pharmacy', 'diet', 'blood-bank', 'birth-records', 'consultations'
   ],
 
   // FRONT_OFFICE - Registration & Appointments
@@ -204,6 +204,7 @@ export const rolePermissions: Record<Role, string[]> = {
     'billing', 'ipd-billing', 'tpa', 'referral-commission',
     'doctor-accounting', 'tally',
     'mis-report', 'quality', 'audit-log', 'activity-monitor',
+    'consultations',
   ],
 
   // MEDICAL_DIRECTOR (CMO) — clinical leadership across all modules.
@@ -215,7 +216,7 @@ export const rolePermissions: Record<Role, string[]> = {
     'pharmacy', 'doctor-assistant', 'video-conversation',
     'nurse-station', 'mrd-management', 'dicom-pacs',
     'billing', 'dialysis', 'physiotherapy', 'mortuary', 'birth-records',
-    'doctor-registration', 'mis-report',
+    'doctor-registration', 'mis-report', 'consultations',
   ],
 
   // NURSING_DIRECTOR (CNO) — nursing operations + ward management.
@@ -224,7 +225,7 @@ export const rolePermissions: Record<Role, string[]> = {
     'nurse-station', 'inpatient', 'icu', 'emergency',
     'laboratory', 'radiology', 'pharmacy',
     'diet', 'blood-bank', 'housekeeping',
-    'hr', 'biometric-attendance', 'mis-report',
+    'hr', 'biometric-attendance', 'mis-report', 'consultations',
   ],
 
   // DEPARTMENT_HEAD (HOD) — like DOCTOR + dept-scoped admin.
@@ -236,7 +237,7 @@ export const rolePermissions: Record<Role, string[]> = {
     'pharmacy', 'doctor-assistant', 'nurse-station',
     'mrd-management', 'billing', 'my-earnings',
     'dialysis', 'physiotherapy',
-    'hr', 'biometric-attendance', 'mis-report',
+    'hr', 'biometric-attendance', 'mis-report', 'consultations',
   ],
 
   // NURSE_MANAGER — ward in-charge.

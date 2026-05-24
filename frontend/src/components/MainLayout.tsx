@@ -135,6 +135,7 @@ const MainLayout = () => {
       items: [
         { path: '/opd', icon: Stethoscope, label: 'OPD' },
         { path: '/inpatient', icon: Bed, label: 'IPD / Ward' },
+        { path: '/consultations', icon: Network, label: 'Consultations' },
         { path: '/emergency', icon: AlertCircle, label: 'Emergency' },
         { path: '/icu', icon: Heart, label: 'ICU' },
         { path: '/operation-theatre', icon: Scissors, label: 'OT' },

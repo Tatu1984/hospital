@@ -10,12 +10,21 @@
 // PatientChart is left in place to avoid breaking existing
 // DoctorDashboard deep-links during the transition.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
 import {
   ArrowLeft,
   User,
@@ -38,9 +47,19 @@ import {
   Percent,
   IndianRupee,
   X,
+  HeartPulse,
+  Thermometer,
+  Heart,
+  Wind,
+  Plus,
+  Search,
+  Check,
+  ShieldAlert,
 } from 'lucide-react';
+import { LineChart, Line, AreaChart, Area, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from 'recharts';
 import api from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../components/Toast';
 
 // --- DTO shapes (mirror backend/src/modules/patients/patient.service.ts getChart) ---
 
@@ -229,6 +248,54 @@ interface ChartData {
   diagnoses: DiagnosisEntry[];
 }
 
+// Vitals row as returned by GET /api/patients/:id/vitals
+interface VitalsRow {
+  id: string;
+  capturedAt: string;
+  temperatureC?: number | null;
+  bpSystolic?: number | null;
+  bpDiastolic?: number | null;
+  heartRate?: number | null;
+  respRate?: number | null;
+  spo2?: number | null;
+  weightKg?: number | null;
+  heightCm?: number | null;
+  bmi?: number | null;
+  painScore?: number | null;
+  glucoseMgDl?: number | null;
+  capturedBy?: { id: string; name: string } | null;
+}
+
+interface AllergyRow {
+  id: string;
+  substance: string;
+  category?: string | null;
+  reaction?: string | null;
+  severity?: string | null;
+  notes?: string | null;
+  isActive?: boolean;
+  createdAt?: string;
+}
+
+interface StructuredDiagnosis {
+  id: string;
+  icd10Code: string;
+  icd10Title?: string | null;
+  notes?: string | null;
+  isPrimary?: boolean;
+  status: string; // 'active' | 'resolved' | etc.
+  diagnosedAt?: string | null;
+  resolvedAt?: string | null;
+  encounterId?: string | null;
+  admissionId?: string | null;
+}
+
+interface Icd10Result {
+  code: string;
+  title: string;
+  chapter?: string | null;
+}
+
 // --- formatters ---
 
 function ageFromDob(dob: string | null): string {
@@ -395,6 +462,8 @@ export default function PatientProfile() {
       <Tabs defaultValue="overview" className="space-y-4">
         <TabsList className="flex-wrap h-auto">
           <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="vitals">Vitals</TabsTrigger>
+          <TabsTrigger value="allergies">Allergies</TabsTrigger>
           <TabsTrigger value="diagnoses">Diagnoses ({data.diagnoses.length})</TabsTrigger>
           <TabsTrigger value="doctors">Doctors ({data.doctorsVisited.length})</TabsTrigger>
           <TabsTrigger value="visits">Visits ({data.encounters.length})</TabsTrigger>
@@ -410,7 +479,9 @@ export default function PatientProfile() {
         </TabsList>
 
         <TabsContent value="overview"><OverviewSection data={data} /></TabsContent>
-        <TabsContent value="diagnoses"><DiagnosesSection diagnoses={data.diagnoses} /></TabsContent>
+        <TabsContent value="vitals"><VitalsSection patientId={p.id} /></TabsContent>
+        <TabsContent value="allergies"><AllergiesSection patientId={p.id} /></TabsContent>
+        <TabsContent value="diagnoses"><DiagnosesSection patientId={p.id} admissionDiagnoses={data.diagnoses} /></TabsContent>
         <TabsContent value="doctors"><DoctorsSection doctors={data.doctorsVisited} /></TabsContent>
         <TabsContent value="visits"><VisitsSection encounters={data.encounters} /></TabsContent>
         <TabsContent value="admissions"><AdmissionsSection admissions={data.admissions} /></TabsContent>
@@ -588,24 +659,858 @@ function KeyValue({ label, body }: { label: string; body: any }) {
   );
 }
 
-function DiagnosesSection({ diagnoses }: { diagnoses: DiagnosisEntry[] }) {
-  if (!diagnoses.length) return <Empty text="No diagnoses on record." />;
+// =========================================================================
+// VITALS TAB — capture form, sparklines, BP trend chart, recent table.
+// All data is loaded from GET /api/patients/:id/vitals?limit=50.
+// =========================================================================
+function VitalsSection({ patientId }: { patientId: string }) {
+  const toast = useToast();
+  const [rows, setRows] = useState<VitalsRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [modalOpen, setModalOpen] = useState(false);
+
+  async function load() {
+    try {
+      setLoading(true);
+      const r = await api.get(`/api/patients/${patientId}/vitals?limit=50`);
+      setRows(Array.isArray(r.data) ? r.data : []);
+    } catch (e: any) {
+      toast.error('Failed to load vitals', e?.response?.data?.error || e?.message || 'Try again');
+    } finally {
+      setLoading(false);
+    }
+  }
+  useEffect(() => { void load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [patientId]);
+
+  // Backend returns newest-first; reverse for chronological trends.
+  const chronological = useMemo(() => [...rows].reverse(), [rows]);
+  const latest = rows[0] || null;
+  const last30 = chronological.slice(-30);
+
   return (
-    <div className="space-y-2">
-      {diagnoses.map((d) => (
-        <Card key={`${d.source}-${d.sourceId}-${d.date}`}>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="font-semibold text-slate-900">{d.text}</div>
-              <Badge variant="outline">{d.source}</Badge>
-            </div>
-            <div className="mt-1 text-xs text-slate-500">
-              {fmtDate(d.date)}{d.doctorName ? ` • Dr. ${d.doctorName}` : ''}
-            </div>
-          </CardContent>
-        </Card>
-      ))}
+    <div className="space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <div className="text-sm text-slate-500">Trended vitals across all captures.</div>
+        </div>
+        <Button onClick={() => setModalOpen(true)} className="gap-1.5 bg-slate-900 hover:bg-slate-800 rounded-xl">
+          <Plus className="w-4 h-4" /> Capture vitals
+        </Button>
+      </div>
+
+      {loading ? (
+        <div className="text-sm text-slate-500 p-6 text-center">Loading vitals…</div>
+      ) : rows.length === 0 ? (
+        <Empty text="No vitals captured yet. Use ‘Capture vitals’ to record the first reading." />
+      ) : (
+        <>
+          {/* Latest + sparkline cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <VitalSparkCard
+              label="Blood pressure"
+              latest={latest && latest.bpSystolic && latest.bpDiastolic ? `${latest.bpSystolic}/${latest.bpDiastolic}` : '—'}
+              unit="mmHg"
+              icon={HeartPulse}
+              tint="rose"
+              series={last30.map((r) => ({ t: r.capturedAt, v: r.bpSystolic ?? null }))}
+            />
+            <VitalSparkCard
+              label="Heart rate"
+              latest={latest?.heartRate != null ? String(latest.heartRate) : '—'}
+              unit="bpm"
+              icon={Heart}
+              tint="pink"
+              series={last30.map((r) => ({ t: r.capturedAt, v: r.heartRate ?? null }))}
+            />
+            <VitalSparkCard
+              label="Temperature"
+              latest={latest?.temperatureC != null ? `${latest.temperatureC.toFixed(1)}` : '—'}
+              unit="°C"
+              icon={Thermometer}
+              tint="amber"
+              series={last30.map((r) => ({ t: r.capturedAt, v: r.temperatureC ?? null }))}
+            />
+            <VitalSparkCard
+              label="SpO₂"
+              latest={latest?.spo2 != null ? String(latest.spo2) : '—'}
+              unit="%"
+              icon={Wind}
+              tint="sky"
+              series={last30.map((r) => ({ t: r.capturedAt, v: r.spo2 ?? null }))}
+            />
+          </div>
+
+          {/* BP trend */}
+          <Card className="rounded-2xl">
+            <CardHeader>
+              <CardTitle className="text-base">Blood pressure trend (last 30 captures)</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {last30.some((r) => r.bpSystolic != null || r.bpDiastolic != null) ? (
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={last30.map((r) => ({
+                      t: new Date(r.capturedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+                      sys: r.bpSystolic ?? null,
+                      dia: r.bpDiastolic ?? null,
+                    }))}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                      <XAxis dataKey="t" tick={{ fontSize: 11, fill: '#64748b' }} />
+                      <YAxis tick={{ fontSize: 11, fill: '#64748b' }} domain={['auto', 'auto']} />
+                      <Tooltip />
+                      <Line type="monotone" dataKey="sys" stroke="#e11d48" strokeWidth={2} dot={{ r: 2 }} name="Systolic" connectNulls />
+                      <Line type="monotone" dataKey="dia" stroke="#3b82f6" strokeWidth={2} dot={{ r: 2 }} name="Diastolic" connectNulls />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="text-sm text-slate-500 p-6 text-center">No BP readings yet.</div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Recent table */}
+          <Card className="rounded-2xl">
+            <CardHeader>
+              <CardTitle className="text-base">Recent captures</CardTitle>
+            </CardHeader>
+            <CardContent className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-xs text-slate-500 text-left border-b border-slate-200">
+                    <th className="font-normal py-2">When</th>
+                    <th className="font-normal py-2">BP</th>
+                    <th className="font-normal py-2">HR</th>
+                    <th className="font-normal py-2">Temp</th>
+                    <th className="font-normal py-2">SpO₂</th>
+                    <th className="font-normal py-2">Weight</th>
+                    <th className="font-normal py-2">BMI</th>
+                    <th className="font-normal py-2">By</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.slice(0, 20).map((r) => (
+                    <tr key={r.id} className="border-b border-slate-100">
+                      <td className="py-2 text-slate-700">{fmtDateTime(r.capturedAt)}</td>
+                      <td className="py-2 text-slate-900 font-medium tabular-nums">
+                        {r.bpSystolic != null && r.bpDiastolic != null ? `${r.bpSystolic}/${r.bpDiastolic}` : '—'}
+                      </td>
+                      <td className="py-2 tabular-nums">{r.heartRate ?? '—'}</td>
+                      <td className="py-2 tabular-nums">{r.temperatureC != null ? `${r.temperatureC.toFixed(1)}°C` : '—'}</td>
+                      <td className="py-2 tabular-nums">{r.spo2 != null ? `${r.spo2}%` : '—'}</td>
+                      <td className="py-2 tabular-nums">{r.weightKg != null ? `${r.weightKg} kg` : '—'}</td>
+                      <td className="py-2 tabular-nums">{r.bmi != null ? r.bmi.toFixed(1) : '—'}</td>
+                      <td className="py-2 text-xs text-slate-500">{r.capturedBy?.name || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
+        </>
+      )}
+
+      <CaptureVitalsDialog
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        patientId={patientId}
+        onSaved={async () => { setModalOpen(false); await load(); }}
+      />
     </div>
+  );
+}
+
+function VitalSparkCard({
+  label, latest, unit, icon: Icon, tint, series,
+}: {
+  label: string;
+  latest: string;
+  unit: string;
+  icon: any;
+  tint: 'rose' | 'pink' | 'amber' | 'sky';
+  series: Array<{ t: string; v: number | null }>;
+}) {
+  const colorMap = {
+    rose:  { stroke: '#e11d48', fill: '#fecdd3', text: 'text-rose-600',  bg: 'bg-rose-50',  ring: 'ring-rose-100' },
+    pink:  { stroke: '#ec4899', fill: '#fbcfe8', text: 'text-pink-600',  bg: 'bg-pink-50',  ring: 'ring-pink-100' },
+    amber: { stroke: '#d97706', fill: '#fde68a', text: 'text-amber-600', bg: 'bg-amber-50', ring: 'ring-amber-100' },
+    sky:   { stroke: '#0284c7', fill: '#bae6fd', text: 'text-sky-600',   bg: 'bg-sky-50',   ring: 'ring-sky-100' },
+  };
+  const c = colorMap[tint];
+  const data = series.filter((p) => p.v != null);
+  return (
+    <Card className="rounded-2xl">
+      <CardContent className="p-4">
+        <div className="flex items-center justify-between">
+          <div className="text-xs uppercase tracking-wide text-slate-500 font-medium">{label}</div>
+          <div className={`w-8 h-8 rounded-lg ${c.bg} ring-1 ${c.ring} flex items-center justify-center`}>
+            <Icon className={`w-4 h-4 ${c.text}`} />
+          </div>
+        </div>
+        <div className="text-2xl font-semibold text-slate-900 mt-2 tracking-tight tabular-nums">
+          {latest} <span className="text-xs text-slate-400 font-normal">{unit}</span>
+        </div>
+        <div style={{ width: 24 * 4, height: 28 }} className="mt-1">
+          {data.length >= 2 ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={data}>
+                <Area type="monotone" dataKey="v" stroke={c.stroke} fill={c.fill} strokeWidth={1.5} />
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-full text-[10px] text-slate-300 flex items-center">no trend yet</div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function bmiCategory(bmi: number | null | undefined): { label: string; cls: string } | null {
+  if (bmi == null || !Number.isFinite(bmi)) return null;
+  if (bmi < 18.5) return { label: 'Underweight', cls: 'bg-amber-100 text-amber-700 border-amber-200' };
+  if (bmi < 25)   return { label: 'Normal',      cls: 'bg-emerald-100 text-emerald-700 border-emerald-200' };
+  if (bmi < 30)   return { label: 'Overweight',  cls: 'bg-amber-100 text-amber-700 border-amber-200' };
+  return            { label: 'Obese',       cls: 'bg-red-100 text-red-700 border-red-200' };
+}
+
+function CaptureVitalsDialog({
+  open, onClose, patientId, onSaved,
+}: {
+  open: boolean;
+  onClose: () => void;
+  patientId: string;
+  onSaved: () => void | Promise<void>;
+}) {
+  const toast = useToast();
+  const [form, setForm] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => { if (open) setForm({}); }, [open]);
+
+  function num(k: string): number | undefined {
+    const v = form[k];
+    if (v === undefined || v === '' || v === null) return undefined;
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : undefined;
+  }
+
+  const weight = num('weightKg');
+  const height = num('heightCm');
+  const previewBmi = (weight && height && height > 0) ? (weight / Math.pow(height / 100, 2)) : null;
+  const cat = bmiCategory(previewBmi);
+
+  async function save() {
+    const body = {
+      patientId,
+      temperatureC: num('temperatureC'),
+      bpSystolic:   num('bpSystolic'),
+      bpDiastolic:  num('bpDiastolic'),
+      heartRate:    num('heartRate'),
+      respRate:     num('respRate'),
+      spo2:         num('spo2'),
+      weightKg:     num('weightKg'),
+      heightCm:     num('heightCm'),
+      painScore:    num('painScore'),
+      glucoseMgDl:  num('glucoseMgDl'),
+      notes:        form.notes?.trim() || undefined,
+    };
+    // Require at least one non-undefined measurement field
+    const hasAny = Object.entries(body).some(([k, v]) => k !== 'patientId' && k !== 'notes' && v !== undefined);
+    if (!hasAny) {
+      toast.error('Nothing to save', 'Enter at least one measurement.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.post('/api/vitals', body);
+      toast.success('Vitals recorded');
+      await onSaved();
+    } catch (e: any) {
+      toast.error('Save failed', e?.response?.data?.error || e?.message || 'Try again');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl">
+        <DialogHeader>
+          <DialogTitle className="text-xl">Capture vitals</DialogTitle>
+        </DialogHeader>
+        <div className="grid grid-cols-3 gap-3 py-2">
+          <SimpleNum label="Temp (°C)" value={form.temperatureC} onChange={(v) => setForm({ ...form, temperatureC: v })} step="0.1" />
+          <SimpleNum label="BP Systolic" value={form.bpSystolic} onChange={(v) => setForm({ ...form, bpSystolic: v })} />
+          <SimpleNum label="BP Diastolic" value={form.bpDiastolic} onChange={(v) => setForm({ ...form, bpDiastolic: v })} />
+          <SimpleNum label="Heart rate (bpm)" value={form.heartRate} onChange={(v) => setForm({ ...form, heartRate: v })} />
+          <SimpleNum label="Resp. rate" value={form.respRate} onChange={(v) => setForm({ ...form, respRate: v })} />
+          <SimpleNum label="SpO₂ (%)" value={form.spo2} onChange={(v) => setForm({ ...form, spo2: v })} />
+          <SimpleNum label="Weight (kg)" value={form.weightKg} onChange={(v) => setForm({ ...form, weightKg: v })} step="0.1" />
+          <SimpleNum label="Height (cm)" value={form.heightCm} onChange={(v) => setForm({ ...form, heightCm: v })} step="0.1" />
+          <SimpleNum label="Pain (0–10)" value={form.painScore} onChange={(v) => setForm({ ...form, painScore: v })} />
+          <SimpleNum label="Glucose (mg/dL)" value={form.glucoseMgDl} onChange={(v) => setForm({ ...form, glucoseMgDl: v })} />
+          <div className="col-span-3">
+            <Label className="text-xs text-slate-500">Notes</Label>
+            <Textarea
+              rows={2}
+              value={form.notes || ''}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              placeholder="Optional clinical comment…"
+            />
+          </div>
+        </div>
+        {previewBmi != null && cat && (
+          <div className="px-1 text-xs text-slate-600 flex items-center gap-2">
+            <span>Estimated BMI:</span>
+            <span className="font-semibold text-slate-900 tabular-nums">{previewBmi.toFixed(1)}</span>
+            <span className={`px-2 py-0.5 rounded-full border text-[11px] ${cat.cls}`}>{cat.label}</span>
+            <span className="text-slate-400">(server will compute the stored value)</span>
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button onClick={save} disabled={saving} className="bg-slate-900 hover:bg-slate-800">
+            {saving ? 'Saving…' : 'Save vitals'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function SimpleNum({ label, value, onChange, step }: { label: string; value: string | undefined; onChange: (v: string) => void; step?: string }) {
+  return (
+    <div>
+      <Label className="text-xs text-slate-500">{label}</Label>
+      <Input
+        type="number"
+        inputMode="decimal"
+        step={step || '1'}
+        value={value ?? ''}
+        onChange={(e) => onChange(e.target.value)}
+        className="rounded-lg"
+      />
+    </div>
+  );
+}
+
+// =========================================================================
+// ALLERGIES TAB — chip grid + severe banner + add modal (upserts on substance).
+// =========================================================================
+function AllergiesSection({ patientId }: { patientId: string }) {
+  const toast = useToast();
+  const [rows, setRows] = useState<AllergyRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [open, setOpen] = useState(false);
+
+  async function load() {
+    try {
+      setLoading(true);
+      const r = await api.get(`/api/patients/${patientId}/allergies`);
+      setRows(Array.isArray(r.data) ? r.data : []);
+    } catch (e: any) {
+      toast.error('Failed to load allergies', e?.response?.data?.error || e?.message || 'Try again');
+    } finally {
+      setLoading(false);
+    }
+  }
+  useEffect(() => { void load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [patientId]);
+
+  async function remove(id: string) {
+    if (!window.confirm('Remove this allergy from the active list?')) return;
+    try {
+      await api.delete(`/api/allergies/${id}`);
+      toast.success('Allergy removed');
+      await load();
+    } catch (e: any) {
+      toast.error('Delete failed', e?.response?.data?.error || e?.message || 'Try again');
+    }
+  }
+
+  const severe = rows.filter((a) => (a.severity || '').toLowerCase() === 'severe');
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="text-sm text-slate-500">Active drug, food, and environmental allergies.</div>
+        <Button onClick={() => setOpen(true)} className="gap-1.5 bg-slate-900 hover:bg-slate-800 rounded-xl">
+          <Plus className="w-4 h-4" /> Add allergy
+        </Button>
+      </div>
+
+      {severe.length > 0 && (
+        <div className="bg-red-50 border border-red-200 text-red-800 rounded-xl p-3 flex items-start gap-2">
+          <ShieldAlert className="w-5 h-5 shrink-0 mt-0.5" />
+          <div className="text-sm">
+            <span className="font-semibold">⚠ SEVERE allergy on record:</span>{' '}
+            {severe.map((a) => a.substance).join(', ')}
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="text-sm text-slate-500 p-6 text-center">Loading allergies…</div>
+      ) : rows.length === 0 ? (
+        <Empty text="No allergies on record." />
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {rows.map((a) => <AllergyChip key={a.id} allergy={a} onDelete={() => remove(a.id)} />)}
+        </div>
+      )}
+
+      <AddAllergyDialog
+        open={open}
+        onClose={() => setOpen(false)}
+        patientId={patientId}
+        onSaved={async () => { setOpen(false); await load(); }}
+      />
+    </div>
+  );
+}
+
+function AllergyChip({ allergy, onDelete }: { allergy: AllergyRow; onDelete: () => void }) {
+  const sev = (allergy.severity || '').toLowerCase();
+  const sevCls =
+    sev === 'severe'   ? 'bg-red-100 text-red-700 border-red-200' :
+    sev === 'moderate' ? 'bg-amber-100 text-amber-700 border-amber-200' :
+                         'bg-slate-100 text-slate-700 border-slate-200';
+  return (
+    <Card className="rounded-2xl">
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="font-semibold text-slate-900 truncate">{allergy.substance}</div>
+            {allergy.category && (
+              <div className="text-[11px] uppercase tracking-wide text-slate-400 mt-0.5">{allergy.category}</div>
+            )}
+            {allergy.reaction && (
+              <div className="text-sm text-slate-700 mt-1">{allergy.reaction}</div>
+            )}
+            {allergy.notes && (
+              <div className="text-xs text-slate-500 mt-1 whitespace-pre-wrap">{allergy.notes}</div>
+            )}
+            <div className="mt-2">
+              <span className={`inline-block px-2 py-0.5 rounded-full border text-[11px] ${sevCls}`}>
+                {allergy.severity || 'unknown'}
+              </span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onDelete}
+            className="rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+            title="Remove allergy"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function AddAllergyDialog({
+  open, onClose, patientId, onSaved,
+}: {
+  open: boolean;
+  onClose: () => void;
+  patientId: string;
+  onSaved: () => void | Promise<void>;
+}) {
+  const toast = useToast();
+  const [substance, setSubstance] = useState('');
+  const [category, setCategory] = useState('drug');
+  const [reaction, setReaction] = useState('');
+  const [severity, setSeverity] = useState('mild');
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setSubstance(''); setCategory('drug'); setReaction(''); setSeverity('mild'); setNotes('');
+    }
+  }, [open]);
+
+  async function save() {
+    if (!substance.trim()) {
+      toast.error('Substance is required');
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.post(`/api/patients/${patientId}/allergies`, {
+        substance: substance.trim(),
+        category,
+        reaction: reaction.trim() || undefined,
+        severity,
+        notes: notes.trim() || undefined,
+      });
+      toast.success('Allergy added');
+      await onSaved();
+    } catch (e: any) {
+      toast.error('Save failed', e?.response?.data?.error || e?.message || 'Try again');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-md rounded-2xl">
+        <DialogHeader>
+          <DialogTitle className="text-xl">Add allergy</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <div>
+            <Label className="text-xs text-slate-500">Substance *</Label>
+            <Input value={substance} onChange={(e) => setSubstance(e.target.value)} placeholder="e.g. Penicillin" className="rounded-lg" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs text-slate-500">Category</Label>
+              <Select value={category} onValueChange={setCategory}>
+                <SelectTrigger className="rounded-lg"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="drug">Drug</SelectItem>
+                  <SelectItem value="food">Food</SelectItem>
+                  <SelectItem value="environmental">Environmental</SelectItem>
+                  <SelectItem value="other">Other</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs text-slate-500">Severity</Label>
+              <Select value={severity} onValueChange={setSeverity}>
+                <SelectTrigger className="rounded-lg"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="mild">Mild</SelectItem>
+                  <SelectItem value="moderate">Moderate</SelectItem>
+                  <SelectItem value="severe">Severe</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs text-slate-500">Reaction</Label>
+            <Input value={reaction} onChange={(e) => setReaction(e.target.value)} placeholder="e.g. Rash, anaphylaxis" className="rounded-lg" />
+          </div>
+          <div>
+            <Label className="text-xs text-slate-500">Notes</Label>
+            <Textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional details…" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button onClick={save} disabled={saving || !substance.trim()} className="bg-slate-900 hover:bg-slate-800">
+            {saving ? 'Saving…' : 'Save allergy'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// =========================================================================
+// DIAGNOSES TAB (enhanced) — ICD-10 picker, primary flag, active/resolved.
+// Free-text admission diagnoses (from the chart endpoint) are kept in a
+// separate "From admissions" section below.
+// =========================================================================
+function DiagnosesSection({
+  patientId,
+  admissionDiagnoses,
+}: {
+  patientId: string;
+  admissionDiagnoses: DiagnosisEntry[];
+}) {
+  const toast = useToast();
+  const [rows, setRows] = useState<StructuredDiagnosis[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [open, setOpen] = useState(false);
+
+  async function load() {
+    try {
+      setLoading(true);
+      const r = await api.get(`/api/patients/${patientId}/diagnoses`);
+      setRows(Array.isArray(r.data) ? r.data : []);
+    } catch (e: any) {
+      toast.error('Failed to load diagnoses', e?.response?.data?.error || e?.message || 'Try again');
+    } finally {
+      setLoading(false);
+    }
+  }
+  useEffect(() => { void load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [patientId]);
+
+  async function resolve(id: string) {
+    try {
+      await api.put(`/api/diagnoses/${id}`, { status: 'resolved' });
+      toast.success('Diagnosis resolved');
+      await load();
+    } catch (e: any) {
+      toast.error('Update failed', e?.response?.data?.error || e?.message || 'Try again');
+    }
+  }
+
+  const active = rows.filter((d) => d.status === 'active' || !d.status);
+  const resolved = rows.filter((d) => d.status === 'resolved');
+  // Sort: primary first, then by diagnosedAt desc
+  active.sort((a, b) => {
+    if (a.isPrimary && !b.isPrimary) return -1;
+    if (!a.isPrimary && b.isPrimary) return 1;
+    return (new Date(b.diagnosedAt || 0).getTime() - new Date(a.diagnosedAt || 0).getTime());
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="text-sm text-slate-500">Structured diagnoses (ICD-10).</div>
+        <Button onClick={() => setOpen(true)} className="gap-1.5 bg-slate-900 hover:bg-slate-800 rounded-xl">
+          <Plus className="w-4 h-4" /> Add diagnosis
+        </Button>
+      </div>
+
+      {loading ? (
+        <div className="text-sm text-slate-500 p-6 text-center">Loading diagnoses…</div>
+      ) : (
+        <>
+          <div className="space-y-2">
+            {active.length === 0 ? (
+              <Empty text="No active diagnoses." />
+            ) : active.map((d) => (
+              <Card key={d.id} className="rounded-2xl">
+                <CardContent className="p-4">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-mono text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-700">{d.icd10Code}</span>
+                        <span className="font-semibold text-slate-900">{d.icd10Title || '—'}</span>
+                        {d.isPrimary && (
+                          <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-100">Primary</Badge>
+                        )}
+                      </div>
+                      {d.notes && (
+                        <div className="mt-1 text-sm text-slate-700 whitespace-pre-wrap">{d.notes}</div>
+                      )}
+                      {d.diagnosedAt && (
+                        <div className="mt-1 text-xs text-slate-500">Diagnosed {fmtDate(d.diagnosedAt)}</div>
+                      )}
+                    </div>
+                    <Button size="sm" variant="outline" className="gap-1" onClick={() => resolve(d.id)}>
+                      <Check className="w-3.5 h-3.5" /> Mark resolved
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          {resolved.length > 0 && (
+            <>
+              <div className="flex items-center gap-3 pt-2">
+                <div className="h-px flex-1 bg-slate-200" />
+                <div className="text-xs uppercase tracking-wide text-slate-400">Resolved</div>
+                <div className="h-px flex-1 bg-slate-200" />
+              </div>
+              <div className="space-y-2 opacity-70">
+                {resolved.map((d) => (
+                  <Card key={d.id} className="rounded-2xl">
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-mono text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-700">{d.icd10Code}</span>
+                        <span className="font-medium text-slate-700 line-through">{d.icd10Title || '—'}</span>
+                        <Badge variant="outline">resolved</Badge>
+                      </div>
+                      {d.resolvedAt && (
+                        <div className="mt-1 text-xs text-slate-500">Resolved {fmtDate(d.resolvedAt)}</div>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </>
+          )}
+        </>
+      )}
+
+      {admissionDiagnoses.length > 0 && (
+        <div className="pt-4">
+          <div className="flex items-center gap-3">
+            <div className="h-px flex-1 bg-slate-200" />
+            <div className="text-xs uppercase tracking-wide text-slate-400">From admissions (free-text)</div>
+            <div className="h-px flex-1 bg-slate-200" />
+          </div>
+          <div className="space-y-2 mt-3">
+            {admissionDiagnoses.map((d) => (
+              <Card key={`${d.source}-${d.sourceId}-${d.date}`} className="rounded-2xl">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="text-slate-900">{d.text}</div>
+                    <Badge variant="outline">{d.source}</Badge>
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    {fmtDate(d.date)}{d.doctorName ? ` • Dr. ${d.doctorName}` : ''}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <AddDiagnosisDialog
+        open={open}
+        onClose={() => setOpen(false)}
+        patientId={patientId}
+        onSaved={async () => { setOpen(false); await load(); }}
+      />
+    </div>
+  );
+}
+
+function AddDiagnosisDialog({
+  open, onClose, patientId, onSaved,
+}: {
+  open: boolean;
+  onClose: () => void;
+  patientId: string;
+  onSaved: () => void | Promise<void>;
+}) {
+  const toast = useToast();
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<Icd10Result[]>([]);
+  const [picked, setPicked] = useState<Icd10Result | null>(null);
+  const [isPrimary, setIsPrimary] = useState(false);
+  const [notes, setNotes] = useState('');
+  const [searching, setSearching] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (open) {
+      setQuery(''); setResults([]); setPicked(null); setIsPrimary(false); setNotes('');
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (picked) return; // don't search once one is picked
+    const q = query.trim();
+    if (q.length < 2) { setResults([]); return; }
+    debounceRef.current = setTimeout(async () => {
+      try {
+        setSearching(true);
+        const r = await api.get(`/api/icd10/search?q=${encodeURIComponent(q)}&limit=20`);
+        setResults(Array.isArray(r.data) ? r.data : []);
+      } catch {
+        setResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [query, picked]);
+
+  async function save() {
+    if (!picked) {
+      toast.error('Pick an ICD-10 code first');
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.post('/api/diagnoses', {
+        patientId,
+        icd10Code: picked.code,
+        notes: notes.trim() || undefined,
+        isPrimary,
+      });
+      toast.success('Diagnosis added');
+      await onSaved();
+    } catch (e: any) {
+      toast.error('Save failed', e?.response?.data?.error || e?.message || 'Try again');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-xl rounded-2xl">
+        <DialogHeader>
+          <DialogTitle className="text-xl">Add diagnosis</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          {picked ? (
+            <div className="flex items-start justify-between border border-slate-200 rounded-lg p-3 bg-slate-50/60 gap-2">
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-mono text-xs px-2 py-0.5 rounded bg-white border border-slate-200">{picked.code}</span>
+                  <span className="font-semibold text-slate-900">{picked.title}</span>
+                </div>
+                {picked.chapter && <div className="text-xs text-slate-500 mt-0.5">{picked.chapter}</div>}
+              </div>
+              <Button size="sm" variant="ghost" onClick={() => { setPicked(null); setQuery(''); }} className="h-7">Change</Button>
+            </div>
+          ) : (
+            <div>
+              <Label className="text-xs text-slate-500">Search ICD-10 (code or condition)</Label>
+              <div className="relative">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                <Input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="e.g. hypertension, J18, diabetes…"
+                  className="rounded-lg pl-9"
+                  autoFocus
+                />
+              </div>
+              {query.trim().length >= 2 && (
+                <div className="mt-2 max-h-64 overflow-y-auto border border-slate-200 rounded-lg divide-y divide-slate-100">
+                  {searching ? (
+                    <div className="p-3 text-sm text-slate-500">Searching…</div>
+                  ) : results.length === 0 ? (
+                    <div className="p-3 text-sm text-slate-500">No matches.</div>
+                  ) : results.map((r) => (
+                    <button
+                      key={r.code}
+                      type="button"
+                      onClick={() => setPicked(r)}
+                      className="w-full text-left p-2.5 hover:bg-slate-50 flex items-start gap-2"
+                    >
+                      <span className="font-mono text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-700 shrink-0">{r.code}</span>
+                      <div className="min-w-0">
+                        <div className="text-sm text-slate-900 truncate">{r.title}</div>
+                        {r.chapter && <div className="text-xs text-slate-500 truncate">{r.chapter}</div>}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={isPrimary}
+              onChange={(e) => setIsPrimary(e.target.checked)}
+              className="rounded border-slate-300"
+            />
+            Primary diagnosis
+          </label>
+
+          <div>
+            <Label className="text-xs text-slate-500">Notes (optional)</Label>
+            <Textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Clinical context…" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button onClick={save} disabled={saving || !picked} className="bg-slate-900 hover:bg-slate-800">
+            {saving ? 'Saving…' : 'Save diagnosis'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -85,22 +85,22 @@ model Department {
 }
 
 model User {
-  id                  String           @id @default(uuid())
+  id                  String             @id @default(uuid())
   tenantId            String
   branchId            String
-  username            String           @unique
-  email               String           @unique
+  username            String             @unique
+  email               String             @unique
   passwordHash        String
   name                String
   roleIds             String[]
   departmentIds       String[]
   biometricTemplate   String?
-  isActive            Boolean          @default(true)
+  isActive            Boolean            @default(true)
   lastLoginAt         DateTime?
   // Account-lockout state. Reset to (0, null) on a successful login.
   // Bumped + lockedUntil set when bad-password attempts cross the threshold.
   // See modules/auth/auth.service.ts and the legacy /api/auth/login.
-  failedLoginAttempts Int              @default(0)
+  failedLoginAttempts Int                @default(0)
   lockedUntil         DateTime?
   // Top-level identity columns we frequently filter on; kept first-class
   // so admin search can hit indexes if we add them later.
@@ -117,25 +117,30 @@ model User {
   // strings like 'patients:view'. Most users have neither array
   // populated; this is for the rare exception where a single user
   // should have one extra ability or one fewer than their role.
-  extraPermissions    String[]         @default([])
-  revokedPermissions  String[]         @default([])
-  createdAt           DateTime         @default(now())
-  updatedAt           DateTime         @updatedAt
-  admissions          Admission[]      @relation("AdmittingDoctor")
+  extraPermissions    String[]           @default([])
+  revokedPermissions  String[]           @default([])
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  admissions          Admission[]        @relation("AdmittingDoctor")
   attendanceLogs      AttendanceLog[]
-  performedAuditLog   AuditLog[]       @relation("PerformedBy")
-  createdAuditLogs    AuditLog[]       @relation("CreatedBy")
-  appointments        Appointment[]    @relation("DoctorAppointments")
+  performedAuditLog   AuditLog[]         @relation("PerformedBy")
+  createdAuditLogs    AuditLog[]         @relation("CreatedBy")
+  appointments        Appointment[]      @relation("DoctorAppointments")
   encounters          Encounter[]
   opdNotes            OPDNote[]
   prescriptions       Prescription[]
-  branch              Branch           @relation(fields: [branchId], references: [id])
-  tenant              Tenant           @relation(fields: [tenantId], references: [id])
-  birthsAttended      BirthRecord[]    @relation("BirthAttendingDoctor")
-  deathsCertified     MortuaryRecord[] @relation("CertifyingDoctor")
-  raisedAlerts        Alert[]          @relation("AlertRaisedBy")
-  resolvedAlerts      Alert[]          @relation("AlertResolvedBy")
+  branch              Branch             @relation(fields: [branchId], references: [id])
+  tenant              Tenant             @relation(fields: [tenantId], references: [id])
+  birthsAttended      BirthRecord[]      @relation("BirthAttendingDoctor")
+  deathsCertified     MortuaryRecord[]   @relation("CertifyingDoctor")
+  raisedAlerts        Alert[]            @relation("AlertRaisedBy")
+  resolvedAlerts      Alert[]            @relation("AlertResolvedBy")
   ackAlerts           AlertAck[]
+  vitalsCaptured      Vitals[]
+  consultsRequested   Consultation[]     @relation("ConsultRequester")
+  consultsAssignedTo  Consultation[]     @relation("ConsultAssignee")
+  consultsResponded   Consultation[]     @relation("ConsultResponder")
+  dischargesSigned    DischargeSummary[] @relation("DischargeSigner")
 
   @@map("users")
 }
@@ -280,6 +285,13 @@ model Patient {
   birthsAsMother    BirthRecord[]      @relation("MotherBirths")
   birthAsBaby       BirthRecord?       @relation("BabyBirth")
   mortuaryRecords   MortuaryRecord[]
+  vitals            Vitals[]
+  // Legacy `allergies String?` field on Patient stays for back-compat;
+  // the new structured rows are addressed as `allergyRecords` to avoid
+  // colliding with the scalar.
+  allergyRecords    Allergy[]
+  diagnoses         Diagnosis[]
+  Consultation      Consultation[]
 
   @@unique([tenantId, mrn])
   @@map("patients")
@@ -329,27 +341,35 @@ model Encounter {
   opdNotes       OPDNote[]
   orders         Order[]
   prescriptions  Prescription[]
+  vitals         Vitals[]
+  diagnoses      Diagnosis[]
+  consultations  Consultation[]
 
   @@map("encounters")
 }
 
 model Admission {
-  id                String    @id @default(uuid())
-  encounterId       String    @unique
+  id                String                     @id @default(uuid())
+  encounterId       String                     @unique
   patientId         String
-  admissionDate     DateTime  @default(now())
+  admissionDate     DateTime                   @default(now())
   dischargeDate     DateTime?
   bedId             String?
   admittingDoctorId String?
-  status            String    @default("active")
+  status            String                     @default("active")
   diagnosis         String?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-  admittingDoctor   User?     @relation("AdmittingDoctor", fields: [admittingDoctorId], references: [id])
-  bed               Bed?      @relation(fields: [bedId], references: [id])
-  encounter         Encounter @relation(fields: [encounterId], references: [id])
-  patient           Patient   @relation(fields: [patientId], references: [id])
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+  admittingDoctor   User?                      @relation("AdmittingDoctor", fields: [admittingDoctorId], references: [id])
+  bed               Bed?                       @relation(fields: [bedId], references: [id])
+  encounter         Encounter                  @relation(fields: [encounterId], references: [id])
+  patient           Patient                    @relation(fields: [patientId], references: [id])
   ipdNotes          IPDNote[]
+  vitals            Vitals[]
+  diagnoses         Diagnosis[]
+  consultations     Consultation[]
+  dischargeSummary  DischargeSummary?
+  medRecs           MedicationReconciliation[]
 
   @@map("admissions")
 }
@@ -2125,23 +2145,23 @@ model OTRoom {
 // stays active for everyone else until someone clicks Resolve.
 
 model Alert {
-  id          String    @id @default(uuid())
-  tenantId    String
-  code        String    // CODE_BLUE / CODE_RED / CODE_PINK / CODE_BLACK / CODE_GREY / MASS_CASUALTY / ANNOUNCEMENT
-  severity    String    // 'critical' | 'warning' | 'info'
-  location    String    // free text — "ICU Bed 4", "OPD Reception", "Block B 3rd floor"
-  message     String?   // optional details
-  raisedById  String
-  raisedAt    DateTime  @default(now())
+  id           String    @id @default(uuid())
+  tenantId     String
+  code         String // CODE_BLUE / CODE_RED / CODE_PINK / CODE_BLACK / CODE_GREY / MASS_CASUALTY / ANNOUNCEMENT
+  severity     String // 'critical' | 'warning' | 'info'
+  location     String // free text — "ICU Bed 4", "OPD Reception", "Block B 3rd floor"
+  message      String? // optional details
+  raisedById   String
+  raisedAt     DateTime  @default(now())
   resolvedById String?
-  resolvedAt  DateTime?
+  resolvedAt   DateTime?
   // active until resolvedAt is set. Cheaper than maintaining a status
   // string + index because the query is simply { resolvedAt: null }.
 
-  tenant      Tenant     @relation(fields: [tenantId], references: [id])
-  raisedBy    User       @relation("AlertRaisedBy",   fields: [raisedById],   references: [id])
-  resolvedBy  User?      @relation("AlertResolvedBy", fields: [resolvedById], references: [id])
-  acks        AlertAck[]
+  tenant     Tenant     @relation(fields: [tenantId], references: [id])
+  raisedBy   User       @relation("AlertRaisedBy", fields: [raisedById], references: [id])
+  resolvedBy User?      @relation("AlertResolvedBy", fields: [resolvedById], references: [id])
+  acks       AlertAck[]
 
   @@index([tenantId, resolvedAt])
   @@index([tenantId, raisedAt])
@@ -2152,15 +2172,216 @@ model Alert {
 // for everyone (the whole hospital still needs to see Code Blue even
 // if the senior doctor on duty has acknowledged it).
 model AlertAck {
-  id           String   @id @default(uuid())
-  alertId      String
-  userId       String
+  id             String   @id @default(uuid())
+  alertId        String
+  userId         String
   acknowledgedAt DateTime @default(now())
 
-  alert        Alert @relation(fields: [alertId], references: [id], onDelete: Cascade)
-  user         User  @relation(fields: [userId],  references: [id])
+  alert Alert @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id])
 
   @@unique([alertId, userId])
   @@index([userId])
   @@map("alert_acks")
+}
+
+// ===========================
+// PHASE 1 — CLINICAL EMR CORE
+// ===========================
+
+// Vitals snapshot — captured at OPD intake, IPD nursing rounds, or
+// ad-hoc. Each row is one capture; trending is done by sorting on
+// capturedAt. Optional encounter/admission links so we can show
+// "vitals during this visit" or "all vitals ever for this patient".
+model Vitals {
+  id           String   @id @default(uuid())
+  patientId    String
+  encounterId  String?
+  admissionId  String?
+  capturedById String?
+  capturedAt   DateTime @default(now())
+  // Vitals — all optional, capture only what's measured.
+  temperatureC Float? // body temperature in °C
+  bpSystolic   Int? // mmHg
+  bpDiastolic  Int?
+  heartRate    Int? // bpm
+  respRate     Int? // breaths/min
+  spo2         Int? // 0-100
+  weightKg     Float?
+  heightCm     Float?
+  bmi          Float? // derived if both weight + height present
+  painScore    Int? // 0-10 NRS
+  glucoseMgDl  Int? // random or fasting blood sugar
+  notes        String?
+
+  patient    Patient    @relation(fields: [patientId], references: [id])
+  encounter  Encounter? @relation(fields: [encounterId], references: [id])
+  admission  Admission? @relation(fields: [admissionId], references: [id])
+  capturedBy User?      @relation(fields: [capturedById], references: [id])
+
+  @@index([patientId, capturedAt])
+  @@index([encounterId])
+  @@index([admissionId])
+  @@map("vitals")
+}
+
+// Allergies as first-class data so prescription flow can alert the
+// doctor instead of relying on free-text in Patient.allergies.
+model Allergy {
+  id        String   @id @default(uuid())
+  patientId String
+  substance String // free text — drug name, food, latex, dust, etc.
+  // 'drug' | 'food' | 'environmental' | 'other'
+  category  String   @default("drug")
+  reaction  String? // rash, anaphylaxis, GI upset, etc.
+  // 'mild' | 'moderate' | 'severe' (severe = anaphylaxis history)
+  severity  String   @default("moderate")
+  notedAt   DateTime @default(now())
+  notedById String?
+  active    Boolean  @default(true)
+  notes     String?
+
+  patient Patient @relation(fields: [patientId], references: [id])
+
+  @@unique([patientId, substance])
+  @@index([patientId, active])
+  @@map("allergies")
+}
+
+// ICD-10 coded diagnoses on an encounter or admission. One patient
+// can have many active diagnoses; one of them is flagged `isPrimary`
+// for claim coding. ICD codes are matched against a static lookup
+// dataset shipped with the backend (icd10.json).
+model Diagnosis {
+  id            String    @id @default(uuid())
+  patientId     String
+  encounterId   String?
+  admissionId   String?
+  icd10Code     String // e.g. 'I10' (essential hypertension)
+  icd10Title    String // human-readable title, denormalized for display
+  notes         String? // doctor's specifier
+  // primary diagnosis = main reason for visit/admission (used in claims)
+  isPrimary     Boolean   @default(false)
+  // active vs resolved — a chronic condition stays active, an acute
+  // problem moves to resolved on discharge.
+  status        String    @default("active") // active | resolved | provisional
+  diagnosedAt   DateTime  @default(now())
+  diagnosedById String?
+  resolvedAt    DateTime?
+
+  patient   Patient    @relation(fields: [patientId], references: [id])
+  encounter Encounter? @relation(fields: [encounterId], references: [id])
+  admission Admission? @relation(fields: [admissionId], references: [id])
+
+  @@index([patientId, status])
+  @@index([icd10Code])
+  @@map("diagnoses")
+}
+
+// Inter-department consultation request. "Cardiologist requests
+// nephrology consult on patient X." Multi-speciality core — the
+// requesting doctor stays primary; the consulting doctor opines.
+model Consultation {
+  id            String    @id @default(uuid())
+  tenantId      String
+  patientId     String
+  encounterId   String?
+  admissionId   String?
+  // Doctor raising the consult.
+  requestedById String
+  // Department to send to (may not pre-assign a doctor).
+  toDepartment  String
+  // Assigned consulting doctor — optional; the dept can route later.
+  assignedToId  String?
+  // 'routine' | 'urgent' | 'stat'
+  urgency       String    @default("routine")
+  question      String // what the requester wants the consultant to address
+  status        String    @default("requested") // requested | accepted | responded | cancelled
+  response      String?
+  respondedById String?
+  respondedAt   DateTime?
+  requestedAt   DateTime  @default(now())
+
+  patient     Patient    @relation(fields: [patientId], references: [id])
+  encounter   Encounter? @relation(fields: [encounterId], references: [id])
+  admission   Admission? @relation(fields: [admissionId], references: [id])
+  requestedBy User       @relation("ConsultRequester", fields: [requestedById], references: [id])
+  assignedTo  User?      @relation("ConsultAssignee", fields: [assignedToId], references: [id])
+  respondedBy User?      @relation("ConsultResponder", fields: [respondedById], references: [id])
+
+  @@index([tenantId, status])
+  @@index([assignedToId, status])
+  @@index([patientId])
+  @@map("consultations")
+}
+
+// Structured discharge summary. One per admission. Generates the
+// printable PDF the patient takes home + uses for follow-up.
+model DischargeSummary {
+  id                   String    @id @default(uuid())
+  admissionId          String    @unique
+  // Free text but template-driven on the FE.
+  finalDiagnosis       String
+  proceduresDone       String?
+  treatmentSummary     String?
+  conditionAtDischarge String?
+  // Medications on discharge (JSON: [{drug, dose, frequency, duration}]).
+  dischargeMedications Json?
+  followUpDate         DateTime?
+  followUpNotes        String?
+  instructions         String? // diet / activity / wound care
+  // Signing doctor (consultant who is responsible for the summary).
+  signedById           String
+  signedAt             DateTime  @default(now())
+
+  admission Admission @relation(fields: [admissionId], references: [id])
+  signedBy  User      @relation("DischargeSigner", fields: [signedById], references: [id])
+
+  @@map("discharge_summaries")
+}
+
+// Medication reconciliation — three-source comparison: what the
+// patient was taking at home, what we prescribed on admission, and
+// what we're sending them home with. Reconciler picks an action per
+// drug (continue / hold / stop / modify) with a reason.
+model MedicationReconciliation {
+  id             String   @id @default(uuid())
+  admissionId    String
+  // 'home' | 'admission' | 'discharge'
+  source         String
+  drugName       String // free text — patient may name OTC items we don't catalog
+  drugId         String? // optional FK to Drug if known
+  dose           String?
+  frequency      String?
+  // For discharge entries: 'continue' | 'hold' | 'stop' | 'modify' | 'new'
+  action         String?
+  reason         String?
+  reconciledById String?
+  reconciledAt   DateTime @default(now())
+
+  admission Admission @relation(fields: [admissionId], references: [id], onDelete: Cascade)
+
+  @@index([admissionId, source])
+  @@map("medication_reconciliations")
+}
+
+// Drug-drug interaction pairs. Bidirectional — checking A vs B is
+// the same as B vs A; we normalise (smaller id first) at insert and
+// at lookup. Severity drives the alert tier on prescription:
+// 'contraindicated' = block, 'major' = red warn, 'moderate' = amber.
+model DrugInteraction {
+  id          String  @id @default(uuid())
+  drugAId     String
+  drugBId     String
+  // 'contraindicated' | 'major' | 'moderate' | 'minor'
+  severity    String
+  description String
+  // Optional management advice the doctor sees.
+  advice      String?
+  source      String? // citation, e.g. 'CIMS', 'Lexicomp', 'CDSCO advisory'
+
+  @@unique([drugAId, drugBId])
+  @@index([drugAId])
+  @@index([drugBId])
+  @@map("drug_interactions")
 }

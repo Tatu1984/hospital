@@ -19,22 +19,23 @@ interface CodeDef {
   label: string;
   severity: 'critical' | 'warning' | 'info';
   tint: string;
+  dot: string; // tailwind bg-* color matching the broadcast banner color
 }
 
 // Ordered the way Indian hospitals usually post on the back of the ID card.
 // Critical first (the everyday emergencies), then warning, then info.
 const CODES: CodeDef[] = [
-  { code: 'CODE_BLUE',     label: 'Code Blue — Cardiac arrest',          severity: 'critical', tint: 'bg-blue-50    text-blue-700    ring-blue-200' },
-  { code: 'CODE_RED',      label: 'Code Red — Fire',                     severity: 'critical', tint: 'bg-red-50     text-red-700     ring-red-200' },
-  { code: 'CODE_PINK',     label: 'Code Pink — Infant abduction',        severity: 'critical', tint: 'bg-pink-50    text-pink-700    ring-pink-200' },
-  { code: 'CODE_BLACK',    label: 'Code Black — Bomb threat',            severity: 'critical', tint: 'bg-slate-100  text-slate-900   ring-slate-300' },
-  { code: 'CODE_ORANGE',   label: 'Code Orange — Hazmat',                severity: 'critical', tint: 'bg-orange-50  text-orange-700  ring-orange-200' },
-  { code: 'CODE_SILVER',   label: 'Code Silver — Weapon / active threat',severity: 'critical', tint: 'bg-slate-100  text-slate-900   ring-slate-300' },
-  { code: 'MASS_CASUALTY', label: 'Mass casualty incident',              severity: 'critical', tint: 'bg-red-50     text-red-700     ring-red-200' },
-  { code: 'EVACUATION',    label: 'Evacuation',                          severity: 'critical', tint: 'bg-orange-50  text-orange-700  ring-orange-200' },
-  { code: 'CODE_GREY',     label: 'Code Grey — Combative person',        severity: 'warning',  tint: 'bg-slate-100  text-slate-800   ring-slate-300' },
-  { code: 'CODE_YELLOW',   label: 'Code Yellow — Internal emergency',    severity: 'warning',  tint: 'bg-yellow-50  text-yellow-800  ring-yellow-200' },
-  { code: 'ANNOUNCEMENT',  label: 'General announcement',                severity: 'info',     tint: 'bg-sky-50     text-sky-700     ring-sky-200' },
+  { code: 'CODE_BLUE',     label: 'Code Blue — Cardiac arrest',          severity: 'critical', dot: 'bg-blue-600',    tint: 'bg-blue-50    text-blue-700    ring-blue-200' },
+  { code: 'CODE_RED',      label: 'Code Red — Fire',                     severity: 'critical', dot: 'bg-red-600',     tint: 'bg-red-50     text-red-700     ring-red-200' },
+  { code: 'CODE_PINK',     label: 'Code Pink — Infant abduction',        severity: 'critical', dot: 'bg-pink-600',    tint: 'bg-pink-50    text-pink-700    ring-pink-200' },
+  { code: 'CODE_BLACK',    label: 'Code Black — Bomb threat',            severity: 'critical', dot: 'bg-slate-900',   tint: 'bg-slate-100  text-slate-900   ring-slate-300' },
+  { code: 'CODE_ORANGE',   label: 'Code Orange — Hazmat',                severity: 'critical', dot: 'bg-orange-600',  tint: 'bg-orange-50  text-orange-700  ring-orange-200' },
+  { code: 'CODE_SILVER',   label: 'Code Silver — Weapon / active threat',severity: 'critical', dot: 'bg-slate-500',   tint: 'bg-slate-100  text-slate-900   ring-slate-300' },
+  { code: 'MASS_CASUALTY', label: 'Mass casualty incident',              severity: 'critical', dot: 'bg-red-700',     tint: 'bg-red-50     text-red-700     ring-red-200' },
+  { code: 'EVACUATION',    label: 'Evacuation',                          severity: 'critical', dot: 'bg-orange-600',  tint: 'bg-orange-50  text-orange-700  ring-orange-200' },
+  { code: 'CODE_GREY',     label: 'Code Grey — Combative person',        severity: 'warning',  dot: 'bg-slate-600',   tint: 'bg-slate-100  text-slate-800   ring-slate-300' },
+  { code: 'CODE_YELLOW',   label: 'Code Yellow — Internal emergency',    severity: 'warning',  dot: 'bg-yellow-400',  tint: 'bg-yellow-50  text-yellow-800  ring-yellow-200' },
+  { code: 'ANNOUNCEMENT',  label: 'General announcement',                severity: 'info',     dot: 'bg-sky-600',     tint: 'bg-sky-50     text-sky-700     ring-sky-200' },
 ];
 
 export default function RaiseAlarmButton() {
@@ -104,7 +105,7 @@ export default function RaiseAlarmButton() {
                         : 'border-slate-200 hover:border-slate-300'
                     }`}
                   >
-                    <span className={`w-2 h-2 rounded-full ${c.severity === 'critical' ? 'bg-red-500' : c.severity === 'warning' ? 'bg-amber-500' : 'bg-sky-500'}`} />
+                    <span className={`w-2.5 h-2.5 rounded-full ${c.dot} ring-2 ring-white shadow-sm`} />
                     <span className={code.code === c.code ? 'text-slate-900 font-medium' : 'text-slate-700'}>{c.label}</span>
                   </button>
                 ))}

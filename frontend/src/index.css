@@ -73,10 +73,12 @@
   }
 
   /* Emergency banner pulse — used by AlertBanner for critical alerts.
-     Subtle red ring expanding outward; an outright flash makes the page
-     unreadable for clinical staff who need to keep working. */
+     Color-agnostic so it works on any code's banner (Code Blue stays
+     blue, Code Pink stays pink, etc.). A small brightness + saturation
+     tick keeps the banner visibly alive without a colored shadow that
+     would clash with the banner's own color. */
   @keyframes banner-pulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgb(239 68 68 / 0.55); }
-    50%      { box-shadow: 0 0 0 10px rgb(239 68 68 / 0); }
+    0%, 100% { filter: brightness(1)    saturate(1);    box-shadow: inset 0 0 0 0 rgb(255 255 255 / 0); }
+    50%      { filter: brightness(1.08) saturate(1.15); box-shadow: inset 0 0 0 3px rgb(255 255 255 / 0.2); }
   }
 }

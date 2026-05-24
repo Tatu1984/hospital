@@ -13,6 +13,7 @@ import { Request, Response, Router, RequestHandler } from 'express';
 import { prisma } from './shared/prisma';
 import { authenticateToken } from './middleware';
 import { writeAudit } from './utils/audit';
+import { searchIcd10, getIcd10ByCode } from './data/icd10';
 
 type AuthedReq = Request & { user?: { userId: string; tenantId: string; branchId?: string } };
 
@@ -869,6 +870,552 @@ clinicalModulesRouter.post('/alerts/:id/resolve', auth, async (req: AuthedReq, r
   } catch (e: any) {
     console.error('resolve alert', e);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// =============== PHASE 1: CLINICAL EMR CORE ===============
+
+// ---------- VITALS ----------
+// Capture a vitals row. patientId required; encounterId / admissionId
+// optional. BMI is auto-derived if both weight and height present.
+clinicalModulesRouter.post('/vitals', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const b = req.body || {};
+    if (!b.patientId) return res.status(400).json({ error: 'patientId is required' });
+
+    const patient = await prisma.patient.findFirst({
+      where: { id: b.patientId, tenantId: req.user!.tenantId },
+      select: { id: true },
+    });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+
+    const num = (v: any) => v === '' || v === null || v === undefined ? null : Number(v);
+    const weightKg = num(b.weightKg);
+    const heightCm = num(b.heightCm);
+    let bmi: number | null = null;
+    if (weightKg && heightCm && heightCm > 0) {
+      const m = heightCm / 100;
+      bmi = Math.round((weightKg / (m * m)) * 10) / 10;
+    }
+
+    const created = await prisma.vitals.create({
+      data: {
+        patientId: patient.id,
+        encounterId: b.encounterId || null,
+        admissionId: b.admissionId || null,
+        capturedById: req.user!.userId,
+        temperatureC: num(b.temperatureC),
+        bpSystolic:   num(b.bpSystolic),
+        bpDiastolic:  num(b.bpDiastolic),
+        heartRate:    num(b.heartRate),
+        respRate:     num(b.respRate),
+        spo2:         num(b.spo2),
+        weightKg,
+        heightCm,
+        bmi,
+        painScore:    num(b.painScore),
+        glucoseMgDl:  num(b.glucoseMgDl),
+        notes: b.notes || null,
+      },
+      include: { capturedBy: { select: { id: true, name: true } } },
+    });
+
+    void writeAudit({
+      prisma, req,
+      action: 'VITALS_CAPTURE', resource: 'Vitals', resourceId: created.id,
+      newValue: { patientId: created.patientId, bp: `${created.bpSystolic}/${created.bpDiastolic}`, hr: created.heartRate, temp: created.temperatureC },
+    });
+
+    res.status(201).json(created);
+  } catch (e: any) {
+    console.error('vitals create', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.get('/patients/:id/vitals', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const owned = await prisma.patient.findFirst({
+      where: { id: req.params.id, tenantId: req.user!.tenantId },
+      select: { id: true },
+    });
+    if (!owned) return res.status(404).json({ error: 'Patient not found' });
+
+    const limit = Math.min(parseInt(String(req.query.limit || '50'), 10) || 50, 500);
+    const items = await prisma.vitals.findMany({
+      where: { patientId: owned.id },
+      orderBy: { capturedAt: 'desc' },
+      take: limit,
+      include: { capturedBy: { select: { id: true, name: true } } },
+    });
+    res.json(items);
+  } catch (e: any) {
+    console.error('vitals list', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ---------- ALLERGIES ----------
+clinicalModulesRouter.get('/patients/:id/allergies', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const owned = await prisma.patient.findFirst({
+      where: { id: req.params.id, tenantId: req.user!.tenantId },
+      select: { id: true },
+    });
+    if (!owned) return res.status(404).json({ error: 'Patient not found' });
+    const items = await prisma.allergy.findMany({
+      where: { patientId: owned.id, active: true },
+      orderBy: [{ severity: 'desc' }, { notedAt: 'desc' }],
+    });
+    res.json(items);
+  } catch (e) {
+    console.error('allergies list', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+clinicalModulesRouter.post('/patients/:id/allergies', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const owned = await prisma.patient.findFirst({
+      where: { id: req.params.id, tenantId: req.user!.tenantId },
+      select: { id: true },
+    });
+    if (!owned) return res.status(404).json({ error: 'Patient not found' });
+
+    const { substance, category, reaction, severity, notes } = req.body || {};
+    if (!substance || !String(substance).trim()) return res.status(400).json({ error: 'substance is required' });
+
+    const created = await prisma.allergy.upsert({
+      where: { patientId_substance: { patientId: owned.id, substance: substance.trim() } },
+      create: {
+        patientId: owned.id,
+        substance: substance.trim(),
+        category: category || 'drug',
+        reaction: reaction || null,
+        severity: severity || 'moderate',
+        notedById: req.user!.userId,
+        notes: notes || null,
+      },
+      update: {
+        category: category || 'drug',
+        reaction: reaction || null,
+        severity: severity || 'moderate',
+        active: true,
+        notes: notes || null,
+      },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'ALLERGY_ADD', resource: 'Allergy', resourceId: created.id,
+      newValue: { patientId: owned.id, substance: created.substance, severity: created.severity },
+    });
+    res.status(201).json(created);
+  } catch (e: any) {
+    console.error('allergy create', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.delete('/allergies/:id', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const allergy = await prisma.allergy.findFirst({
+      where: { id: req.params.id, patient: { tenantId: req.user!.tenantId } },
+    });
+    if (!allergy) return res.status(404).json({ error: 'Allergy not found' });
+    await prisma.allergy.update({ where: { id: allergy.id }, data: { active: false } });
+    res.status(204).end();
+  } catch (e) {
+    console.error('allergy soft-delete', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ---------- ICD-10 SEARCH ----------
+clinicalModulesRouter.get('/icd10/search', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const q = String(req.query.q || '');
+    const limit = Math.min(parseInt(String(req.query.limit || '20'), 10) || 20, 50);
+    res.json(searchIcd10(q, limit));
+  } catch (e) {
+    console.error('icd10 search', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ---------- DIAGNOSES ----------
+clinicalModulesRouter.get('/patients/:id/diagnoses', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const owned = await prisma.patient.findFirst({
+      where: { id: req.params.id, tenantId: req.user!.tenantId },
+      select: { id: true },
+    });
+    if (!owned) return res.status(404).json({ error: 'Patient not found' });
+    const items = await prisma.diagnosis.findMany({
+      where: { patientId: owned.id },
+      orderBy: [{ isPrimary: 'desc' }, { diagnosedAt: 'desc' }],
+    });
+    res.json(items);
+  } catch (e) {
+    console.error('diagnoses list', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+clinicalModulesRouter.post('/diagnoses', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const { patientId, encounterId, admissionId, icd10Code, notes, isPrimary, status } = req.body || {};
+    if (!patientId || !icd10Code) return res.status(400).json({ error: 'patientId and icd10Code are required' });
+
+    const owned = await prisma.patient.findFirst({
+      where: { id: patientId, tenantId: req.user!.tenantId },
+      select: { id: true },
+    });
+    if (!owned) return res.status(404).json({ error: 'Patient not found' });
+
+    const lookup = getIcd10ByCode(icd10Code);
+    if (!lookup) return res.status(400).json({ error: `Unknown ICD-10 code: ${icd10Code}` });
+
+    // If marking primary, unset any existing primary for same encounter/admission.
+    if (isPrimary) {
+      await prisma.diagnosis.updateMany({
+        where: {
+          patientId: owned.id,
+          ...(encounterId ? { encounterId } : {}),
+          ...(admissionId ? { admissionId } : {}),
+          isPrimary: true,
+        },
+        data: { isPrimary: false },
+      });
+    }
+
+    const created = await prisma.diagnosis.create({
+      data: {
+        patientId: owned.id,
+        encounterId: encounterId || null,
+        admissionId: admissionId || null,
+        icd10Code: lookup.code,
+        icd10Title: lookup.title,
+        notes: notes || null,
+        isPrimary: !!isPrimary,
+        status: status || 'active',
+        diagnosedById: req.user!.userId,
+      },
+    });
+
+    void writeAudit({
+      prisma, req,
+      action: 'DIAGNOSIS_ADD', resource: 'Diagnosis', resourceId: created.id,
+      newValue: { patientId: owned.id, icd10: lookup.code, title: lookup.title, primary: !!isPrimary },
+    });
+    res.status(201).json(created);
+  } catch (e: any) {
+    console.error('diagnosis create', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.put('/diagnoses/:id', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const dx = await prisma.diagnosis.findFirst({
+      where: { id: req.params.id, patient: { tenantId: req.user!.tenantId } },
+    });
+    if (!dx) return res.status(404).json({ error: 'Diagnosis not found' });
+    const { status, notes, isPrimary } = req.body || {};
+    const data: any = {};
+    if (status !== undefined) {
+      data.status = status;
+      if (status === 'resolved') data.resolvedAt = new Date();
+    }
+    if (notes !== undefined) data.notes = notes;
+    if (isPrimary !== undefined) data.isPrimary = !!isPrimary;
+    const updated = await prisma.diagnosis.update({ where: { id: dx.id }, data });
+    res.json(updated);
+  } catch (e) {
+    console.error('diagnosis update', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ---------- CONSULTATIONS (inter-department) ----------
+clinicalModulesRouter.get('/consultations', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const { status, mine, assignedToMe } = req.query as any;
+    const where: any = { tenantId: req.user!.tenantId };
+    if (status) where.status = status;
+    if (mine === 'true') where.requestedById = req.user!.userId;
+    if (assignedToMe === 'true') where.assignedToId = req.user!.userId;
+    const items = await prisma.consultation.findMany({
+      where,
+      orderBy: [{ urgency: 'asc' }, { requestedAt: 'desc' }],
+      take: 200,
+      include: {
+        patient:     { select: { id: true, name: true, mrn: true } },
+        requestedBy: { select: { id: true, name: true } },
+        assignedTo:  { select: { id: true, name: true } },
+        respondedBy: { select: { id: true, name: true } },
+      },
+    });
+    res.json(items);
+  } catch (e) {
+    console.error('consultations list', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+clinicalModulesRouter.post('/consultations', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const { patientId, encounterId, admissionId, toDepartment, assignedToId, urgency, question } = req.body || {};
+    if (!patientId || !toDepartment || !question) {
+      return res.status(400).json({ error: 'patientId, toDepartment, and question are required' });
+    }
+
+    const owned = await prisma.patient.findFirst({
+      where: { id: patientId, tenantId: req.user!.tenantId },
+      select: { id: true },
+    });
+    if (!owned) return res.status(404).json({ error: 'Patient not found' });
+
+    const created = await prisma.consultation.create({
+      data: {
+        tenantId: req.user!.tenantId,
+        patientId: owned.id,
+        encounterId: encounterId || null,
+        admissionId: admissionId || null,
+        requestedById: req.user!.userId,
+        toDepartment,
+        assignedToId: assignedToId || null,
+        urgency: urgency || 'routine',
+        question: String(question).trim(),
+      },
+      include: {
+        patient:     { select: { id: true, name: true, mrn: true } },
+        requestedBy: { select: { id: true, name: true } },
+        assignedTo:  { select: { id: true, name: true } },
+      },
+    });
+
+    void writeAudit({
+      prisma, req,
+      action: 'CONSULT_REQUEST', resource: 'Consultation', resourceId: created.id,
+      newValue: { patientId: owned.id, toDepartment, urgency: created.urgency },
+    });
+    res.status(201).json(created);
+  } catch (e: any) {
+    console.error('consultation create', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/consultations/:id/respond', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const c = await prisma.consultation.findFirst({
+      where: { id: req.params.id, tenantId: req.user!.tenantId },
+    });
+    if (!c) return res.status(404).json({ error: 'Consultation not found' });
+    const { response } = req.body || {};
+    if (!response || !String(response).trim()) return res.status(400).json({ error: 'response is required' });
+    const updated = await prisma.consultation.update({
+      where: { id: c.id },
+      data: {
+        response: String(response).trim(),
+        respondedById: req.user!.userId,
+        respondedAt: new Date(),
+        status: 'responded',
+      },
+      include: {
+        respondedBy: { select: { id: true, name: true } },
+        patient:     { select: { id: true, name: true, mrn: true } },
+      },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'CONSULT_RESPOND', resource: 'Consultation', resourceId: c.id,
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('consultation respond', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/consultations/:id/cancel', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const c = await prisma.consultation.findFirst({
+      where: { id: req.params.id, tenantId: req.user!.tenantId },
+    });
+    if (!c) return res.status(404).json({ error: 'Consultation not found' });
+    const updated = await prisma.consultation.update({
+      where: { id: c.id },
+      data: { status: 'cancelled' },
+    });
+    res.json(updated);
+  } catch (e) {
+    console.error('consultation cancel', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ---------- DISCHARGE SUMMARY ----------
+clinicalModulesRouter.get('/admissions/:id/discharge-summary', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const adm = await prisma.admission.findFirst({
+      where: { id: req.params.id, patient: { tenantId: req.user!.tenantId } },
+      select: { id: true },
+    });
+    if (!adm) return res.status(404).json({ error: 'Admission not found' });
+    const summary = await prisma.dischargeSummary.findUnique({
+      where: { admissionId: adm.id },
+      include: { signedBy: { select: { id: true, name: true } } },
+    });
+    res.json(summary || null);
+  } catch (e) {
+    console.error('discharge fetch', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+clinicalModulesRouter.put('/admissions/:id/discharge-summary', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const adm = await prisma.admission.findFirst({
+      where: { id: req.params.id, patient: { tenantId: req.user!.tenantId } },
+      select: { id: true },
+    });
+    if (!adm) return res.status(404).json({ error: 'Admission not found' });
+    const b = req.body || {};
+    if (!b.finalDiagnosis) return res.status(400).json({ error: 'finalDiagnosis is required' });
+
+    const data = {
+      finalDiagnosis: String(b.finalDiagnosis).trim(),
+      proceduresDone: b.proceduresDone || null,
+      treatmentSummary: b.treatmentSummary || null,
+      conditionAtDischarge: b.conditionAtDischarge || null,
+      dischargeMedications: b.dischargeMedications ?? null,
+      followUpDate: b.followUpDate ? new Date(b.followUpDate) : null,
+      followUpNotes: b.followUpNotes || null,
+      instructions: b.instructions || null,
+      signedById: req.user!.userId,
+    };
+
+    const summary = await prisma.dischargeSummary.upsert({
+      where: { admissionId: adm.id },
+      create: { ...data, admissionId: adm.id },
+      update: data,
+      include: { signedBy: { select: { id: true, name: true } } },
+    });
+
+    void writeAudit({
+      prisma, req,
+      action: 'DISCHARGE_SUMMARY_SAVE', resource: 'DischargeSummary',
+      resourceId: summary.id,
+    });
+    res.json(summary);
+  } catch (e: any) {
+    console.error('discharge save', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+// ---------- MEDICATION RECONCILIATION ----------
+clinicalModulesRouter.get('/admissions/:id/med-rec', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const adm = await prisma.admission.findFirst({
+      where: { id: req.params.id, patient: { tenantId: req.user!.tenantId } },
+      select: { id: true },
+    });
+    if (!adm) return res.status(404).json({ error: 'Admission not found' });
+    const items = await prisma.medicationReconciliation.findMany({
+      where: { admissionId: adm.id },
+      orderBy: { reconciledAt: 'desc' },
+    });
+    res.json(items);
+  } catch (e) {
+    console.error('medrec list', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+clinicalModulesRouter.post('/admissions/:id/med-rec', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const adm = await prisma.admission.findFirst({
+      where: { id: req.params.id, patient: { tenantId: req.user!.tenantId } },
+      select: { id: true },
+    });
+    if (!adm) return res.status(404).json({ error: 'Admission not found' });
+    const b = req.body || {};
+    if (!b.source || !b.drugName) return res.status(400).json({ error: 'source and drugName are required' });
+    if (!['home', 'admission', 'discharge'].includes(b.source)) {
+      return res.status(400).json({ error: 'source must be home, admission, or discharge' });
+    }
+    const created = await prisma.medicationReconciliation.create({
+      data: {
+        admissionId: adm.id,
+        source: b.source,
+        drugName: String(b.drugName).trim(),
+        drugId: b.drugId || null,
+        dose: b.dose || null,
+        frequency: b.frequency || null,
+        action: b.action || null,
+        reason: b.reason || null,
+        reconciledById: req.user!.userId,
+      },
+    });
+    res.status(201).json(created);
+  } catch (e: any) {
+    console.error('medrec create', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.delete('/med-rec/:id', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const row = await prisma.medicationReconciliation.findFirst({
+      where: { id: req.params.id, admission: { patient: { tenantId: req.user!.tenantId } } },
+    });
+    if (!row) return res.status(404).json({ error: 'Med-rec row not found' });
+    await prisma.medicationReconciliation.delete({ where: { id: row.id } });
+    res.status(204).end();
+  } catch (e) {
+    console.error('medrec delete', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ---------- DRUG-DRUG INTERACTIONS ----------
+// Checks an array of drug IDs against the static interaction table.
+// Returns any pair that triggers an alert. Severity decides UI tier:
+//   contraindicated → block prescription
+//   major           → red warn (require ack)
+//   moderate        → amber warn
+//   minor           → grey info
+clinicalModulesRouter.post('/drug-interactions/check', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const ids: string[] = Array.isArray(req.body?.drugIds) ? req.body.drugIds : [];
+    if (ids.length < 2) return res.json({ interactions: [] });
+    const uniqueIds = Array.from(new Set(ids));
+    // Find any interactions where both drugA and drugB are in the set.
+    const interactions = await prisma.drugInteraction.findMany({
+      where: {
+        OR: [
+          { drugAId: { in: uniqueIds }, drugBId: { in: uniqueIds } },
+        ],
+      },
+    });
+    // Pull drug names for display.
+    const drugs = await prisma.drug.findMany({
+      where: { id: { in: uniqueIds } },
+      select: { id: true, name: true },
+    });
+    const nameById = Object.fromEntries(drugs.map(d => [d.id, d.name]));
+    res.json({
+      interactions: interactions.map(i => ({
+        ...i,
+        drugAName: nameById[i.drugAId] || '?',
+        drugBName: nameById[i.drugBId] || '?',
+      })),
+    });
+  } catch (e: any) {
+    console.error('drug interaction check', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
   }
 });
 

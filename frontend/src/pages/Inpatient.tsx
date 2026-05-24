@@ -7,11 +7,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Bed, LogOut, Search, ArrowLeftRight } from 'lucide-react';
+import { Plus, Bed, LogOut, Search, ArrowLeftRight, FileText, Pill } from 'lucide-react';
 import api from '../services/api';
 import { useToast } from '../components/Toast';
 import { toArray } from '../utils/list';
 import { WARD_CATEGORIES, IPD_WARD_TYPES, CRITICAL_CARE_TYPES, labelFor } from '../lib/wardCategories';
+import DischargeSummaryDialog from '../components/DischargeSummaryDialog';
+import MedicationReconciliationPanel from '../components/MedicationReconciliationPanel';
 
 interface Admission {
   id: string;
@@ -78,6 +80,13 @@ export default function Inpatient() {
   const [transferWardFilter, setTransferWardFilter] = useState<string>('all');
   const [transferTargetBedId, setTransferTargetBedId] = useState<string>('');
   const [selectedAdmission, setSelectedAdmission] = useState<Admission | null>(null);
+  // Per-admission "Discharge summary" editor + "Med. reconciliation" panel.
+  // Both hang off an Admission row so we keep the admission in state and
+  // let the dialogs read from it. We deliberately don't reuse
+  // `selectedAdmission` so opening one of these doesn't clobber an
+  // in-progress discharge / transfer flow.
+  const [activeDischargeAdmission, setActiveDischargeAdmission] = useState<Admission | null>(null);
+  const [activeMedRecAdmission, setActiveMedRecAdmission] = useState<Admission | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -723,7 +732,7 @@ export default function Inpatient() {
                             </div>
                           </div>
                         )}
-                        <div>
+                        <div className="flex flex-col gap-1.5 items-end">
                           <Button
                             size="sm"
                             variant={unassigned ? 'default' : 'outline'}
@@ -734,6 +743,32 @@ export default function Inpatient() {
                           >
                             {unassigned ? 'Assign bed' : 'Change bed'}
                           </Button>
+                          <div className="flex gap-1.5">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setIsActiveAdmissionsOpen(false);
+                                setActiveMedRecAdmission(adm);
+                              }}
+                              className="gap-1"
+                            >
+                              <Pill className="w-3.5 h-3.5" />
+                              Med. rec
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setIsActiveAdmissionsOpen(false);
+                                setActiveDischargeAdmission(adm);
+                              }}
+                              className="gap-1"
+                            >
+                              <FileText className="w-3.5 h-3.5" />
+                              Summary
+                            </Button>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -815,9 +850,31 @@ export default function Inpatient() {
               )}
             </div>
           )}
-          <DialogFooter>
+          <DialogFooter className="flex-wrap gap-2">
             {selectedBed?.admission && (
               <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setIsBedDetailsOpen(false);
+                    setActiveMedRecAdmission(selectedBed.admission!);
+                  }}
+                >
+                  <Pill className="w-4 h-4 mr-1" />
+                  Med. reconciliation
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setIsBedDetailsOpen(false);
+                    setActiveDischargeAdmission(selectedBed.admission!);
+                  }}
+                >
+                  <FileText className="w-4 h-4 mr-1" />
+                  Discharge summary
+                </Button>
                 <Button
                   variant="outline"
                   onClick={() => {
@@ -1084,6 +1141,47 @@ export default function Inpatient() {
             <Button onClick={handleTransferBed} disabled={loading || !transferTargetBedId}>
               {loading ? 'Assigning…' : (selectedAdmission?.bedId && selectedAdmission.bedNumber !== 'Unassigned' ? 'Transfer' : 'Assign bed')}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Discharge Summary editor — per-admission, upserts the structured
+          summary row and offers a printable PDF. Kept as a shared dialog
+          so the same component can be reused from ICU / NurseStation. */}
+      {activeDischargeAdmission && (
+        <DischargeSummaryDialog
+          admissionId={activeDischargeAdmission.id}
+          patientName={activeDischargeAdmission.patientName}
+          patientMRN={activeDischargeAdmission.patientMRN}
+          admissionDate={activeDischargeAdmission.admissionDate}
+          admittingDoctor={activeDischargeAdmission.admittingDoctor}
+          open={!!activeDischargeAdmission}
+          onOpenChange={(o) => { if (!o) setActiveDischargeAdmission(null); }}
+        />
+      )}
+
+      {/* Medication Reconciliation — 3-column panel (home / admission /
+          discharge) wrapped in a Dialog so it sits over the IPD page
+          without taking the operator out of context. */}
+      <Dialog
+        open={!!activeMedRecAdmission}
+        onOpenChange={(o) => { if (!o) setActiveMedRecAdmission(null); }}
+      >
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Medication Reconciliation</DialogTitle>
+            <DialogDescription>
+              {activeMedRecAdmission?.patientName} ({activeMedRecAdmission?.patientMRN})
+              {' '}· Admitted {activeMedRecAdmission?.admissionDate}
+            </DialogDescription>
+          </DialogHeader>
+          {activeMedRecAdmission && (
+            <div className="py-2">
+              <MedicationReconciliationPanel admissionId={activeMedRecAdmission.id} />
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setActiveMedRecAdmission(null)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
