@@ -94,6 +94,19 @@ const NICU = lazy(() => import('./pages/NICU'));
 const ChemoSchedule = lazy(() => import('./pages/ChemoSchedule'));
 const CathLab = lazy(() => import('./pages/CathLab'));
 const Radiotherapy = lazy(() => import('./pages/Radiotherapy'));
+// Phase 5 closeout — OPD queue + kiosk + NPS + patient portal.
+const OpdQueue = lazy(() => import('./pages/OpdQueue'));
+const KioskBoard = lazy(() => import('./pages/KioskBoard'));
+const Feedback = lazy(() => import('./pages/Feedback'));
+const PatientPortalLogin = lazy(() => import('./pages/portal/PatientPortalLogin'));
+// Portal home + sub-pages share a single chunk; named exports are imported
+// out of the home module so each sub-page is its own route component.
+const portalHomeModule = () => import('./pages/portal/PatientPortalHome');
+const PatientPortalHome = lazy(() => portalHomeModule());
+const PatientPortalLabs = lazy(() => portalHomeModule().then((m) => ({ default: m.PatientPortalLabs })));
+const PatientPortalAppts = lazy(() => portalHomeModule().then((m) => ({ default: m.PatientPortalAppts })));
+const PatientPortalRx = lazy(() => portalHomeModule().then((m) => ({ default: m.PatientPortalRx })));
+const PatientPortalDischarges = lazy(() => portalHomeModule().then((m) => ({ default: m.PatientPortalDischarges })));
 
 // Some smaller modules still live in AllModules.tsx — split that into one
 // async chunk. Each named import resolves once the chunk loads.
@@ -217,6 +230,29 @@ const AppRoutes = () => {
           </Suspense>
         }
       />
+
+      {/* OPD waiting-area kiosk — public, no auth. Designed for a TV in
+          the lobby. Tenant scoped so multi-hospital deployments don't
+          mix tokens across branches. */}
+      <Route
+        path="/kiosk/:tenantId"
+        element={
+          <Suspense fallback={<RouteSpinner />}>
+            <KioskBoard />
+          </Suspense>
+        }
+      />
+
+      {/* Patient self-service portal — separate OTP-based auth, lives
+          OUTSIDE the staff /app/* tree. localStorage.patientPortalSession
+          holds the bearer token. */}
+      <Route path="/me" element={<Suspense fallback={<RouteSpinner />}><PatientPortalLogin /></Suspense>} />
+      <Route path="/me/login" element={<Suspense fallback={<RouteSpinner />}><PatientPortalLogin /></Suspense>} />
+      <Route path="/me/home" element={<Suspense fallback={<RouteSpinner />}><PatientPortalHome /></Suspense>} />
+      <Route path="/me/labs" element={<Suspense fallback={<RouteSpinner />}><PatientPortalLabs /></Suspense>} />
+      <Route path="/me/appointments" element={<Suspense fallback={<RouteSpinner />}><PatientPortalAppts /></Suspense>} />
+      <Route path="/me/prescriptions" element={<Suspense fallback={<RouteSpinner />}><PatientPortalRx /></Suspense>} />
+      <Route path="/me/discharges" element={<Suspense fallback={<RouteSpinner />}><PatientPortalDischarges /></Suspense>} />
       {/* Authenticated portal — every clinical/operational module lives
           under /app/*. Sidebar paths inside MainLayout already use this
           prefix. After login, users are routed to /app. */}
@@ -343,6 +379,10 @@ const AppRoutes = () => {
         <Route path="chemo" element={<RoleProtectedRoute path="chemo"><ChemoSchedule /></RoleProtectedRoute>} />
         <Route path="cath-lab" element={<RoleProtectedRoute path="cath-lab"><CathLab /></RoleProtectedRoute>} />
         <Route path="radiotherapy" element={<RoleProtectedRoute path="radiotherapy"><Radiotherapy /></RoleProtectedRoute>} />
+
+        {/* Phase 5 closeout — OPD queue manager + patient feedback. */}
+        <Route path="opd-queue" element={<RoleProtectedRoute path="opd-queue"><OpdQueue /></RoleProtectedRoute>} />
+        <Route path="feedback" element={<RoleProtectedRoute path="feedback"><Feedback /></RoleProtectedRoute>} />
       </Route>
     </Routes>
   );

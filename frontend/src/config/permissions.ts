@@ -91,6 +91,8 @@ export const rolePermissions: Record<Role, string[]> = {
     'form-f', 'mtp-register', 'pmjay',
     // Phase-4 specialty modules — doctor has access across specialties.
     'obstetrics', 'nicu', 'chemo', 'cath-lab', 'radiotherapy',
+    // Phase-5 closeout — OPD queue board + patient feedback.
+    'opd-queue', 'feedback',
   ],
 
   // NURSE - Patient care focus
@@ -101,6 +103,8 @@ export const rolePermissions: Record<Role, string[]> = {
     'bmw-tracking',
     // Phase-4 — nursing duties cover ANC visits and NICU bedside care.
     'obstetrics', 'nicu',
+    // Phase-5 — OPD queue board for nursing handoffs + feedback.
+    'opd-queue', 'feedback',
   ],
 
   // FRONT_OFFICE - Registration & Appointments
@@ -108,6 +112,8 @@ export const rolePermissions: Record<Role, string[]> = {
     '/', 'live-dashboard', 'patients', 'appointment', 'billing', 'tpa', 'inpatient',
     // Front desk reads PMJAY status when verifying patient eligibility.
     'pmjay',
+    // Phase-5 — front desk issues tokens; feedback visible for follow-up.
+    'opd-queue', 'feedback',
   ],
 
   // BILLING - Finance focus
@@ -223,6 +229,8 @@ export const rolePermissions: Record<Role, string[]> = {
     'consultations',
     // Phase-2 quality / governance modules
     'implants', 'hai-surveillance', 'bmw-tracking', 'mnm-reviews', 'nabh-dashboard',
+    // Phase-5 closeout
+    'opd-queue', 'feedback',
   ],
 
   // MEDICAL_DIRECTOR (CMO) — clinical leadership across all modules.
@@ -241,6 +249,8 @@ export const rolePermissions: Record<Role, string[]> = {
     'form-f', 'mtp-register', 'pmjay',
     // Phase-4 — CMO oversees specialty programs.
     'obstetrics', 'nicu', 'chemo', 'cath-lab', 'radiotherapy',
+    // Phase-5 closeout
+    'opd-queue', 'feedback',
   ],
 
   // NURSING_DIRECTOR (CNO) — nursing operations + ward management.
@@ -252,6 +262,8 @@ export const rolePermissions: Record<Role, string[]> = {
     'hr', 'biometric-attendance', 'mis-report', 'consultations',
     // Phase-2 — infection control + waste tracking are nurse-led.
     'hai-surveillance', 'bmw-tracking', 'mnm-reviews',
+    // Phase-5 closeout
+    'opd-queue', 'feedback',
   ],
 
   // DEPARTMENT_HEAD (HOD) — like DOCTOR + dept-scoped admin.

@@ -3179,3 +3179,101 @@ model RadiotherapyPlan {
   @@index([patientId])
   @@map("radiotherapy_plans")
 }
+// ===========================
+// PHASE 5 — CLOSEOUT (Rx UI, Queue/KIOSK, Patient Portal, NPS)
+// ===========================
+
+// OPD waiting-queue token. Issued at front-desk when a patient walks
+// in (or in advance on the patient portal). Doctor's room calls
+// numbers sequentially; a big-screen KIOSK shows the current + next 5.
+model OpdToken {
+  id          String    @id @default(uuid())
+  tenantId    String
+  branchId    String
+  // Sequential per (tenant, day, doctor). Display token uses the
+  // doctor's room/code prefix e.g. "OPD-1-042".
+  tokenNumber Int
+  displayCode String
+  patientId   String
+  doctorId    String?
+  doctorName  String?
+  department  String?
+  // 'waiting' | 'called' | 'in_consult' | 'done' | 'no_show' | 'cancelled'
+  status      String    @default("waiting")
+  issuedAt    DateTime  @default(now())
+  calledAt    DateTime?
+  consultStartedAt DateTime?
+  doneAt      DateTime?
+  // Reason given at intake — drives priority. 'normal' | 'urgent' | 'follow_up'
+  priority    String    @default("normal")
+  notes       String?
+
+  @@index([tenantId, doctorId, issuedAt])
+  @@index([tenantId, status])
+  @@map("opd_tokens")
+}
+
+// Net Promoter Score / feedback survey. One row per response.
+// Triggered after discharge (IPD) or OPD visit completion.
+model NpsResponse {
+  id           String   @id @default(uuid())
+  tenantId     String
+  patientId    String?  // optional — anonymous OK
+  encounterId  String?
+  admissionId  String?
+  // Source: 'opd_visit' | 'ipd_discharge' | 'er_visit' | 'general'
+  source       String
+  // 0-10 NPS (0 = unhappy, 10 = would refer); -1 if patient skipped.
+  score        Int
+  // Open-text comment.
+  comment      String?
+  // Topic ratings for breakdown (JSON: {doctor: 9, nursing: 8, cleanliness: 7, billing: 6, food: 8})
+  ratings      Json?
+  // 'detractor' (0-6) | 'passive' (7-8) | 'promoter' (9-10)
+  category     String?
+  // Submitter info — phone (for follow-up call by patient experience), or null.
+  contact      String?
+  submittedAt  DateTime @default(now())
+
+  @@index([tenantId, submittedAt])
+  @@index([tenantId, source])
+  @@map("nps_responses")
+}
+
+// Patient-portal OTP. Each login attempt creates a row; the actual OTP
+// is hashed (bcrypt) before storage and consumed (deleted) on verify.
+// Rate-limited to 5 attempts per hour per (tenantId, phone).
+model PatientOtp {
+  id          String   @id @default(uuid())
+  tenantId    String
+  phone       String   // patient's registered contact number
+  codeHash    String   // bcrypt of the 6-digit OTP
+  expiresAt   DateTime
+  usedAt      DateTime?
+  attempts    Int      @default(0)
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, phone, createdAt])
+  @@map("patient_otps")
+}
+
+// Patient-portal session. Issued after successful OTP verify; lasts
+// 30 days unless revoked. The token is a random 64-char hex; stored
+// hashed. Lookups by hash, not patientId, so the patient is unaware
+// of other tokens.
+model PatientPortalSession {
+  id           String   @id @default(uuid())
+  tenantId     String
+  patientId    String
+  tokenHash    String   @unique  // sha256 of the session token
+  issuedAt     DateTime @default(now())
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  ipAddress    String?
+  userAgent    String?
+  lastSeenAt   DateTime @default(now())
+
+  @@index([tenantId, patientId])
+  @@map("patient_portal_sessions")
+}

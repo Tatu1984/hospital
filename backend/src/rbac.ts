@@ -803,6 +803,8 @@ export const ROUTE_MODULES: Record<string, Permission[]> = {
   '/patients': ['patients:view'],
   '/appointment': ['appointments:view'],
   '/opd': ['opd:view'],
+  // Phase-5 closeout — OPD queue board / staff-side token manager.
+  '/opd-queue': ['opd:view'],
   '/health-checkup': ['opd:view'],
   '/laboratory': ['lab:view'],
   '/radiology': ['radiology:view'],
@@ -820,6 +822,8 @@ export const ROUTE_MODULES: Record<string, Permission[]> = {
   '/housekeeping': ['housekeeping:view'],
   '/diet': ['diet:view'],
   '/quality': ['quality:view'],
+  // Phase-5 closeout — NPS / patient feedback dashboard.
+  '/feedback': ['quality:view'],
   '/cssd': ['inventory:view'],
   '/physiotherapy': ['opd:view'],
   '/mortuary': ['ipd:view'],

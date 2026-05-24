@@ -9,7 +9,8 @@
 // Tenant isolation: every where-clause filters by req.user.tenantId.
 // Auth + RBAC are applied at the route registration in server.ts.
 
-import { Request, Response, Router, RequestHandler } from 'express';
+import { NextFunction, Request, Response, Router, RequestHandler } from 'express';
+import bcrypt from 'bcryptjs';
 import { prisma } from './shared/prisma';
 import { authenticateToken } from './middleware';
 import { writeAudit } from './utils/audit';
@@ -4610,6 +4611,719 @@ clinicalModulesRouter.post('/radiotherapy/:id/complete', auth, async (req: Authe
     res.json(updated);
   } catch (e: any) {
     console.error('complete radiotherapy plan', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+// =============== PHASE 5: CLOSEOUT (Queue/KIOSK, NPS, Patient Portal) ===============
+// OPD queue/token management for front-desk + waiting-area KIOSK board.
+// NPS / patient experience survey + summary analytics.
+// Patient portal: OTP-based authentication (separate from staff `auth`)
+// giving patients read-only access to their own records.
+//
+// PUBLIC routes live under /public/* and must NOT use the staff `auth`
+// middleware. The KIOSK board is wide-open (tenant ID in the URL is the
+// only "auth"); the patient portal uses its own `portalAuth` middleware
+// below (Bearer token -> PatientPortalSession lookup by sha256 hash).
+
+// Helper: today's [start, end) range in server timezone — used to scope
+// the OPD queue's tokenNumber counter to "issued today".
+function dayBounds(d: Date = new Date()): { start: Date; end: Date } {
+  const start = new Date(d);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { start, end };
+}
+
+// ---------- PORTAL AUTH MIDDLEWARE ----------
+// Inline because the patient-portal flow lives entirely in this file
+// and pulling it into ./middleware would force a circular dep (audit →
+// prisma → middleware). The session token arrives as `Authorization:
+// Bearer <token>`; we hash and look up in `patient_portal_sessions`.
+type PortalReq = Request & {
+  portalPatient?: { id: string; tenantId: string };
+  user?: { userId: string; tenantId: string; branchId?: string };
+};
+
+const portalAuth: RequestHandler = async (req: PortalReq, res: Response, next: NextFunction) => {
+  try {
+    const header = req.headers.authorization || '';
+    const m = header.match(/^Bearer\s+(.+)$/i);
+    if (!m) return res.status(401).json({ error: 'Missing bearer token' });
+    const token = m[1].trim();
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const session = await prisma.patientPortalSession.findUnique({ where: { tokenHash } });
+    if (!session) return res.status(401).json({ error: 'Invalid session' });
+    if (session.revokedAt) return res.status(401).json({ error: 'Session revoked' });
+    if (session.expiresAt.getTime() < Date.now()) return res.status(401).json({ error: 'Session expired' });
+    // Fire-and-forget — last-seen is for UX, not security.
+    prisma.patientPortalSession
+      .update({ where: { id: session.id }, data: { lastSeenAt: new Date() } })
+      .catch(() => undefined);
+    req.portalPatient = { id: session.patientId, tenantId: session.tenantId };
+    next();
+  } catch (e: any) {
+    console.error('portalAuth', e);
+    res.status(401).json({ error: 'Auth failed' });
+  }
+};
+
+// ---------- OPD QUEUE / TOKEN (staff side) ----------
+
+clinicalModulesRouter.get('/opd-queue', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { doctorId, status, date } = req.query;
+    const baseDate = date ? new Date(String(date)) : new Date();
+    const { start, end } = dayBounds(baseDate);
+    const where: any = {
+      tenantId,
+      issuedAt: { gte: start, lt: end },
+    };
+    if (doctorId) where.doctorId = String(doctorId);
+    if (status) {
+      where.status = String(status);
+    } else {
+      where.status = { in: ['waiting', 'called', 'in_consult'] };
+    }
+    const rows = await prisma.opdToken.findMany({
+      where,
+      orderBy: [{ priority: 'desc' }, { tokenNumber: 'asc' }],
+    });
+    // Join patient info separately — OpdToken has no FK relation to
+    // Patient declared in the schema.
+    const patientIds = Array.from(new Set(rows.map((r) => r.patientId)));
+    const patients = patientIds.length
+      ? await prisma.patient.findMany({
+          where: { id: { in: patientIds }, tenantId },
+          select: { id: true, name: true, mrn: true },
+        })
+      : [];
+    const patientMap = new Map(patients.map((p) => [p.id, p]));
+    const enriched = rows.map((r) => ({ ...r, patient: patientMap.get(r.patientId) || null }));
+    res.json(enriched);
+  } catch (e: any) {
+    console.error('list opd queue', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/opd-queue/issue', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const branchId = req.user!.branchId || '';
+    const b = req.body || {};
+    if (!b.patientId) return res.status(400).json({ error: 'patientId is required' });
+    const patient = await prisma.patient.findFirst({
+      where: { id: b.patientId, tenantId },
+      select: { id: true, branchId: true },
+    });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+
+    const { start, end } = dayBounds();
+    // Sequential token-number scoped to (tenant, doctor, today). When no
+    // doctor is set, the counter is per-tenant for the day.
+    const last = await prisma.opdToken.findFirst({
+      where: {
+        tenantId,
+        issuedAt: { gte: start, lt: end },
+        doctorId: b.doctorId || null,
+      },
+      orderBy: { tokenNumber: 'desc' },
+      select: { tokenNumber: true },
+    });
+    const tokenNumber = (last?.tokenNumber || 0) + 1;
+
+    // Build a short prefix: prefer department abbreviation (first 4
+    // chars upper-cased), else first letter of doctor name, else 'GEN'.
+    let prefix = 'GEN';
+    if (b.department && String(b.department).trim()) {
+      prefix = String(b.department).trim().slice(0, 4).toUpperCase();
+    } else if (b.doctorName && String(b.doctorName).trim()) {
+      prefix = String(b.doctorName).trim().charAt(0).toUpperCase();
+    }
+    const displayCode = `OPD-${prefix}-${String(tokenNumber).padStart(3, '0')}`;
+
+    const created = await prisma.opdToken.create({
+      data: {
+        tenantId,
+        branchId: patient.branchId || branchId,
+        tokenNumber,
+        displayCode,
+        patientId: b.patientId,
+        doctorId: b.doctorId || null,
+        doctorName: b.doctorName || null,
+        department: b.department || null,
+        priority: b.priority || 'normal',
+        status: 'waiting',
+      },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'OPD_TOKEN_ISSUE',
+      resource: 'OpdToken',
+      resourceId: created.id,
+      newValue: { tokenNumber: created.tokenNumber, displayCode: created.displayCode, patientId: created.patientId },
+    });
+    res.status(201).json(created);
+  } catch (e: any) {
+    console.error('issue opd token', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+// Tiny helper for the status-flip endpoints below — they all share the
+// same shape (tenant-check + setStatus + audit).
+async function flipOpdStatus(
+  req: AuthedReq,
+  res: Response,
+  newStatus: string,
+  extra: Record<string, any>,
+  auditAction: string
+): Promise<void> {
+  try {
+    const tenantId = req.user!.tenantId;
+    const owned = await prisma.opdToken.findFirst({ where: { id: req.params.id, tenantId } });
+    if (!owned) {
+      res.status(404).json({ error: 'OPD token not found' });
+      return;
+    }
+    const updated = await prisma.opdToken.update({
+      where: { id: owned.id },
+      data: { status: newStatus, ...extra },
+    });
+    void writeAudit({
+      prisma, req,
+      action: auditAction,
+      resource: 'OpdToken',
+      resourceId: updated.id,
+      oldValue: { status: owned.status },
+      newValue: { status: updated.status },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error(auditAction, e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+}
+
+clinicalModulesRouter.post('/opd-queue/:id/call', auth, (req: AuthedReq, res: Response) => {
+  void flipOpdStatus(req, res, 'called', { calledAt: new Date() }, 'OPD_TOKEN_CALL');
+});
+clinicalModulesRouter.post('/opd-queue/:id/start', auth, (req: AuthedReq, res: Response) => {
+  void flipOpdStatus(req, res, 'in_consult', { consultStartedAt: new Date() }, 'OPD_TOKEN_START');
+});
+clinicalModulesRouter.post('/opd-queue/:id/done', auth, (req: AuthedReq, res: Response) => {
+  void flipOpdStatus(req, res, 'done', { doneAt: new Date() }, 'OPD_TOKEN_DONE');
+});
+clinicalModulesRouter.post('/opd-queue/:id/no-show', auth, (req: AuthedReq, res: Response) => {
+  void flipOpdStatus(req, res, 'no_show', {}, 'OPD_TOKEN_NO_SHOW');
+});
+clinicalModulesRouter.post('/opd-queue/:id/cancel', auth, (req: AuthedReq, res: Response) => {
+  void flipOpdStatus(req, res, 'cancelled', {}, 'OPD_TOKEN_CANCEL');
+});
+
+// ---------- KIOSK BOARD (PUBLIC, big-screen display) ----------
+// No auth — but we only expose non-PHI: token display codes, first
+// name, first initial of last name, and status. Tenant ID is in the
+// URL so a single deployment can serve many hospital chains.
+clinicalModulesRouter.get('/public/kiosk/:tenantId', async (req: Request, res: Response) => {
+  try {
+    const { tenantId } = req.params;
+    const { doctorId } = req.query;
+    const { start, end } = dayBounds();
+    const where: any = {
+      tenantId,
+      issuedAt: { gte: start, lt: end },
+      status: { in: ['waiting', 'called', 'in_consult'] },
+    };
+    if (doctorId) where.doctorId = String(doctorId);
+
+    const rows = await prisma.opdToken.findMany({
+      where,
+      orderBy: [{ priority: 'desc' }, { tokenNumber: 'asc' }],
+      take: 200,
+    });
+
+    // Patient names — only first name + first letter of last name.
+    const patientIds = Array.from(new Set(rows.map((r) => r.patientId)));
+    const patients = patientIds.length
+      ? await prisma.patient.findMany({
+          where: { id: { in: patientIds }, tenantId },
+          select: { id: true, name: true },
+        })
+      : [];
+    const maskName = (n: string): string => {
+      const parts = (n || '').trim().split(/\s+/);
+      if (parts.length === 0 || !parts[0]) return '';
+      const first = parts[0];
+      const lastInitial = parts.length > 1 ? `${parts[parts.length - 1].charAt(0)}.` : '';
+      return lastInitial ? `${first} ${lastInitial}` : first;
+    };
+    const patientMap = new Map(patients.map((p) => [p.id, maskName(p.name)]));
+
+    const shape = (r: (typeof rows)[number]) => ({
+      id: r.id,
+      tokenNumber: r.tokenNumber,
+      displayCode: r.displayCode,
+      status: r.status,
+      doctorId: r.doctorId,
+      doctorName: r.doctorName,
+      department: r.department,
+      patientName: patientMap.get(r.patientId) || '',
+    });
+
+    const nowCalling = rows.filter((r) => r.status === 'called' || r.status === 'in_consult').map(shape);
+    const upNext = rows.filter((r) => r.status === 'waiting').slice(0, 10).map(shape);
+
+    // Per-doctor summary line for the board ("Dr. X — now serving 042,
+    // 7 waiting").
+    const byDoctor = new Map<
+      string,
+      { id: string; name: string; currentTokenDisplay: string | null; waiting: number }
+    >();
+    for (const r of rows) {
+      const key = r.doctorId || '__unassigned__';
+      let entry = byDoctor.get(key);
+      if (!entry) {
+        entry = {
+          id: r.doctorId || '',
+          name: r.doctorName || (r.doctorId ? 'Doctor' : 'Unassigned'),
+          currentTokenDisplay: null,
+          waiting: 0,
+        };
+        byDoctor.set(key, entry);
+      }
+      if (r.status === 'waiting') entry.waiting += 1;
+      if ((r.status === 'called' || r.status === 'in_consult') && !entry.currentTokenDisplay) {
+        entry.currentTokenDisplay = r.displayCode;
+      }
+    }
+
+    res.json({
+      now_calling: nowCalling,
+      up_next: upNext,
+      doctors: Array.from(byDoctor.values()),
+    });
+  } catch (e: any) {
+    console.error('kiosk board', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+// ---------- NPS / FEEDBACK ----------
+
+clinicalModulesRouter.post('/nps', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const b = req.body || {};
+    const validSources = ['opd_visit', 'ipd_discharge', 'er_visit', 'general'];
+    if (!b.source || !validSources.includes(b.source)) {
+      return res.status(400).json({ error: 'source must be one of ' + validSources.join(', ') });
+    }
+    const score = Number(b.score);
+    if (!Number.isFinite(score) || (score !== -1 && (score < 0 || score > 10))) {
+      return res.status(400).json({ error: 'score must be 0-10 or -1 to skip' });
+    }
+    let category: string | null = null;
+    if (score >= 0 && score <= 6) category = 'detractor';
+    else if (score >= 7 && score <= 8) category = 'passive';
+    else if (score >= 9 && score <= 10) category = 'promoter';
+
+    const created = await prisma.npsResponse.create({
+      data: {
+        tenantId,
+        patientId: b.patientId || null,
+        encounterId: b.encounterId || null,
+        admissionId: b.admissionId || null,
+        source: b.source,
+        score,
+        comment: b.comment || null,
+        ratings: b.ratings ?? undefined,
+        category,
+        contact: b.contact || null,
+      },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'NPS_SUBMIT',
+      resource: 'NpsResponse',
+      resourceId: created.id,
+      newValue: { source: created.source, score: created.score, category: created.category },
+    });
+    res.status(201).json(created);
+  } catch (e: any) {
+    console.error('submit nps', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.get('/nps', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { source, from, to } = req.query;
+    const fromDate = from ? new Date(String(from)) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const toDate = to ? new Date(String(to)) : new Date();
+    const where: any = { tenantId, submittedAt: { gte: fromDate, lte: toDate } };
+    if (source) where.source = String(source);
+    const rows = await prisma.npsResponse.findMany({
+      where,
+      orderBy: { submittedAt: 'desc' },
+      take: 500,
+    });
+    res.json(rows);
+  } catch (e: any) {
+    console.error('list nps', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.get('/nps/summary', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { from, to } = req.query;
+    const fromDate = from ? new Date(String(from)) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const toDate = to ? new Date(String(to)) : new Date();
+    const rows = await prisma.npsResponse.findMany({
+      where: { tenantId, submittedAt: { gte: fromDate, lte: toDate } },
+    });
+    // Skipped responses (score = -1) don't count toward NPS or averages.
+    const scored = rows.filter((r) => r.score >= 0);
+    const total = scored.length;
+    const promoters = scored.filter((r) => r.category === 'promoter').length;
+    const passives = scored.filter((r) => r.category === 'passive').length;
+    const detractors = scored.filter((r) => r.category === 'detractor').length;
+    const nps = total > 0 ? Math.round(((promoters - detractors) / total) * 100) : 0;
+    const avgScore = total > 0 ? scored.reduce((s, r) => s + r.score, 0) / total : 0;
+
+    const bySource: Record<
+      string,
+      { total: number; promoters: number; passives: number; detractors: number; nps: number }
+    > = {};
+    for (const src of ['opd_visit', 'ipd_discharge', 'er_visit', 'general']) {
+      const sub = scored.filter((r) => r.source === src);
+      const sp = sub.filter((r) => r.category === 'promoter').length;
+      const sd = sub.filter((r) => r.category === 'detractor').length;
+      const st = sub.length;
+      bySource[src] = {
+        total: st,
+        promoters: sp,
+        passives: sub.filter((r) => r.category === 'passive').length,
+        detractors: sd,
+        nps: st > 0 ? Math.round(((sp - sd) / st) * 100) : 0,
+      };
+    }
+
+    // Topic averages — pivot the JSON `ratings` blob. Topics are open-
+    // ended; we discover them from the data and average each.
+    const topicSums: Record<string, { sum: number; count: number }> = {};
+    for (const r of rows) {
+      const ratings = r.ratings as Record<string, any> | null;
+      if (!ratings || typeof ratings !== 'object') continue;
+      for (const [topic, value] of Object.entries(ratings)) {
+        const v = Number(value);
+        if (!Number.isFinite(v)) continue;
+        if (!topicSums[topic]) topicSums[topic] = { sum: 0, count: 0 };
+        topicSums[topic].sum += v;
+        topicSums[topic].count += 1;
+      }
+    }
+    const byTopic: Record<string, number> = {};
+    for (const [topic, agg] of Object.entries(topicSums)) {
+      byTopic[topic] = agg.count > 0 ? Math.round((agg.sum / agg.count) * 10) / 10 : 0;
+    }
+
+    const commentsCount = rows.filter((r) => r.comment && r.comment.trim().length > 0).length;
+
+    res.json({
+      total,
+      promoters,
+      passives,
+      detractors,
+      nps,
+      avgScore: Math.round(avgScore * 10) / 10,
+      bySource,
+      byTopic,
+      commentsCount,
+    });
+  } catch (e: any) {
+    console.error('nps summary', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+// ---------- PATIENT PORTAL (PUBLIC, OTP-based) ----------
+
+clinicalModulesRouter.post('/public/portal/request-otp', async (req: Request, res: Response) => {
+  try {
+    const b = req.body || {};
+    const phone: string = String(b.phone || '').trim();
+    const tenantId: string = String(b.tenantId || '').trim();
+    if (!phone || !tenantId) {
+      return res.status(400).json({ error: 'phone and tenantId are required' });
+    }
+
+    // Rate-limit: >=5 OTPs in the last hour for this (tenantId, phone) -> 429.
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const recent = await prisma.patientOtp.count({
+      where: { tenantId, phone, createdAt: { gte: oneHourAgo } },
+    });
+    if (recent >= 5) {
+      return res.status(429).json({ error: 'Too many OTP requests, please try again later' });
+    }
+
+    // Phone-lookup against Patient.contact. Don't leak whether a match
+    // exists — same 200 response either way.
+    const patient = await prisma.patient.findFirst({
+      where: { tenantId, contact: phone },
+      select: { id: true },
+    });
+    if (!patient) {
+      return res.json({ ok: true });
+    }
+
+    // Generate 6-digit OTP, hash, store with 10-minute expiry.
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    const codeHash = await bcrypt.hash(otp, 10);
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    await prisma.patientOtp.create({
+      data: {
+        tenantId,
+        phone,
+        codeHash,
+        expiresAt,
+        ipAddress: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || null,
+      },
+    });
+
+    // TODO: dispatch via SMS provider (Twilio, MSG91, Gupshup, AWS SNS).
+    // Returning the OTP in the response is a STUB for local development
+    // and integration testing — do NOT return OTP in prod.
+    return res.json({ ok: true, otpDebug: otp });
+  } catch (e: any) {
+    console.error('portal request-otp', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/public/portal/verify-otp', async (req: Request, res: Response) => {
+  try {
+    const b = req.body || {};
+    const phone: string = String(b.phone || '').trim();
+    const tenantId: string = String(b.tenantId || '').trim();
+    const otp: string = String(b.otp || '').trim();
+    if (!phone || !tenantId || !otp) {
+      return res.status(400).json({ error: 'phone, tenantId and otp are required' });
+    }
+
+    // Latest unused OTP row for this (tenant, phone). Ignore expired.
+    const row = await prisma.patientOtp.findFirst({
+      where: { tenantId, phone, usedAt: null },
+      orderBy: { createdAt: 'desc' },
+    });
+    const genericFail = { error: 'invalid or expired OTP' };
+    if (!row) return res.status(400).json(genericFail);
+    if (row.expiresAt.getTime() < Date.now()) return res.status(400).json(genericFail);
+    if (row.attempts >= 5) return res.status(400).json(genericFail);
+
+    const ok = await bcrypt.compare(otp, row.codeHash);
+    if (!ok) {
+      const nextAttempts = row.attempts + 1;
+      await prisma.patientOtp.update({
+        where: { id: row.id },
+        data: {
+          attempts: nextAttempts,
+          usedAt: nextAttempts >= 5 ? new Date() : null,
+        },
+      });
+      return res.status(400).json(genericFail);
+    }
+
+    // Match — burn the OTP, mint a session.
+    await prisma.patientOtp.update({
+      where: { id: row.id },
+      data: { usedAt: new Date() },
+    });
+    const patient = await prisma.patient.findFirst({
+      where: { tenantId, contact: phone },
+      select: { id: true, name: true, mrn: true, dob: true },
+    });
+    if (!patient) return res.status(400).json(genericFail);
+
+    const token = randomBytes(32).toString('hex'); // 64 hex chars
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    await prisma.patientPortalSession.create({
+      data: {
+        tenantId,
+        patientId: patient.id,
+        tokenHash,
+        expiresAt,
+        ipAddress: (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || null,
+        userAgent: (req.headers['user-agent'] as string) || null,
+      },
+    });
+    res.json({ token, patient });
+  } catch (e: any) {
+    console.error('portal verify-otp', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.get('/public/portal/me', portalAuth, async (req: PortalReq, res: Response) => {
+  try {
+    const { id, tenantId } = req.portalPatient!;
+    const patient = await prisma.patient.findFirst({
+      where: { id, tenantId },
+      select: {
+        id: true,
+        name: true,
+        mrn: true,
+        dob: true,
+        gender: true,
+        bloodGroup: true,
+        abhaNumber: true,
+        abhaAddress: true,
+        abhaLinkedAt: true,
+      },
+    });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+    res.json(patient);
+  } catch (e: any) {
+    console.error('portal me', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.get('/public/portal/labs', portalAuth, async (req: PortalReq, res: Response) => {
+  try {
+    const { id, tenantId } = req.portalPatient!;
+    // Patient's own lab results — join Result with Order to enforce
+    // tenant scope (Order has no tenantId column, so via patient).
+    const results = await prisma.result.findMany({
+      where: { order: { patientId: id, patient: { tenantId } } },
+      orderBy: { resultedAt: 'desc' },
+      take: 50,
+      include: {
+        order: {
+          select: {
+            id: true,
+            orderType: true,
+            orderedAt: true,
+            details: true,
+            status: true,
+            priority: true,
+          },
+        },
+      },
+    });
+    res.json(results);
+  } catch (e: any) {
+    console.error('portal labs', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.get('/public/portal/appointments', portalAuth, async (req: PortalReq, res: Response) => {
+  try {
+    const { id, tenantId } = req.portalPatient!;
+    const upcoming = String(req.query.upcoming || '') === 'true';
+    const where: any = { patientId: id, tenantId };
+    if (upcoming) where.appointmentDate = { gte: new Date() };
+    const rows = await prisma.appointment.findMany({
+      where,
+      orderBy: { appointmentDate: upcoming ? 'asc' : 'desc' },
+      take: 100,
+    });
+    res.json(rows);
+  } catch (e: any) {
+    console.error('portal appointments', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.get('/public/portal/prescriptions', portalAuth, async (req: PortalReq, res: Response) => {
+  try {
+    const { id, tenantId } = req.portalPatient!;
+    // Prescription has no tenantId column — scope via patient.
+    const rows = await prisma.prescription.findMany({
+      where: { patientId: id, patient: { tenantId } },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    });
+    res.json(rows);
+  } catch (e: any) {
+    console.error('portal prescriptions', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.get('/public/portal/discharge-summaries', portalAuth, async (req: PortalReq, res: Response) => {
+  try {
+    const { id, tenantId } = req.portalPatient!;
+    // DischargeSummary scoped via admission.patient.tenantId.
+    const rows = await prisma.dischargeSummary.findMany({
+      where: { admission: { patientId: id, patient: { tenantId } } },
+      orderBy: { signedAt: 'desc' },
+      select: {
+        admissionId: true,
+        finalDiagnosis: true,
+        signedAt: true,
+      },
+    });
+    res.json(rows);
+  } catch (e: any) {
+    console.error('portal discharge summaries list', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.get(
+  '/public/portal/discharge-summaries/:admissionId',
+  portalAuth,
+  async (req: PortalReq, res: Response) => {
+    try {
+      const { id, tenantId } = req.portalPatient!;
+      const summary = await prisma.dischargeSummary.findFirst({
+        where: {
+          admissionId: req.params.admissionId,
+          admission: { patientId: id, patient: { tenantId } },
+        },
+        include: {
+          admission: {
+            select: {
+              id: true,
+              admissionDate: true,
+              dischargeDate: true,
+              diagnosis: true,
+              status: true,
+            },
+          },
+        },
+      });
+      if (!summary) return res.status(404).json({ error: 'Discharge summary not found' });
+      res.json(summary);
+    } catch (e: any) {
+      console.error('portal discharge summary detail', e);
+      res.status(500).json({ error: 'Internal server error', detail: e?.message });
+    }
+  }
+);
+
+clinicalModulesRouter.post('/public/portal/logout', portalAuth, async (req: PortalReq, res: Response) => {
+  try {
+    const header = req.headers.authorization || '';
+    const m = header.match(/^Bearer\s+(.+)$/i);
+    if (!m) return res.status(401).json({ error: 'Missing bearer token' });
+    const tokenHash = createHash('sha256').update(m[1].trim()).digest('hex');
+    await prisma.patientPortalSession.updateMany({
+      where: { tokenHash, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    res.json({ ok: true });
+  } catch (e: any) {
+    console.error('portal logout', e);
     res.status(500).json({ error: 'Internal server error', detail: e?.message });
   }
 });

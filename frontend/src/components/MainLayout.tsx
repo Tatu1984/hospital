@@ -51,6 +51,7 @@ import {
   AlertOctagon,
   Trash2,
   Scale,
+  Hash,
 } from 'lucide-react';
 
 // Roles for which the "My Earnings" finance entry shows in the sidebar.
@@ -138,6 +139,7 @@ const MainLayout = () => {
       title: 'Clinical',
       items: [
         { path: '/opd', icon: Stethoscope, label: 'OPD' },
+        { path: '/opd-queue', icon: Hash, label: 'OPD Queue' },
         { path: '/inpatient', icon: Bed, label: 'IPD / Ward' },
         { path: '/consultations', icon: Network, label: 'Consultations' },
         { path: '/emergency', icon: AlertCircle, label: 'Emergency' },
@@ -211,6 +213,7 @@ const MainLayout = () => {
         { path: '/form-f', icon: Scan, label: 'Form-F register' },
         { path: '/mtp-register', icon: AlertCircle, label: 'MTP register' },
         { path: '/quality', icon: Star, label: 'Quality' },
+        { path: '/feedback', icon: Star, label: 'Patient Feedback' },
         { path: '/master-data', icon: Settings, label: 'Master Data' },
         { path: '/audit-log', icon: ShieldCheck, label: 'Audit Log' },
         // "Who logged in from where, doing what" — built on AuditLog with

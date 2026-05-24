@@ -14,6 +14,7 @@ import { toArray } from '../utils/list';
 import { WARD_CATEGORIES, IPD_WARD_TYPES, CRITICAL_CARE_TYPES, labelFor } from '../lib/wardCategories';
 import DischargeSummaryDialog from '../components/DischargeSummaryDialog';
 import MedicationReconciliationPanel from '../components/MedicationReconciliationPanel';
+import NpsDialog from '../components/NpsDialog';
 
 interface Admission {
   id: string;
@@ -279,10 +280,17 @@ export default function Inpatient() {
     }
   };
 
+  // After a successful discharge we open an NPS survey for the patient
+  // who just left, so the feedback loop happens at the point of contact
+  // rather than days later. The discharged-admission snapshot drives
+  // the NpsDialog's source + patient/admission ids.
+  const [npsForDischarge, setNpsForDischarge] = useState<{ patientId: string; admissionId: string } | null>(null);
+
   const handleDischarge = async () => {
     if (!selectedAdmission) return;
 
     setLoading(true);
+    const dischargingAdmission = selectedAdmission;
     try {
       await api.post(`/api/admissions/${selectedAdmission.id}/discharge`, {
         dischargeSummary: dischargeFormData.dischargeSummary,
@@ -295,6 +303,11 @@ export default function Inpatient() {
       setIsDischargeDialogOpen(false);
       setSelectedAdmission(null);
       setDischargeFormData({ dischargeSummary: '', followUpDate: '', instructions: '' });
+      // Trigger NPS prompt for this discharge.
+      setNpsForDischarge({
+        patientId: dischargingAdmission.patientId,
+        admissionId: dischargingAdmission.id,
+      });
     } catch (error: any) {
       console.error('Error discharging patient:', error);
       toast.error('Could not discharge patient', errMsg(error, 'Try again.'));
@@ -1185,6 +1198,17 @@ export default function Inpatient() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Post-discharge NPS prompt — opens automatically after a successful
+          discharge so patient experience captures feedback at the moment
+          of contact rather than days later. Skipping is allowed (score=-1). */}
+      <NpsDialog
+        open={!!npsForDischarge}
+        onOpenChange={(o) => { if (!o) setNpsForDischarge(null); }}
+        source="ipd_discharge"
+        patientId={npsForDischarge?.patientId}
+        admissionId={npsForDischarge?.admissionId}
+      />
     </div>
   );
 }

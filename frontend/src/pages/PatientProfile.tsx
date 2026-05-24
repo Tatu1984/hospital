@@ -60,6 +60,7 @@ import { LineChart, Line, AreaChart, Area, ResponsiveContainer, Tooltip, XAxis, 
 import api from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/Toast';
+import PrescribeDialog from '../components/PrescribeDialog';
 
 // --- DTO shapes (mirror backend/src/modules/patients/patient.service.ts getChart) ---
 
@@ -546,9 +547,26 @@ function OverviewSection({ data, onRefresh }: { data: ChartData; onRefresh: () =
   const upcomingDialysis = data.dialysisSessions.find((d) => d.status === 'scheduled' || d.status === 'in_progress') || null;
   const outstanding = data.invoices.reduce((sum, inv) => sum + (inv.balance || 0), 0);
   const recentDiagnoses = data.diagnoses.slice(0, 5);
+  const [rxOpen, setRxOpen] = useState(false);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="lg:col-span-2 flex items-center justify-end -mb-2">
+        <button
+          type="button"
+          onClick={() => setRxOpen(true)}
+          className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors shadow-sm"
+        >
+          <Plus className="w-4 h-4" /> Prescribe
+        </button>
+      </div>
+      <PrescribeDialog
+        patientId={data.patient.id}
+        encounterId={latestEncounter?.id}
+        open={rxOpen}
+        onOpenChange={setRxOpen}
+        onSaved={() => { void onRefresh(); }}
+      />
       <div className="lg:col-span-2">
         <AbhaCard patient={data.patient} onChanged={onRefresh} />
       </div>
