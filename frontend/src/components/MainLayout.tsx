@@ -149,6 +149,16 @@ const MainLayout = () => {
       ]
     },
     {
+      title: 'Specialty',
+      items: [
+        { path: '/obstetrics', icon: Baby, label: 'Obstetrics' },
+        { path: '/nicu', icon: Baby, label: 'NICU' },
+        { path: '/chemo', icon: Activity, label: 'Chemo' },
+        { path: '/cath-lab', icon: Heart, label: 'Cath Lab' },
+        { path: '/radiotherapy', icon: Activity, label: 'Radiotherapy' },
+      ]
+    },
+    {
       title: 'Diagnostics',
       items: [
         { path: '/laboratory', icon: TestTube, label: 'Laboratory' },

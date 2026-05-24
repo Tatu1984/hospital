@@ -3564,3 +3564,1052 @@ clinicalModulesRouter.post('/invoices/:id/generate-irn', auth, async (req: Authe
     res.status(500).json({ error: 'Internal server error', detail: e?.message });
   }
 });
+
+// =============== PHASE 4: SPECIALTY MODULES ===============
+// Obstetrics (Pregnancy + ANC + Partograph), NICU (beds + neonatal stays),
+// Oncology (chemo protocols + cycles, radiotherapy plans + per-fraction
+// delivery log), and Cardiology (cath lab procedures).
+//
+// Tenant isolation note: Pregnancy, ANCVisit, and PartographEvent have
+// no direct tenantId column — they hang off Patient, so every where-
+// clause filters via `patient.tenantId` (or the parent pregnancy's
+// patient). NICU / chemo / cath / radiotherapy rows carry tenantId
+// directly.
+
+// ---------- OBSTETRICS: PREGNANCY + ANC + PARTOGRAPH ----------
+
+clinicalModulesRouter.get('/pregnancies', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { status, patientId } = req.query;
+    const where: any = { patient: { tenantId } };
+    if (status) where.status = String(status);
+    if (patientId) where.patientId = String(patientId);
+    const rows = await prisma.pregnancy.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: { patient: { select: { id: true, name: true, mrn: true } } },
+    });
+    res.json(rows);
+  } catch (e: any) {
+    console.error('list pregnancies', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/pregnancies', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const b = req.body || {};
+    if (!b.patientId) return res.status(400).json({ error: 'patientId is required' });
+    const patient = await prisma.patient.findFirst({ where: { id: b.patientId, tenantId }, select: { id: true } });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+
+    // Auto-compute EDD via Naegele's rule (lmp + 280d) when LMP given
+    // and EDD omitted.
+    const lmpDate = b.lmpDate ? new Date(b.lmpDate) : null;
+    let eddDate = b.eddDate ? new Date(b.eddDate) : null;
+    if (lmpDate && !eddDate) {
+      eddDate = new Date(lmpDate.getTime() + 280 * 24 * 60 * 60 * 1000);
+    }
+
+    const created = await prisma.pregnancy.create({
+      data: {
+        patientId: b.patientId,
+        lmpDate: lmpDate || undefined,
+        eddDate: eddDate || undefined,
+        gravida: b.gravida ?? 1,
+        parity: b.parity ?? 0,
+        abortions: b.abortions ?? 0,
+        livingChildren: b.livingChildren ?? 0,
+        riskCategory: b.riskCategory || 'low',
+        bloodGroup: b.bloodGroup || null,
+        rhFactor: b.rhFactor || null,
+        status: 'ongoing',
+        notes: b.notes || null,
+      },
+      include: { patient: { select: { id: true, name: true, mrn: true } } },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'PREGNANCY_CREATE',
+      resource: 'Pregnancy',
+      resourceId: created.id,
+      newValue: { patientId: created.patientId, lmpDate: created.lmpDate, eddDate: created.eddDate },
+    });
+    res.status(201).json(created);
+  } catch (e: any) {
+    console.error('create pregnancy', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.get('/pregnancies/:id', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const row = await prisma.pregnancy.findFirst({
+      where: { id: req.params.id, patient: { tenantId } },
+      include: {
+        patient: { select: { id: true, name: true, mrn: true } },
+        ancVisits: { orderBy: { visitDate: 'asc' } },
+        partograph: { orderBy: { recordedAt: 'desc' }, take: 50 },
+      },
+    });
+    if (!row) return res.status(404).json({ error: 'Pregnancy not found' });
+    res.json(row);
+  } catch (e: any) {
+    console.error('get pregnancy', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.put('/pregnancies/:id', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const owned = await prisma.pregnancy.findFirst({
+      where: { id: req.params.id, patient: { tenantId } },
+    });
+    if (!owned) return res.status(404).json({ error: 'Pregnancy not found' });
+
+    const b = req.body || {};
+    const data: any = {};
+    if (b.lmpDate !== undefined) data.lmpDate = b.lmpDate ? new Date(b.lmpDate) : null;
+    if (b.eddDate !== undefined) data.eddDate = b.eddDate ? new Date(b.eddDate) : null;
+    if (b.gravida !== undefined) data.gravida = b.gravida;
+    if (b.parity !== undefined) data.parity = b.parity;
+    if (b.abortions !== undefined) data.abortions = b.abortions;
+    if (b.livingChildren !== undefined) data.livingChildren = b.livingChildren;
+    if (b.riskCategory !== undefined) data.riskCategory = b.riskCategory;
+    if (b.bloodGroup !== undefined) data.bloodGroup = b.bloodGroup;
+    if (b.rhFactor !== undefined) data.rhFactor = b.rhFactor;
+    if (b.status !== undefined) data.status = b.status;
+    if (b.outcomeAt !== undefined) data.outcomeAt = b.outcomeAt ? new Date(b.outcomeAt) : null;
+    if (b.notes !== undefined) data.notes = b.notes;
+
+    const updated = await prisma.pregnancy.update({
+      where: { id: owned.id },
+      data,
+      include: { patient: { select: { id: true, name: true, mrn: true } } },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'PREGNANCY_UPDATE',
+      resource: 'Pregnancy',
+      resourceId: updated.id,
+      newValue: data,
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('update pregnancy', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+const PREGNANCY_CLOSE_STATUSES = ['delivered', 'aborted', 'terminated', 'lost'];
+
+clinicalModulesRouter.post('/pregnancies/:id/close', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const b = req.body || {};
+    if (!b.status || !PREGNANCY_CLOSE_STATUSES.includes(b.status)) {
+      return res.status(400).json({ error: `status must be one of: ${PREGNANCY_CLOSE_STATUSES.join('|')}` });
+    }
+    const owned = await prisma.pregnancy.findFirst({
+      where: { id: req.params.id, patient: { tenantId } },
+    });
+    if (!owned) return res.status(404).json({ error: 'Pregnancy not found' });
+    const updated = await prisma.pregnancy.update({
+      where: { id: owned.id },
+      data: {
+        status: b.status,
+        outcomeAt: b.outcomeAt ? new Date(b.outcomeAt) : new Date(),
+      },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'PREGNANCY_CLOSE',
+      resource: 'Pregnancy',
+      resourceId: updated.id,
+      newValue: { status: updated.status, outcomeAt: updated.outcomeAt },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('close pregnancy', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/pregnancies/:id/anc-visits', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const b = req.body || {};
+    if (!b.visitDate) return res.status(400).json({ error: 'visitDate is required' });
+    const pregnancy = await prisma.pregnancy.findFirst({
+      where: { id: req.params.id, patient: { tenantId } },
+      select: { id: true },
+    });
+    if (!pregnancy) return res.status(404).json({ error: 'Pregnancy not found' });
+
+    // Auto-assign visitNumber if missing.
+    let visitNumber = b.visitNumber;
+    if (visitNumber === undefined || visitNumber === null) {
+      const last = await prisma.aNCVisit.findFirst({
+        where: { pregnancyId: pregnancy.id },
+        orderBy: { visitNumber: 'desc' },
+        select: { visitNumber: true },
+      });
+      visitNumber = (last?.visitNumber ?? 0) + 1;
+    }
+
+    const created = await prisma.aNCVisit.create({
+      data: {
+        pregnancyId: pregnancy.id,
+        visitNumber,
+        visitDate: new Date(b.visitDate),
+        gestationWeeks: b.gestationWeeks ?? null,
+        weightKg: b.weightKg ?? null,
+        bpSystolic: b.bpSystolic ?? null,
+        bpDiastolic: b.bpDiastolic ?? null,
+        fundalHeightCm: b.fundalHeightCm ?? null,
+        foetalHeartRate: b.foetalHeartRate ?? null,
+        presentation: b.presentation || null,
+        urineAlbumin: b.urineAlbumin || null,
+        urineSugar: b.urineSugar || null,
+        haemoglobin: b.haemoglobin ?? null,
+        ifaSupplementGiven: b.ifaSupplementGiven ?? false,
+        tdtVaccineGiven: b.tdtVaccineGiven ?? false,
+        complaints: b.complaints || null,
+        examination: b.examination || null,
+        advicePlan: b.advicePlan || null,
+        visitedById: req.user!.userId,
+      },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'ANC_VISIT_CREATE',
+      resource: 'ANCVisit',
+      resourceId: created.id,
+      newValue: { pregnancyId: created.pregnancyId, visitNumber: created.visitNumber },
+    });
+    res.status(201).json(created);
+  } catch (e: any) {
+    console.error('create anc visit', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/pregnancies/:id/partograph', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const b = req.body || {};
+    const pregnancy = await prisma.pregnancy.findFirst({
+      where: { id: req.params.id, patient: { tenantId } },
+      select: { id: true },
+    });
+    if (!pregnancy) return res.status(404).json({ error: 'Pregnancy not found' });
+
+    const created = await prisma.partographEvent.create({
+      data: {
+        pregnancyId: pregnancy.id,
+        recordedAt: b.recordedAt ? new Date(b.recordedAt) : new Date(),
+        cervixDilationCm: b.cervixDilationCm ?? null,
+        cervixEffacementPct: b.cervixEffacementPct ?? null,
+        foetalHeartRate: b.foetalHeartRate ?? null,
+        membraneStatus: b.membraneStatus || null,
+        bpSystolic: b.bpSystolic ?? null,
+        bpDiastolic: b.bpDiastolic ?? null,
+        pulse: b.pulse ?? null,
+        tempC: b.tempC ?? null,
+        contractions10min: b.contractions10min ?? null,
+        contractionIntensity: b.contractionIntensity || null,
+        station: b.station ?? null,
+        oxytocinUnits: b.oxytocinUnits ?? null,
+        ivFluids: b.ivFluids || null,
+        notes: b.notes || null,
+        recordedById: req.user!.userId,
+      },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'PARTOGRAPH_CREATE',
+      resource: 'PartographEvent',
+      resourceId: created.id,
+      newValue: { pregnancyId: created.pregnancyId, recordedAt: created.recordedAt },
+    });
+    res.status(201).json(created);
+  } catch (e: any) {
+    console.error('create partograph event', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.get('/pregnancies/:id/partograph', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const pregnancy = await prisma.pregnancy.findFirst({
+      where: { id: req.params.id, patient: { tenantId } },
+      select: { id: true },
+    });
+    if (!pregnancy) return res.status(404).json({ error: 'Pregnancy not found' });
+    const { from, to } = req.query;
+    const where: any = { pregnancyId: pregnancy.id };
+    if (from || to) {
+      where.recordedAt = {};
+      if (from) where.recordedAt.gte = new Date(String(from));
+      if (to) where.recordedAt.lte = new Date(String(to));
+    }
+    const rows = await prisma.partographEvent.findMany({
+      where,
+      orderBy: { recordedAt: 'asc' },
+    });
+    res.json(rows);
+  } catch (e: any) {
+    console.error('list partograph events', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+// ---------- NICU: BEDS + STAYS ----------
+
+clinicalModulesRouter.get('/nicu/beds', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const rows = await prisma.nICUBed.findMany({
+      where: { tenantId: req.user!.tenantId },
+      orderBy: { bedNumber: 'asc' },
+    });
+    res.json(rows);
+  } catch (e: any) {
+    console.error('list nicu beds', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/nicu/beds', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const b = req.body || {};
+    if (!b.bedNumber) return res.status(400).json({ error: 'bedNumber is required' });
+    const created = await prisma.nICUBed.create({
+      data: {
+        tenantId,
+        bedNumber: String(b.bedNumber),
+        level: b.level || 'L2',
+        equipment: Array.isArray(b.equipment) ? b.equipment : [],
+        isolationCapable: !!b.isolationCapable,
+      },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'NICU_BED_CREATE',
+      resource: 'NICUBed',
+      resourceId: created.id,
+      newValue: { bedNumber: created.bedNumber, level: created.level },
+    });
+    res.status(201).json(created);
+  } catch (e: any) {
+    if (e.code === 'P2002') return res.status(409).json({ error: 'bedNumber already exists for this tenant' });
+    console.error('create nicu bed', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.put('/nicu/beds/:id', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const owned = await prisma.nICUBed.findFirst({ where: { id: req.params.id, tenantId } });
+    if (!owned) return res.status(404).json({ error: 'NICU bed not found' });
+    const b = req.body || {};
+    const data: any = {};
+    if (b.bedNumber !== undefined) data.bedNumber = String(b.bedNumber);
+    if (b.level !== undefined) data.level = b.level;
+    if (b.equipment !== undefined) data.equipment = Array.isArray(b.equipment) ? b.equipment : [];
+    if (b.status !== undefined) data.status = b.status;
+    if (b.isolationCapable !== undefined) data.isolationCapable = !!b.isolationCapable;
+    const updated = await prisma.nICUBed.update({ where: { id: owned.id }, data });
+    void writeAudit({
+      prisma, req,
+      action: 'NICU_BED_UPDATE',
+      resource: 'NICUBed',
+      resourceId: updated.id,
+      newValue: data,
+    });
+    res.json(updated);
+  } catch (e: any) {
+    if (e.code === 'P2002') return res.status(409).json({ error: 'bedNumber already exists for this tenant' });
+    console.error('update nicu bed', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.get('/nicu/stays', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { status, from, to } = req.query;
+    const where: any = { tenantId };
+    if (status === 'active') where.dischargedAt = null;
+    else if (status === 'discharged') where.dischargedAt = { not: null };
+    if (from || to) {
+      where.admittedAt = where.admittedAt || {};
+      if (from) where.admittedAt.gte = new Date(String(from));
+      if (to) where.admittedAt.lte = new Date(String(to));
+    }
+    const rows = await prisma.nICUStay.findMany({
+      where,
+      orderBy: { admittedAt: 'desc' },
+      include: {
+        babyPatient: { select: { name: true, mrn: true, dob: true } },
+        nicuBed: { select: { bedNumber: true, level: true } },
+      },
+    });
+    res.json(rows);
+  } catch (e: any) {
+    console.error('list nicu stays', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/nicu/stays', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const b = req.body || {};
+    if (!b.babyPatientId) return res.status(400).json({ error: 'babyPatientId is required' });
+    if (!b.reason) return res.status(400).json({ error: 'reason is required' });
+
+    const baby = await prisma.patient.findFirst({ where: { id: b.babyPatientId, tenantId }, select: { id: true } });
+    if (!baby) return res.status(404).json({ error: 'Baby patient not found' });
+
+    if (b.nicuBedId) {
+      const bed = await prisma.nICUBed.findFirst({ where: { id: b.nicuBedId, tenantId } });
+      if (!bed) return res.status(404).json({ error: 'NICU bed not found' });
+      if (bed.status === 'occupied') return res.status(400).json({ error: 'NICU bed is already occupied' });
+    }
+
+    // Atomic create-stay + flip-bed via transaction so we don't leak an
+    // orphan "occupied" bed if the stay insert fails.
+    const created = await prisma.$transaction(async (tx) => {
+      const stay = await tx.nICUStay.create({
+        data: {
+          tenantId,
+          babyPatientId: b.babyPatientId,
+          nicuBedId: b.nicuBedId || null,
+          reason: b.reason,
+          reasonDetails: b.reasonDetails || null,
+          birthWeightGrams: b.birthWeightGrams ?? null,
+          gestationWeeksAtBirth: b.gestationWeeksAtBirth ?? null,
+          apgar1Min: b.apgar1Min ?? null,
+          apgar5Min: b.apgar5Min ?? null,
+          notes: b.notes || null,
+        },
+      });
+      if (b.nicuBedId) {
+        await tx.nICUBed.update({ where: { id: b.nicuBedId }, data: { status: 'occupied' } });
+      }
+      return stay;
+    });
+
+    void writeAudit({
+      prisma, req,
+      action: 'NICU_STAY_CREATE',
+      resource: 'NICUStay',
+      resourceId: created.id,
+      newValue: { babyPatientId: created.babyPatientId, nicuBedId: created.nicuBedId, reason: created.reason },
+    });
+    res.status(201).json(created);
+  } catch (e: any) {
+    console.error('create nicu stay', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+const NICU_OUTCOMES = ['home', 'transferred', 'death', 'lama'];
+
+clinicalModulesRouter.post('/nicu/stays/:id/discharge', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const b = req.body || {};
+    if (!b.outcome || !NICU_OUTCOMES.includes(b.outcome)) {
+      return res.status(400).json({ error: `outcome must be one of: ${NICU_OUTCOMES.join('|')}` });
+    }
+    const owned = await prisma.nICUStay.findFirst({ where: { id: req.params.id, tenantId } });
+    if (!owned) return res.status(404).json({ error: 'NICU stay not found' });
+    if (owned.dischargedAt) return res.status(400).json({ error: 'Stay already discharged' });
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const stay = await tx.nICUStay.update({
+        where: { id: owned.id },
+        data: {
+          dischargedAt: new Date(),
+          outcome: b.outcome,
+          notes: b.notes ?? owned.notes,
+        },
+      });
+      if (owned.nicuBedId) {
+        await tx.nICUBed.update({ where: { id: owned.nicuBedId }, data: { status: 'vacant' } });
+      }
+      return stay;
+    });
+
+    void writeAudit({
+      prisma, req,
+      action: 'NICU_STAY_DISCHARGE',
+      resource: 'NICUStay',
+      resourceId: updated.id,
+      newValue: { outcome: updated.outcome, dischargedAt: updated.dischargedAt },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('discharge nicu stay', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+// ---------- ONCOLOGY: CHEMO PROTOCOLS + CYCLES ----------
+
+clinicalModulesRouter.get('/chemo/protocols', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { isActive, indication } = req.query;
+    const where: any = { tenantId };
+    if (isActive !== undefined) where.isActive = String(isActive) === 'true';
+    if (indication) where.indication = String(indication);
+    const rows = await prisma.chemoProtocol.findMany({
+      where,
+      orderBy: { name: 'asc' },
+    });
+    res.json(rows);
+  } catch (e: any) {
+    console.error('list chemo protocols', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/chemo/protocols', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const b = req.body || {};
+    if (!b.name) return res.status(400).json({ error: 'name is required' });
+    if (!b.indication) return res.status(400).json({ error: 'indication is required' });
+    if (b.cycleLength === undefined || b.cycleLength === null) return res.status(400).json({ error: 'cycleLength is required' });
+    if (b.totalCycles === undefined || b.totalCycles === null) return res.status(400).json({ error: 'totalCycles is required' });
+    if (b.drugs === undefined || b.drugs === null) return res.status(400).json({ error: 'drugs is required' });
+
+    const created = await prisma.chemoProtocol.create({
+      data: {
+        tenantId,
+        name: b.name,
+        abbreviation: b.abbreviation || null,
+        indication: b.indication,
+        cycleLength: Number(b.cycleLength),
+        totalCycles: Number(b.totalCycles),
+        drugs: b.drugs,
+        premedications: b.premedications ?? undefined,
+        notes: b.notes || null,
+        isActive: b.isActive === undefined ? true : !!b.isActive,
+      },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'CHEMO_PROTOCOL_CREATE',
+      resource: 'ChemoProtocol',
+      resourceId: created.id,
+      newValue: { name: created.name, indication: created.indication },
+    });
+    res.status(201).json(created);
+  } catch (e: any) {
+    if (e.code === 'P2002') return res.status(409).json({ error: 'protocol name already exists for this tenant' });
+    console.error('create chemo protocol', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.put('/chemo/protocols/:id', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const owned = await prisma.chemoProtocol.findFirst({ where: { id: req.params.id, tenantId } });
+    if (!owned) return res.status(404).json({ error: 'Chemo protocol not found' });
+    const b = req.body || {};
+    const data: any = {};
+    if (b.name !== undefined) data.name = b.name;
+    if (b.abbreviation !== undefined) data.abbreviation = b.abbreviation;
+    if (b.indication !== undefined) data.indication = b.indication;
+    if (b.cycleLength !== undefined) data.cycleLength = Number(b.cycleLength);
+    if (b.totalCycles !== undefined) data.totalCycles = Number(b.totalCycles);
+    if (b.drugs !== undefined) data.drugs = b.drugs;
+    if (b.premedications !== undefined) data.premedications = b.premedications;
+    if (b.notes !== undefined) data.notes = b.notes;
+    if (b.isActive !== undefined) data.isActive = !!b.isActive;
+
+    const updated = await prisma.chemoProtocol.update({ where: { id: owned.id }, data });
+    void writeAudit({
+      prisma, req,
+      action: 'CHEMO_PROTOCOL_UPDATE',
+      resource: 'ChemoProtocol',
+      resourceId: updated.id,
+      newValue: data,
+    });
+    res.json(updated);
+  } catch (e: any) {
+    if (e.code === 'P2002') return res.status(409).json({ error: 'protocol name already exists for this tenant' });
+    console.error('update chemo protocol', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.get('/chemo/cycles', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { patientId, status, from, to } = req.query;
+    const where: any = { tenantId };
+    if (patientId) where.patientId = String(patientId);
+    if (status) where.status = String(status);
+    if (from || to) {
+      where.scheduledDate = {};
+      if (from) where.scheduledDate.gte = new Date(String(from));
+      if (to) where.scheduledDate.lte = new Date(String(to));
+    }
+    const rows = await prisma.chemoCycle.findMany({
+      where,
+      orderBy: { scheduledDate: 'desc' },
+      include: {
+        patient: { select: { id: true, name: true, mrn: true } },
+        protocol: { select: { id: true, name: true, abbreviation: true, cycleLength: true, totalCycles: true } },
+      },
+    });
+    res.json(rows);
+  } catch (e: any) {
+    console.error('list chemo cycles', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/chemo/cycles', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const b = req.body || {};
+    if (!b.patientId) return res.status(400).json({ error: 'patientId is required' });
+    if (!b.protocolId) return res.status(400).json({ error: 'protocolId is required' });
+    if (b.cycleNumber === undefined || b.cycleNumber === null) return res.status(400).json({ error: 'cycleNumber is required' });
+    if (!b.scheduledDate) return res.status(400).json({ error: 'scheduledDate is required' });
+
+    const patient = await prisma.patient.findFirst({ where: { id: b.patientId, tenantId }, select: { id: true } });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+    const protocol = await prisma.chemoProtocol.findFirst({ where: { id: b.protocolId, tenantId }, select: { id: true } });
+    if (!protocol) return res.status(404).json({ error: 'Chemo protocol not found' });
+
+    const created = await prisma.chemoCycle.create({
+      data: {
+        tenantId,
+        patientId: b.patientId,
+        protocolId: b.protocolId,
+        cycleNumber: Number(b.cycleNumber),
+        scheduledDate: new Date(b.scheduledDate),
+        bsa: b.bsa ?? null,
+        doses: b.doses ?? undefined,
+        preLabs: b.preLabs ?? undefined,
+        notes: b.notes || null,
+      },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'CHEMO_CYCLE_CREATE',
+      resource: 'ChemoCycle',
+      resourceId: created.id,
+      newValue: { patientId: created.patientId, protocolId: created.protocolId, cycleNumber: created.cycleNumber },
+    });
+    res.status(201).json(created);
+  } catch (e: any) {
+    console.error('create chemo cycle', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/chemo/cycles/:id/start', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const owned = await prisma.chemoCycle.findFirst({ where: { id: req.params.id, tenantId } });
+    if (!owned) return res.status(404).json({ error: 'Chemo cycle not found' });
+    const b = req.body || {};
+    const data: any = { actualDate: new Date() };
+    if (b.preLabs !== undefined) data.preLabs = b.preLabs;
+    if (b.bsa !== undefined) data.bsa = b.bsa;
+    if (b.doses !== undefined) data.doses = b.doses;
+    const updated = await prisma.chemoCycle.update({ where: { id: owned.id }, data });
+    void writeAudit({
+      prisma, req,
+      action: 'CHEMO_CYCLE_START',
+      resource: 'ChemoCycle',
+      resourceId: updated.id,
+      newValue: { actualDate: updated.actualDate },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('start chemo cycle', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/chemo/cycles/:id/complete', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const owned = await prisma.chemoCycle.findFirst({ where: { id: req.params.id, tenantId } });
+    if (!owned) return res.status(404).json({ error: 'Chemo cycle not found' });
+    const b = req.body || {};
+    const data: any = { status: 'completed' };
+    if (b.toxicities !== undefined) data.toxicities = b.toxicities;
+    if (b.notes !== undefined) data.notes = b.notes;
+    const updated = await prisma.chemoCycle.update({ where: { id: owned.id }, data });
+    void writeAudit({
+      prisma, req,
+      action: 'CHEMO_CYCLE_COMPLETE',
+      resource: 'ChemoCycle',
+      resourceId: updated.id,
+      newValue: { status: updated.status },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('complete chemo cycle', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/chemo/cycles/:id/delay', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const owned = await prisma.chemoCycle.findFirst({ where: { id: req.params.id, tenantId } });
+    if (!owned) return res.status(404).json({ error: 'Chemo cycle not found' });
+    const b = req.body || {};
+    if (!b.rescheduledTo) return res.status(400).json({ error: 'rescheduledTo is required' });
+    const updated = await prisma.chemoCycle.update({
+      where: { id: owned.id },
+      data: {
+        scheduledDate: new Date(b.rescheduledTo),
+        status: 'delayed',
+        notes: b.reason ? `${owned.notes ? owned.notes + '\n' : ''}Delayed: ${b.reason}` : owned.notes,
+      },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'CHEMO_CYCLE_DELAY',
+      resource: 'ChemoCycle',
+      resourceId: updated.id,
+      newValue: { scheduledDate: updated.scheduledDate, status: updated.status, reason: b.reason },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('delay chemo cycle', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+// ---------- CARDIOLOGY: CATH LAB ----------
+
+clinicalModulesRouter.get('/cath', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { status, from, to, patientId } = req.query;
+    const where: any = { tenantId };
+    if (status) where.outcome = String(status);
+    if (patientId) where.patientId = String(patientId);
+    if (from || to) {
+      where.startAt = {};
+      if (from) where.startAt.gte = new Date(String(from));
+      if (to) where.startAt.lte = new Date(String(to));
+    }
+    const rows = await prisma.cathProcedure.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: { patient: { select: { id: true, name: true, mrn: true } } },
+    });
+    res.json(rows);
+  } catch (e: any) {
+    console.error('list cath procedures', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/cath', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const b = req.body || {};
+    if (!b.patientId) return res.status(400).json({ error: 'patientId is required' });
+    if (!b.procedureType) return res.status(400).json({ error: 'procedureType is required' });
+    const patient = await prisma.patient.findFirst({ where: { id: b.patientId, tenantId }, select: { id: true } });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+
+    const created = await prisma.cathProcedure.create({
+      data: {
+        tenantId,
+        patientId: b.patientId,
+        procedureType: b.procedureType,
+        indication: b.indication || null,
+        approach: b.approach || null,
+        vesselsInvolved: b.vesselsInvolved || null,
+        findings: b.findings || null,
+        interventionDetails: b.interventionDetails || null,
+        implants: b.implants ?? undefined,
+        contrastVolumeMl: b.contrastVolumeMl ?? null,
+        fluoroscopyMinutes: b.fluoroscopyMinutes ?? null,
+        complications: b.complications || null,
+        startAt: b.startAt ? new Date(b.startAt) : null,
+        endAt: b.endAt ? new Date(b.endAt) : null,
+        outcome: b.outcome || null,
+        cardiologistId: b.cardiologistId || null,
+        scrubNurseId: b.scrubNurseId || null,
+        notes: b.notes || null,
+      },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'CATH_CREATE',
+      resource: 'CathProcedure',
+      resourceId: created.id,
+      newValue: { patientId: created.patientId, procedureType: created.procedureType },
+    });
+    res.status(201).json(created);
+  } catch (e: any) {
+    console.error('create cath procedure', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.put('/cath/:id', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const owned = await prisma.cathProcedure.findFirst({ where: { id: req.params.id, tenantId } });
+    if (!owned) return res.status(404).json({ error: 'Cath procedure not found' });
+    const b = req.body || {};
+    const data: any = {};
+    const passthrough = [
+      'procedureType', 'indication', 'approach', 'vesselsInvolved', 'findings',
+      'interventionDetails', 'implants', 'contrastVolumeMl', 'fluoroscopyMinutes',
+      'complications', 'outcome', 'cardiologistId', 'scrubNurseId', 'notes',
+    ];
+    for (const k of passthrough) if (b[k] !== undefined) data[k] = b[k];
+    if (b.startAt !== undefined) data.startAt = b.startAt ? new Date(b.startAt) : null;
+    if (b.endAt !== undefined) data.endAt = b.endAt ? new Date(b.endAt) : null;
+    const updated = await prisma.cathProcedure.update({ where: { id: owned.id }, data });
+    void writeAudit({
+      prisma, req,
+      action: 'CATH_UPDATE',
+      resource: 'CathProcedure',
+      resourceId: updated.id,
+      newValue: data,
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('update cath procedure', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/cath/:id/start', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const owned = await prisma.cathProcedure.findFirst({ where: { id: req.params.id, tenantId } });
+    if (!owned) return res.status(404).json({ error: 'Cath procedure not found' });
+    const b = req.body || {};
+    const startAt = b.startAt ? new Date(b.startAt) : new Date();
+    const updated = await prisma.cathProcedure.update({ where: { id: owned.id }, data: { startAt } });
+    void writeAudit({
+      prisma, req,
+      action: 'CATH_START',
+      resource: 'CathProcedure',
+      resourceId: updated.id,
+      newValue: { startAt: updated.startAt },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('start cath procedure', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/cath/:id/complete', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const owned = await prisma.cathProcedure.findFirst({ where: { id: req.params.id, tenantId } });
+    if (!owned) return res.status(404).json({ error: 'Cath procedure not found' });
+    const b = req.body || {};
+    if (!b.outcome) return res.status(400).json({ error: 'outcome is required' });
+    const data: any = {
+      endAt: b.endAt ? new Date(b.endAt) : new Date(),
+      outcome: b.outcome,
+    };
+    if (b.findings !== undefined) data.findings = b.findings;
+    if (b.interventionDetails !== undefined) data.interventionDetails = b.interventionDetails;
+    if (b.implants !== undefined) data.implants = b.implants;
+    if (b.complications !== undefined) data.complications = b.complications;
+    const updated = await prisma.cathProcedure.update({ where: { id: owned.id }, data });
+    void writeAudit({
+      prisma, req,
+      action: 'CATH_COMPLETE',
+      resource: 'CathProcedure',
+      resourceId: updated.id,
+      newValue: { endAt: updated.endAt, outcome: updated.outcome },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('complete cath procedure', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+// ---------- ONCOLOGY: RADIOTHERAPY ----------
+
+clinicalModulesRouter.get('/radiotherapy', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const { status, patientId } = req.query;
+    const where: any = { tenantId };
+    if (status) where.status = String(status);
+    if (patientId) where.patientId = String(patientId);
+    const rows = await prisma.radiotherapyPlan.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: { patient: { select: { id: true, name: true, mrn: true } } },
+    });
+    res.json(rows);
+  } catch (e: any) {
+    console.error('list radiotherapy plans', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/radiotherapy', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const b = req.body || {};
+    if (!b.patientId) return res.status(400).json({ error: 'patientId is required' });
+    if (!b.technique) return res.status(400).json({ error: 'technique is required' });
+    if (!b.site) return res.status(400).json({ error: 'site is required' });
+    if (!b.intent) return res.status(400).json({ error: 'intent is required' });
+    if (b.totalDoseGy === undefined || b.totalDoseGy === null) return res.status(400).json({ error: 'totalDoseGy is required' });
+    if (b.fractions === undefined || b.fractions === null) return res.status(400).json({ error: 'fractions is required' });
+    if (b.dosePerFractionGy === undefined || b.dosePerFractionGy === null) return res.status(400).json({ error: 'dosePerFractionGy is required' });
+
+    const totalDoseGy = Number(b.totalDoseGy);
+    const fractions = Number(b.fractions);
+    const dosePerFractionGy = Number(b.dosePerFractionGy);
+
+    // Sanity-check fractions x dose-per-fraction = total dose (±5%).
+    const computed = fractions * dosePerFractionGy;
+    if (computed === 0 || Math.abs(computed - totalDoseGy) / totalDoseGy > 0.05) {
+      return res.status(400).json({
+        error: `totalDoseGy (${totalDoseGy}) does not match fractions * dosePerFractionGy (${computed}) within 5% tolerance`,
+      });
+    }
+
+    const patient = await prisma.patient.findFirst({ where: { id: b.patientId, tenantId }, select: { id: true } });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+
+    const created = await prisma.radiotherapyPlan.create({
+      data: {
+        tenantId,
+        patientId: b.patientId,
+        technique: b.technique,
+        site: b.site,
+        intent: b.intent,
+        totalDoseGy,
+        fractions,
+        dosePerFractionGy,
+        oncologistId: b.oncologistId || null,
+        notes: b.notes || null,
+      },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'RADIOTHERAPY_CREATE',
+      resource: 'RadiotherapyPlan',
+      resourceId: created.id,
+      newValue: { patientId: created.patientId, technique: created.technique, totalDoseGy: created.totalDoseGy },
+    });
+    res.status(201).json(created);
+  } catch (e: any) {
+    console.error('create radiotherapy plan', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/radiotherapy/:id/start', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const owned = await prisma.radiotherapyPlan.findFirst({ where: { id: req.params.id, tenantId } });
+    if (!owned) return res.status(404).json({ error: 'Radiotherapy plan not found' });
+    const updated = await prisma.radiotherapyPlan.update({
+      where: { id: owned.id },
+      data: { startedAt: new Date(), status: 'ongoing' },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'RADIOTHERAPY_START',
+      resource: 'RadiotherapyPlan',
+      resourceId: updated.id,
+      newValue: { startedAt: updated.startedAt, status: updated.status },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('start radiotherapy plan', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/radiotherapy/:id/deliver', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const owned = await prisma.radiotherapyPlan.findFirst({ where: { id: req.params.id, tenantId } });
+    if (!owned) return res.status(404).json({ error: 'Radiotherapy plan not found' });
+    const b = req.body || {};
+    if (b.fractionNum === undefined || b.fractionNum === null) return res.status(400).json({ error: 'fractionNum is required' });
+    if (b.doseGy === undefined || b.doseGy === null) return res.status(400).json({ error: 'doseGy is required' });
+
+    // Append to deliveredFractions JSON.
+    const existing = Array.isArray(owned.deliveredFractions) ? owned.deliveredFractions : [];
+    const entry = {
+      fractionNum: Number(b.fractionNum),
+      deliveredAt: new Date().toISOString(),
+      doseGy: Number(b.doseGy),
+      machine: b.machine || null,
+      notes: b.notes || null,
+    };
+    const next = [...existing, entry];
+
+    const updated = await prisma.radiotherapyPlan.update({
+      where: { id: owned.id },
+      data: { deliveredFractions: next as any },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'RADIOTHERAPY_DELIVER',
+      resource: 'RadiotherapyPlan',
+      resourceId: updated.id,
+      newValue: entry,
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('deliver radiotherapy fraction', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+clinicalModulesRouter.post('/radiotherapy/:id/complete', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const owned = await prisma.radiotherapyPlan.findFirst({ where: { id: req.params.id, tenantId } });
+    if (!owned) return res.status(404).json({ error: 'Radiotherapy plan not found' });
+    const updated = await prisma.radiotherapyPlan.update({
+      where: { id: owned.id },
+      data: { completedAt: new Date(), status: 'completed' },
+    });
+    void writeAudit({
+      prisma, req,
+      action: 'RADIOTHERAPY_COMPLETE',
+      resource: 'RadiotherapyPlan',
+      resourceId: updated.id,
+      newValue: { completedAt: updated.completedAt, status: updated.status },
+    });
+    res.json(updated);
+  } catch (e: any) {
+    console.error('complete radiotherapy plan', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});

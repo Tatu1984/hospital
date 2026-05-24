@@ -88,6 +88,12 @@ const NABHDashboard = lazy(() => import('./pages/NABHDashboard'));
 const FormFRegister = lazy(() => import('./pages/FormFRegister'));
 const MTPRegister = lazy(() => import('./pages/MTPRegister'));
 const PMJAYClaims = lazy(() => import('./pages/PMJAYClaims'));
+// Phase 4 — specialty clinical modules.
+const Obstetrics = lazy(() => import('./pages/Obstetrics'));
+const NICU = lazy(() => import('./pages/NICU'));
+const ChemoSchedule = lazy(() => import('./pages/ChemoSchedule'));
+const CathLab = lazy(() => import('./pages/CathLab'));
+const Radiotherapy = lazy(() => import('./pages/Radiotherapy'));
 
 // Some smaller modules still live in AllModules.tsx — split that into one
 // async chunk. Each named import resolves once the chunk loads.
@@ -330,6 +336,13 @@ const AppRoutes = () => {
         <Route path="form-f" element={<RoleProtectedRoute path="form-f"><FormFRegister /></RoleProtectedRoute>} />
         <Route path="mtp-register" element={<RoleProtectedRoute path="mtp-register"><MTPRegister /></RoleProtectedRoute>} />
         <Route path="pmjay" element={<RoleProtectedRoute path="pmjay"><PMJAYClaims /></RoleProtectedRoute>} />
+
+        {/* Phase 4 — Specialty modules (Obstetrics, NICU, Chemo, Cath, Radiotherapy). */}
+        <Route path="obstetrics" element={<RoleProtectedRoute path="obstetrics"><Obstetrics /></RoleProtectedRoute>} />
+        <Route path="nicu" element={<RoleProtectedRoute path="nicu"><NICU /></RoleProtectedRoute>} />
+        <Route path="chemo" element={<RoleProtectedRoute path="chemo"><ChemoSchedule /></RoleProtectedRoute>} />
+        <Route path="cath-lab" element={<RoleProtectedRoute path="cath-lab"><CathLab /></RoleProtectedRoute>} />
+        <Route path="radiotherapy" element={<RoleProtectedRoute path="radiotherapy"><Radiotherapy /></RoleProtectedRoute>} />
       </Route>
     </Routes>
   );

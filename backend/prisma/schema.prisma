@@ -28,6 +28,13 @@ model Tenant {
   ultrasoundForms UltrasoundFormF[]
   mtpRecords     MTPRecord[]
   pmjayClaims    PMJAYClaim[]
+  // Pregnancy is tenant-scoped through Patient — no direct relation here.
+  nicuBeds       NICUBed[]
+  nicuStays      NICUStay[]
+  chemoProtocols ChemoProtocol[]
+  chemoCycles    ChemoCycle[]
+  cathProcedures CathProcedure[]
+  radiotherapyPlans RadiotherapyPlan[]
 
   @@map("tenants")
 }
@@ -322,6 +329,11 @@ model Patient {
   ultrasoundForms   UltrasoundFormF[]
   mtpRecords        MTPRecord[]
   pmjayClaims       PMJAYClaim[]
+  pregnancies       Pregnancy[]
+  nicuStaysAsBaby   NICUStay[]        @relation("BabyNICU")
+  chemoCycles       ChemoCycle[]
+  cathProcedures    CathProcedure[]
+  radiotherapyPlans RadiotherapyPlan[]
 
   @@unique([tenantId, mrn])
   @@map("patients")
@@ -2857,4 +2869,313 @@ model PMJAYClaim {
   @@index([tenantId, status])
   @@index([patientId])
   @@map("pmjay_claims")
+}
+
+// ===========================
+// PHASE 4 — SPECIALTY MODULES
+// ===========================
+// Obstetrics, Paediatrics/NICU, Oncology (chemo + radiotherapy), Cardiology
+// (cath lab). Each typically sold as a paid add-on module to a base HMS.
+
+// ---- Obstetrics: pregnancy episode + antenatal visits + partograph ----
+
+// One Pregnancy row per pregnancy episode for a patient. Drives ANC
+// visit list, EDD calculation, partograph, and ultimately the BirthRecord
+// (which captures the delivery event).
+model Pregnancy {
+  id              String    @id @default(uuid())
+  patientId       String
+  // Last menstrual period — anchor for EDD and gestation calculations.
+  lmpDate         DateTime?
+  // Estimated date of delivery — Naegele's rule (lmp + 280d) unless
+  // overridden after first-trimester USG dating.
+  eddDate         DateTime?
+  // G (gravida) / P (parity) / A (abortion) / L (living children) — the
+  // standard "GxPxAxLx" obstetric history shorthand.
+  gravida         Int       @default(1)
+  parity          Int       @default(0)
+  abortions       Int       @default(0)
+  livingChildren  Int       @default(0)
+  // Risk classification — 'low' | 'high'. Drives the ANC schedule and
+  // the referral / consultant assignment.
+  riskCategory    String    @default("low")
+  // Blood group + Rh — fetched from Patient if available but kept on
+  // Pregnancy for historical accuracy across pregnancies.
+  bloodGroup      String?
+  rhFactor        String?   // 'positive' | 'negative'
+  // 'ongoing' | 'delivered' | 'aborted' | 'terminated' | 'lost'
+  status          String    @default("ongoing")
+  outcomeAt       DateTime?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  patient    Patient        @relation(fields: [patientId], references: [id])
+  ancVisits  ANCVisit[]
+  partograph PartographEvent[]
+
+  @@index([patientId, status])
+  @@map("pregnancies")
+}
+
+// Antenatal-care visit. ICMR/MoHFW schedule: ≥4 visits at trimesters
+// 1, 2, 3, and term. Each visit captures BP, weight, fundal height,
+// foetal heart rate, USG references, urine albumin/sugar, etc.
+model ANCVisit {
+  id              String    @id @default(uuid())
+  pregnancyId     String
+  visitNumber     Int       // 1, 2, 3, ... seq within the pregnancy
+  visitDate       DateTime
+  gestationWeeks  Int?
+  // Vitals subset specific to ANC.
+  weightKg        Float?
+  bpSystolic      Int?
+  bpDiastolic     Int?
+  // Examination findings.
+  fundalHeightCm  Float?
+  foetalHeartRate Int?      // bpm
+  presentation    String?   // 'cephalic' | 'breech' | 'transverse' | 'unknown'
+  // Lab dipstick / quick tests at the desk.
+  urineAlbumin    String?   // 'nil' | 'trace' | '+' | '++' | '+++'
+  urineSugar      String?
+  haemoglobin     Float?    // g/dl — quick HemoCue or lab value
+  // Compliance with the national schedule.
+  ifaSupplementGiven Boolean @default(false) // Iron + folic acid
+  tdtVaccineGiven    Boolean @default(false) // Td / TT
+  // Free text findings and plan.
+  complaints      String?
+  examination     String?
+  advicePlan      String?
+  visitedById     String?
+
+  pregnancy Pregnancy @relation(fields: [pregnancyId], references: [id], onDelete: Cascade)
+
+  @@index([pregnancyId, visitDate])
+  @@map("anc_visits")
+}
+
+// Partograph event timeline during labour — cervical dilation, FHR,
+// contractions, presenting-part descent, drugs, etc. Each row is one
+// observation; the FE plots them on the standard WHO partograph chart.
+model PartographEvent {
+  id            String   @id @default(uuid())
+  pregnancyId   String
+  recordedAt    DateTime @default(now())
+  // Core observations.
+  cervixDilationCm  Int?     // 0-10
+  cervixEffacementPct Int?   // 0-100
+  // Foetal-side
+  foetalHeartRate Int?       // bpm
+  membraneStatus  String?    // 'intact' | 'ruptured-clear' | 'ruptured-meconium'
+  // Maternal-side
+  bpSystolic    Int?
+  bpDiastolic   Int?
+  pulse         Int?
+  tempC         Float?
+  // Uterine contractions in 10 minutes (count + intensity)
+  contractions10min Int?
+  contractionIntensity String?  // 'mild' | 'moderate' | 'strong'
+  // Presenting-part station relative to ischial spines (-3 to +3).
+  station       Int?
+  // Drugs and IV administered.
+  oxytocinUnits Float?
+  ivFluids      String?
+  notes         String?
+  recordedById  String?
+
+  pregnancy Pregnancy @relation(fields: [pregnancyId], references: [id], onDelete: Cascade)
+
+  @@index([pregnancyId, recordedAt])
+  @@map("partograph_events")
+}
+
+// ---- NICU (Neonatal Intensive Care Unit) ----
+
+// NICU bed inventory — like ICUBed but neonate-specific. Equipment
+// like radiant warmers, phototherapy units, ventilators is tracked.
+model NICUBed {
+  id           String    @id @default(uuid())
+  tenantId     String
+  bedNumber    String
+  level        String    @default("L2")  // 'L1' (well baby), 'L2' (intermediate), 'L3' (intensive)
+  // Equipment: 'warmer' | 'incubator' | 'phototherapy' | 'ventilator' | 'cpap' | 'bipap'
+  equipment    String[]  @default([])
+  status       String    @default("vacant")  // 'vacant' | 'occupied' | 'cleaning' | 'maintenance'
+  isolationCapable Boolean @default(false)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  tenant Tenant     @relation(fields: [tenantId], references: [id])
+  stays  NICUStay[]
+
+  @@unique([tenantId, bedNumber])
+  @@index([tenantId, status])
+  @@map("nicu_beds")
+}
+
+// NICU stay — admission of a newborn to a NICUBed.
+model NICUStay {
+  id              String    @id @default(uuid())
+  tenantId        String
+  // Baby is a Patient (auto-registered by BirthRecord flow). Mother is
+  // optional but useful for combined notes.
+  babyPatientId   String
+  nicuBedId       String?
+  // Admission reason
+  reason          String    // 'prematurity' | 'low-birth-weight' | 'rds' | 'sepsis' | 'jaundice' | 'asphyxia' | 'other'
+  reasonDetails   String?
+  birthWeightGrams Int?
+  gestationWeeksAtBirth Int?
+  apgar1Min       Int?
+  apgar5Min       Int?
+  admittedAt      DateTime  @default(now())
+  dischargedAt    DateTime?
+  outcome         String?   // 'home' | 'transferred' | 'death' | 'lama'
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  babyPatient Patient  @relation("BabyNICU", fields: [babyPatientId], references: [id])
+  nicuBed     NICUBed? @relation(fields: [nicuBedId], references: [id])
+
+  @@index([tenantId, admittedAt])
+  @@index([babyPatientId])
+  @@map("nicu_stays")
+}
+
+// ---- Oncology: chemo protocols + cycle scheduling ----
+
+// Reusable chemotherapy protocol/regimen library (e.g. AC-T for
+// breast cancer, R-CHOP for NHL, FOLFOX for colorectal). Drugs +
+// dose-mg/m² + day-of-cycle live in `drugs` JSON.
+model ChemoProtocol {
+  id          String    @id @default(uuid())
+  tenantId    String
+  name        String    // e.g. 'AC-T (breast adjuvant)'
+  abbreviation String?  // 'AC-T'
+  indication  String    // 'breast_adjuvant' | 'colorectal' | 'nhl' | ...
+  cycleLength Int       // days between cycles (typically 14 or 21)
+  totalCycles Int       // standard course length
+  // Drug list as JSON: [{ drug, doseMgPerSqM, route, day, infusionMin }]
+  drugs       Json
+  premedications Json?
+  notes       String?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  tenant Tenant      @relation(fields: [tenantId], references: [id])
+  cycles ChemoCycle[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, isActive])
+  @@map("chemo_protocols")
+}
+
+// One row per scheduled cycle of a chemo course for a patient. Cycles
+// are numbered (1..totalCycles) and link back to the protocol so the
+// drug list is auditable even if the protocol is later edited.
+model ChemoCycle {
+  id            String    @id @default(uuid())
+  tenantId      String
+  patientId     String
+  protocolId    String
+  cycleNumber   Int       // 1, 2, 3, ...
+  scheduledDate DateTime
+  actualDate    DateTime?
+  // Pre-cycle labs (CBC, RFT, LFT) — JSON snapshot.
+  preLabs       Json?
+  // Per-cycle BSA + dose calculations (JSON: [{drug, dose, unit, given}])
+  bsa           Float?    // body surface area m²
+  doses         Json?
+  // Adverse events / dose reductions / delays for this cycle.
+  toxicities    String?
+  // 'scheduled' | 'completed' | 'delayed' | 'cancelled'
+  status        String    @default("scheduled")
+  notes         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  tenant   Tenant         @relation(fields: [tenantId], references: [id])
+  patient  Patient        @relation(fields: [patientId], references: [id])
+  protocol ChemoProtocol  @relation(fields: [protocolId], references: [id])
+
+  @@index([tenantId, scheduledDate])
+  @@index([patientId, cycleNumber])
+  @@map("chemo_cycles")
+}
+
+// ---- Cardiology: cath lab procedures ----
+
+// Each catheterisation procedure (diagnostic angiography, PCI, stent
+// placement, RFA, device implant, etc.). Implants placed are also
+// captured in the Implant table; this row is the procedural record.
+model CathProcedure {
+  id             String    @id @default(uuid())
+  tenantId       String
+  patientId      String
+  // 'diagnostic_angio' | 'ptca' | 'pci_stent' | 'rfa' | 'pacemaker' |
+  // 'icd' | 'crt' | 'tavr' | 'asd_closure' | 'other'
+  procedureType  String
+  indication     String?
+  approach       String?   // 'radial' | 'femoral' | 'brachial'
+  // Findings + intervention.
+  vesselsInvolved String?  // 'LAD', 'RCA', 'LCx' or multi
+  findings       String?
+  interventionDetails String?
+  // Implants placed (if any) — JSON [{type, manufacturer, model, serial, location}].
+  implants       Json?
+  contrastVolumeMl Int?
+  fluoroscopyMinutes Float?
+  complications  String?
+  // Pre-/post-procedure status.
+  startAt        DateTime?
+  endAt          DateTime?
+  outcome        String?   // 'success' | 'failed' | 'complicated' | 'aborted'
+  cardiologistId String?
+  scrubNurseId   String?
+  notes          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id])
+  patient Patient @relation(fields: [patientId], references: [id])
+
+  @@index([tenantId, startAt])
+  @@index([patientId])
+  @@map("cath_procedures")
+}
+
+// ---- Oncology: radiotherapy ----
+
+// Radiotherapy plan + per-fraction delivery log. Patient typically
+// gets 20-40 fractions over weeks; each delivery is logged here.
+model RadiotherapyPlan {
+  id             String    @id @default(uuid())
+  tenantId       String
+  patientId      String
+  // 'EBRT' | 'IMRT' | 'VMAT' | 'SBRT' | 'brachytherapy'
+  technique      String
+  site           String    // anatomical site — 'breast', 'prostate', 'pelvis', etc.
+  intent         String    // 'curative' | 'palliative' | 'adjuvant' | 'neoadjuvant'
+  totalDoseGy    Float     // total prescribed dose
+  fractions      Int       // number of fractions
+  dosePerFractionGy Float
+  startedAt      DateTime?
+  completedAt    DateTime?
+  // Per-fraction log (JSON: [{fractionNum, deliveredAt, doseGy, machine, notes}])
+  deliveredFractions Json?
+  oncologistId   String?
+  notes          String?
+  status         String    @default("planned") // 'planned' | 'ongoing' | 'completed' | 'cancelled'
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id])
+  patient Patient @relation(fields: [patientId], references: [id])
+
+  @@index([tenantId, status])
+  @@index([patientId])
+  @@map("radiotherapy_plans")
 }

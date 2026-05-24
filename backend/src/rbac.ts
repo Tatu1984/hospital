@@ -849,6 +849,19 @@ export const ROUTE_MODULES: Record<string, Permission[]> = {
   '/mtp-register': ['ipd:view'],
   // PMJAY claim queue is a billing function.
   '/pmjay':        ['billing:view'],
+  // Phase-4 specialty modules.
+  // Obstetrics: pregnancy register + ANC visits live in OPD; labour
+  // partograph is recorded on the ward, so its FE page is gated to IPD.
+  '/pregnancies':  ['opd:view'],
+  '/anc':          ['opd:view'],
+  '/partograph':   ['ipd:view'],
+  // NICU is a neonatal critical-care ward — reuse the ICU permission.
+  '/nicu':         ['icu:view'],
+  // Oncology day-care (chemo) and cath-lab/radiotherapy are IPD-grade
+  // procedures performed under in-patient context.
+  '/chemo':        ['ipd:view'],
+  '/cath-lab':     ['ipd:view'],
+  '/radiotherapy': ['ipd:view'],
   '/billing': ['billing:view'],
   '/ipd-billing': ['billing:view'],
   '/referral-commission': ['commissions:view'],

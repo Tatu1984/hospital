@@ -89,6 +89,8 @@ export const rolePermissions: Record<Role, string[]> = {
     'implants', 'hai-surveillance', 'mnm-reviews',
     // Phase-3 India statutory registers + PMJAY.
     'form-f', 'mtp-register', 'pmjay',
+    // Phase-4 specialty modules — doctor has access across specialties.
+    'obstetrics', 'nicu', 'chemo', 'cath-lab', 'radiotherapy',
   ],
 
   // NURSE - Patient care focus
@@ -97,6 +99,8 @@ export const rolePermissions: Record<Role, string[]> = {
     'laboratory', 'radiology', 'pharmacy', 'diet', 'blood-bank', 'birth-records', 'consultations',
     // Nurses log biomedical waste on every shift.
     'bmw-tracking',
+    // Phase-4 — nursing duties cover ANC visits and NICU bedside care.
+    'obstetrics', 'nicu',
   ],
 
   // FRONT_OFFICE - Registration & Appointments
@@ -235,6 +239,8 @@ export const rolePermissions: Record<Role, string[]> = {
     'implants', 'hai-surveillance', 'mnm-reviews', 'nabh-dashboard', 'bmw-tracking',
     // Phase-3 — CMO signs Form-F and MTP and approves PMJAY claims.
     'form-f', 'mtp-register', 'pmjay',
+    // Phase-4 — CMO oversees specialty programs.
+    'obstetrics', 'nicu', 'chemo', 'cath-lab', 'radiotherapy',
   ],
 
   // NURSING_DIRECTOR (CNO) — nursing operations + ward management.
