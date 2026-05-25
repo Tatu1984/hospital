@@ -28,6 +28,7 @@ import {
 } from 'recharts';
 import api from '../services/api';
 import { useToast } from '../components/Toast';
+import MrnLink from '../components/MrnLink';
 
 interface PatientLite { id: string; mrn: string; name: string }
 
@@ -335,7 +336,7 @@ export default function HAISurveillance() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-medium text-slate-900 truncate">{c.patient?.name || '—'}</span>
-                          <span className="text-[10px] text-slate-500 font-mono">{c.patient?.mrn}</span>
+                          <MrnLink mrn={c.patient?.mrn} patientId={c.patient?.id} />
                           <Badge variant="outline" className={`text-[10px] font-normal ${t?.tint || ''}`}>{t?.label || c.infectionType}</Badge>
                           {isolationActive && <Badge variant="outline" className="text-[10px] font-normal bg-orange-50 text-orange-700 border-orange-200">isolation</Badge>}
                           {o && <Badge variant="outline" className={`text-[10px] font-normal ${o.tint}`}>{o.label}</Badge>}

@@ -38,6 +38,7 @@ import {
 } from 'recharts';
 import api from '../services/api';
 import { useToast } from '../components/Toast';
+import MrnLink from '../components/MrnLink';
 
 // -------------------- types --------------------
 
@@ -782,7 +783,7 @@ function PregnancyList({ rows, loading, onAnc, onPartograph, emptyHint }: {
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="font-medium text-slate-900 truncate">{p.patient.name}</span>
-                <span className="text-xs text-slate-500">{p.patient.mrn}</span>
+                <MrnLink mrn={p.patient.mrn} patientId={p.patient.id} />
                 <Badge variant="outline" className={`text-[10px] font-normal ${STATUS_TINTS[p.status] || ''}`}>
                   {p.status.replace('_', ' ')}
                 </Badge>

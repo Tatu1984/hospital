@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Receipt, DollarSign, Printer, Trash2, AlertCircle, CheckCircle, Clock, CreditCard, BedDouble, LogOut } from 'lucide-react';
 import api from '../services/api';
 import { payInvoiceWithRazorpay } from '../services/razorpayCheckout';
+import MrnLink from '../components/MrnLink';
 
 interface IPDAdmission {
   id: string;
@@ -543,7 +544,9 @@ export default function IPDBilling() {
                       <TableCell className="font-medium">{admission.admissionId}</TableCell>
                       <TableCell>
                         {admission.patientName}
-                        <div className="text-xs text-slate-500">{admission.patientMRN}</div>
+                        <div className="text-xs text-slate-500 mt-0.5">
+                          <MrnLink mrn={admission.patientMRN} patientId={admission.patientId} />
+                        </div>
                       </TableCell>
                       <TableCell>
                         {admission.wardName} - {admission.bedNumber}

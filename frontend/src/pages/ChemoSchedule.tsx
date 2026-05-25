@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import api from '../services/api';
 import { useToast } from '../components/Toast';
+import MrnLink from '../components/MrnLink';
 
 // -------------------- types --------------------
 
@@ -464,7 +465,7 @@ export default function ChemoSchedule() {
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-2 flex-wrap">
                                     <span className="font-medium text-slate-900 truncate">{c.patient?.name || 'Unknown patient'}</span>
-                                    <span className="text-xs text-slate-500">{c.patient?.mrn}</span>
+                                    <MrnLink mrn={c.patient?.mrn} patientId={c.patient?.id} />
                                     {proto && (
                                       <Badge variant="outline" className="text-[10px] font-normal bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200">
                                         {proto.abbreviation || proto.name}

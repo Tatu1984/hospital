@@ -37,6 +37,7 @@ import api from '../services/api';
 import { useToast } from '../components/Toast';
 import { generateBirthCertificatePDF } from '../utils/pdfGenerator';
 import PdfPreviewDialog, { PdfDoc } from '../components/PdfPreviewDialog';
+import MrnLink from '../components/MrnLink';
 
 interface PatientLite {
   id: string;
@@ -457,7 +458,16 @@ export default function BirthRecords() {
                           )}
                         </div>
                         <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-3 flex-wrap">
-                          <span>Mother: <span className="text-slate-700">{r.motherPatient?.name || '—'}</span> · {r.motherPatient?.mrn}</span>
+                          <span className="flex items-center gap-1.5">
+                            Mother: <span className="text-slate-700">{r.motherPatient?.name || '—'}</span>
+                            <MrnLink mrn={r.motherPatient?.mrn} patientId={r.motherPatient?.id} />
+                          </span>
+                          {r.babyPatient && (
+                            <span className="flex items-center gap-1.5">
+                              Baby:
+                              <MrnLink mrn={r.babyPatient.mrn} patientId={r.babyPatient.id} />
+                            </span>
+                          )}
                           <span>{new Date(r.birthDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })} · {new Date(r.birthDate).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</span>
                           {r.weightGrams && <span className="flex items-center gap-1"><Weight className="w-3 h-3" /> {r.weightGrams} g</span>}
                           {r.apgar1Min !== null && r.apgar1Min !== undefined && <span>APGAR {r.apgar1Min}/{r.apgar5Min ?? '—'}</span>}
@@ -493,9 +503,14 @@ export default function BirthRecords() {
                   </div>
                   <div>
                     <SheetTitle>{detail.babyName || '(unnamed newborn)'}</SheetTitle>
-                    <SheetDescription>
-                      {new Date(detail.birthDate).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
-                      {detail.babyPatient?.mrn && ` · ${detail.babyPatient.mrn}`}
+                    <SheetDescription className="flex items-center gap-1.5 flex-wrap">
+                      <span>{new Date(detail.birthDate).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</span>
+                      {detail.babyPatient && (
+                        <>
+                          <span>·</span>
+                          <MrnLink mrn={detail.babyPatient.mrn} patientId={detail.babyPatient.id} stopPropagation={false} />
+                        </>
+                      )}
                     </SheetDescription>
                   </div>
                 </div>
@@ -513,7 +528,7 @@ export default function BirthRecords() {
                 </DetailGroup>
                 <DetailGroup title="Mother">
                   <Kv k="Name" v={detail.motherPatient?.name} />
-                  <Kv k="MRN" v={detail.motherPatient?.mrn} />
+                  <Kv k="MRN" v={<MrnLink mrn={detail.motherPatient?.mrn} patientId={detail.motherPatient?.id} stopPropagation={false} />} />
                   <Kv k="Age at birth" v={detail.motherAgeAtBirth ? `${detail.motherAgeAtBirth} yrs` : '—'} />
                   <Kv k="Occupation" v={detail.motherOccupation} />
                   <Kv k="Address" v={detail.parentsAddress || detail.motherPatient?.address} />

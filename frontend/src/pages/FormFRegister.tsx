@@ -34,6 +34,7 @@ import api from '../services/api';
 import { useToast } from '../components/Toast';
 import { generateFormFPDF } from '../utils/pdfGenerator';
 import PdfPreviewDialog, { type PdfDoc } from '../components/PdfPreviewDialog';
+import MrnLink from '../components/MrnLink';
 
 interface PatientLite {
   id: string;
@@ -390,6 +391,9 @@ export default function FormFRegister() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-medium text-slate-900 truncate">{r.patientName}</span>
+                          {r.patientId && r.patient?.mrn && (
+                            <MrnLink mrn={r.patient.mrn} patientId={r.patientId} />
+                          )}
                           <span className="text-xs text-slate-500 tabular-nums">{r.patientAge} yrs</span>
                           <span className="text-xs text-slate-500">· w/o {r.patientHusbandOrFather}</span>
                           <Badge variant="outline" className={`text-[10px] font-normal ${ind?.tint || ''}`}>{ind?.label || r.indication}</Badge>

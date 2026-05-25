@@ -25,6 +25,7 @@ import {
 import { Activity, Plus, Play, CheckCircle, Zap } from 'lucide-react';
 import api from '../services/api';
 import { useToast } from '../components/Toast';
+import MrnLink from '../components/MrnLink';
 
 // -------------------- types --------------------
 
@@ -385,7 +386,9 @@ export default function Radiotherapy() {
                             <div className="flex items-start justify-between gap-2">
                               <div className="min-w-0">
                                 <CardTitle className="text-base truncate">{p.patient?.name || 'Unknown patient'}</CardTitle>
-                                <p className="text-xs text-slate-500 mt-0.5">{p.patient?.mrn}</p>
+                                <p className="text-xs text-slate-500 mt-0.5">
+                                  <MrnLink mrn={p.patient?.mrn} patientId={p.patient?.id} />
+                                </p>
                               </div>
                               <Badge variant="outline" className={`text-[10px] font-normal ${TECHNIQUE_TINTS[p.technique] || ''}`}>
                                 {p.technique.toUpperCase()}

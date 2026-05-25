@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AlertCircle, Pill, Heart, Plus, Activity, Users, Stethoscope, UserCheck } from 'lucide-react';
 import api from '../services/api';
+import MrnLink from '../components/MrnLink';
 
 interface Patient {
   id: string;
@@ -555,7 +556,9 @@ export default function NurseStation() {
                   ) : (
                     patients.map(patient => (
                       <TableRow key={patient.id}>
-                        <TableCell className="font-medium">{patient.mrn}</TableCell>
+                        <TableCell className="font-medium">
+                          <MrnLink mrn={patient.mrn} patientId={patient.id} />
+                        </TableCell>
                         <TableCell>{patient.name}</TableCell>
                         <TableCell>{patient.wardName}</TableCell>
                         <TableCell>{patient.bedNumber}</TableCell>

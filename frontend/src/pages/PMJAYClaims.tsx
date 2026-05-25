@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import api from '../services/api';
 import { useToast } from '../components/Toast';
+import MrnLink from '../components/MrnLink';
 
 interface PatientLite { id: string; mrn: string; name: string }
 
@@ -358,7 +359,10 @@ export default function PMJAYClaims() {
           {actionTarget && (
             <div className="space-y-3 py-2">
               <div className="text-sm text-slate-600 bg-slate-50 rounded-xl p-3">
-                <div className="font-medium text-slate-900">{actionTarget.claim.patient?.name || 'Patient'} — {actionTarget.claim.patient?.mrn}</div>
+                <div className="font-medium text-slate-900 flex items-center gap-2">
+                  <span>{actionTarget.claim.patient?.name || 'Patient'}</span>
+                  <MrnLink mrn={actionTarget.claim.patient?.mrn} patientId={actionTarget.claim.patient?.id} />
+                </div>
                 <div className="text-xs text-slate-500 mt-0.5">
                   {actionTarget.claim.packageCode} · {actionTarget.claim.packageName} · {inr(actionTarget.claim.packageAmount)}
                 </div>
@@ -443,7 +447,10 @@ function ClaimCard({ claim, onAction }: { claim: PMJAYClaim; onAction: (c: PMJAY
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="text-sm font-medium text-slate-900 truncate">{claim.patient?.name || 'Patient'}</div>
-          <div className="text-[11px] text-slate-500 truncate">{claim.patient?.mrn} · PMJAY {claim.pmjayId}</div>
+          <div className="text-[11px] text-slate-500 truncate flex items-center gap-1.5">
+            <MrnLink mrn={claim.patient?.mrn} patientId={claim.patient?.id} />
+            <span>· PMJAY {claim.pmjayId}</span>
+          </div>
         </div>
       </div>
       <div className="mt-2 text-[11px] text-slate-600 truncate" title={claim.packageName}>

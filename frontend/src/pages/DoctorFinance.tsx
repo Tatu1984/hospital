@@ -25,6 +25,7 @@ import {
   Banknote,
 } from 'lucide-react';
 import api from '../services/api';
+import MrnLink from '../components/MrnLink';
 
 interface FinancePeriod {
   windowStart: string;
@@ -299,8 +300,9 @@ function RevenuesList({ revenues }: { revenues: RevenueLine[] }) {
               <Receipt className="w-4 h-4 text-slate-500" />
             </div>
             <div className="flex-1 min-w-0">
-              <div className="font-medium text-slate-900 truncate">
-                {r.patientName || 'Patient'} {r.mrn && <span className="text-xs text-slate-500">• MRN {r.mrn}</span>}
+              <div className="font-medium text-slate-900 truncate flex items-center gap-2">
+                <span className="truncate">{r.patientName || 'Patient'}</span>
+                <MrnLink mrn={r.mrn} patientId={r.patientId} />
               </div>
               <div className="text-xs text-slate-500">
                 {r.revenueType} • {r.invoiceType || 'invoice'} • {fmtDateTime(r.createdAt)}

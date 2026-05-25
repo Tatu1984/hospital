@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AlertCircle, UserPlus, Clock, Activity, AlertTriangle, CheckCircle2, Bed, FileText, Shield } from 'lucide-react';
 import api from '../services/api';
+import MrnLink from '../components/MrnLink';
 
 interface EmergencyCase {
   id: string;
@@ -359,7 +360,9 @@ export default function Emergency() {
                               {c.patientName}
                               {c.isMLC && <Shield className="w-4 h-4 text-purple-600" />}
                             </div>
-                            <div className="text-xs text-slate-500">{c.patientMRN}</div>
+                            <div className="text-xs text-slate-500">
+                              <MrnLink mrn={c.patientMRN} patientId={c.patientId} />
+                            </div>
                           </div>
                         </TableCell>
                         <TableCell>{c.age}/{c.gender}</TableCell>
@@ -420,7 +423,9 @@ export default function Emergency() {
                         <TableCell>{c.waitingTime}</TableCell>
                         <TableCell>
                           <div className="font-medium">{c.patientName}</div>
-                          <div className="text-xs text-slate-500">{c.patientMRN}</div>
+                          <div className="text-xs text-slate-500">
+                            <MrnLink mrn={c.patientMRN} patientId={c.patientId} />
+                          </div>
                         </TableCell>
                         <TableCell>{c.chiefComplaint}</TableCell>
                         <TableCell>
@@ -730,7 +735,9 @@ export default function Emergency() {
                 </div>
                 <div>
                   <Label className="text-sm text-slate-500">MRN</Label>
-                  <div className="font-medium">{selectedCase.patientMRN}</div>
+                  <div className="font-medium">
+                    <MrnLink mrn={selectedCase.patientMRN} patientId={selectedCase.patientId} />
+                  </div>
                 </div>
                 <div>
                   <Label className="text-sm text-slate-500">Age / Gender</Label>

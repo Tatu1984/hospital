@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Droplet, UserPlus, Package, AlertTriangle, CheckCircle, Clock, Users, Plus } from 'lucide-react';
 import api from '../services/api';
+import MrnLink from '../components/MrnLink';
 
 interface BloodInventory {
   id: string;
@@ -644,7 +645,9 @@ export default function BloodBank() {
                         <TableCell>
                           <div>
                             <div className="font-medium">{request.patientName}</div>
-                            <div className="text-xs text-slate-500">{request.patientMRN}</div>
+                            <div className="text-xs mt-0.5">
+                              <MrnLink mrn={request.patientMRN} patientId={request.patientId} />
+                            </div>
                           </div>
                         </TableCell>
                         <TableCell><Badge variant="outline">{request.bloodType}</Badge></TableCell>
@@ -682,6 +685,7 @@ export default function BloodBank() {
                   <TableRow>
                     <TableHead>Date</TableHead>
                     <TableHead>Patient</TableHead>
+                    <TableHead>MRN</TableHead>
                     <TableHead>Blood Type</TableHead>
                     <TableHead>Units</TableHead>
                     <TableHead>Status</TableHead>
@@ -691,7 +695,7 @@ export default function BloodBank() {
                 <TableBody>
                   {requests.filter(r => r.urgency === 'EMERGENCY' && r.status !== 'ISSUED').length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-8 text-slate-500">
+                      <TableCell colSpan={7} className="text-center py-8 text-slate-500">
                         No emergency requests
                       </TableCell>
                     </TableRow>
@@ -700,6 +704,7 @@ export default function BloodBank() {
                       <TableRow key={request.id} className="bg-red-50">
                         <TableCell>{request.requestedDate}</TableCell>
                         <TableCell>{request.patientName}</TableCell>
+                        <TableCell><MrnLink mrn={request.patientMRN} patientId={request.patientId} /></TableCell>
                         <TableCell><Badge className="bg-red-600">{request.bloodType}</Badge></TableCell>
                         <TableCell className="font-semibold">{request.unitsRequested}</TableCell>
                         <TableCell>{getStatusBadge(request.status)}</TableCell>
@@ -725,6 +730,7 @@ export default function BloodBank() {
                   <TableRow>
                     <TableHead>Date</TableHead>
                     <TableHead>Patient</TableHead>
+                    <TableHead>MRN</TableHead>
                     <TableHead>Blood Type</TableHead>
                     <TableHead>Component</TableHead>
                     <TableHead>Units</TableHead>
@@ -735,7 +741,7 @@ export default function BloodBank() {
                 <TableBody>
                   {requests.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-8 text-slate-500">
+                      <TableCell colSpan={8} className="text-center py-8 text-slate-500">
                         No blood requests found
                       </TableCell>
                     </TableRow>
@@ -744,6 +750,7 @@ export default function BloodBank() {
                       <TableRow key={request.id}>
                         <TableCell>{request.requestedDate}</TableCell>
                         <TableCell>{request.patientName}</TableCell>
+                        <TableCell><MrnLink mrn={request.patientMRN} patientId={request.patientId} /></TableCell>
                         <TableCell><Badge variant="outline">{request.bloodType}</Badge></TableCell>
                         <TableCell>{request.component}</TableCell>
                         <TableCell>{request.unitsRequested}</TableCell>
@@ -1145,7 +1152,9 @@ export default function BloodBank() {
                 <div>
                   <Label className="text-sm text-slate-500">Patient</Label>
                   <div className="font-medium">{selectedRequest.patientName}</div>
-                  <div className="text-sm text-slate-500">{selectedRequest.patientMRN}</div>
+                  <div className="text-sm mt-0.5">
+                    <MrnLink mrn={selectedRequest.patientMRN} patientId={selectedRequest.patientId} />
+                  </div>
                 </div>
                 <div>
                   <Label className="text-sm text-slate-500">Blood Type</Label>

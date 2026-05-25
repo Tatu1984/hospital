@@ -12,6 +12,7 @@ import { Plus, TestTube, Barcode, CheckCircle, FileText, Clock, Activity } from 
 import api from '../services/api';
 import { generateLabReportPDF } from '../utils/pdfGenerator';
 import PdfPreviewDialog, { type PdfDoc } from '../components/PdfPreviewDialog';
+import MrnLink from '../components/MrnLink';
 
 interface LabOrder {
   id: string;
@@ -443,7 +444,7 @@ export default function Laboratory() {
                       <TableRow key={order.id}>
                         <TableCell className="font-medium">{order.orderId}</TableCell>
                         <TableCell>{order.patientName}</TableCell>
-                        <TableCell>{order.patientMRN}</TableCell>
+                        <TableCell><MrnLink mrn={order.patientMRN} patientId={order.patientId} /></TableCell>
                         <TableCell>
                           <div className="text-sm">
                             {order.details?.tests?.length || 0} test(s)
@@ -539,7 +540,7 @@ export default function Laboratory() {
                     <TableRow key={order.id}>
                       <TableCell className="font-medium">{order.orderId}</TableCell>
                       <TableCell>{order.patientName}</TableCell>
-                      <TableCell>{order.patientMRN}</TableCell>
+                      <TableCell><MrnLink mrn={order.patientMRN} patientId={order.patientId} /></TableCell>
                       <TableCell>{order.details?.tests?.length || 0} test(s)</TableCell>
                       <TableCell>
                         <Badge variant={getPriorityColor(order.priority)}>
@@ -585,6 +586,7 @@ export default function Laboratory() {
                   <TableRow>
                     <TableHead>Order ID</TableHead>
                     <TableHead>Patient</TableHead>
+                    <TableHead>MRN</TableHead>
                     <TableHead>Tests</TableHead>
                     <TableHead>Actions</TableHead>
                   </TableRow>
@@ -594,6 +596,7 @@ export default function Laboratory() {
                     <TableRow key={order.id}>
                       <TableCell className="font-medium">{order.orderId}</TableCell>
                       <TableCell>{order.patientName}</TableCell>
+                      <TableCell><MrnLink mrn={order.patientMRN} patientId={order.patientId} /></TableCell>
                       <TableCell>{order.details?.tests?.length || 0} test(s)</TableCell>
                       <TableCell>
                         <div className="flex gap-2">
@@ -626,6 +629,7 @@ export default function Laboratory() {
                   <TableRow>
                     <TableHead>Order ID</TableHead>
                     <TableHead>Patient</TableHead>
+                    <TableHead>MRN</TableHead>
                     <TableHead>Tests</TableHead>
                     <TableHead>Completed</TableHead>
                     <TableHead>Actions</TableHead>
@@ -636,6 +640,7 @@ export default function Laboratory() {
                     <TableRow key={order.id}>
                       <TableCell className="font-medium">{order.orderId}</TableCell>
                       <TableCell>{order.patientName}</TableCell>
+                      <TableCell><MrnLink mrn={order.patientMRN} patientId={order.patientId} /></TableCell>
                       <TableCell>{order.details?.tests?.length || 0} test(s)</TableCell>
                       <TableCell>{order.orderedAt}</TableCell>
                       <TableCell>

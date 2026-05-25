@@ -17,6 +17,7 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Search, UserPlus, Activity, Users, Bed, Stethoscope, Droplet } from 'lucide-react';
 import api from '../services/api';
+import MrnLink from '../components/MrnLink';
 
 type AdmissionFilter = 'all' | 'ipd' | 'opd' | 'dialysis';
 
@@ -237,7 +238,7 @@ export default function PatientsList() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-medium text-slate-900 truncate">{p.name}</span>
-                          <span className="text-[11px] text-slate-500 font-mono bg-slate-100 px-1.5 py-0.5 rounded">{p.mrn}</span>
+                          <MrnLink mrn={p.mrn} patientId={p.id} />
                           {p.activeAdmission && (
                             <span className="text-[10px] inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100 uppercase tracking-wider font-medium">
                               <Activity className="w-2.5 h-2.5" /> Admitted

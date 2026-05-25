@@ -15,6 +15,7 @@ import { WARD_CATEGORIES, IPD_WARD_TYPES, CRITICAL_CARE_TYPES, labelFor } from '
 import DischargeSummaryDialog from '../components/DischargeSummaryDialog';
 import MedicationReconciliationPanel from '../components/MedicationReconciliationPanel';
 import NpsDialog from '../components/NpsDialog';
+import MrnLink from '../components/MrnLink';
 
 interface Admission {
   id: string;
@@ -654,7 +655,7 @@ export default function Inpatient() {
                                   <div className="space-y-1">
                                     <div className="font-medium text-sm">{admission.patientName}</div>
                                     <div className="text-xs text-slate-500">
-                                      {admission.patientMRN}
+                                      <MrnLink mrn={admission.patientMRN} patientId={admission.patientId} />
                                     </div>
                                     {admission.diagnosis && (
                                       <div className="text-xs text-slate-600 line-clamp-2 mt-1">
@@ -713,10 +714,11 @@ export default function Inpatient() {
                     <div className="flex justify-between items-start gap-4">
                       <div className="flex-1 min-w-0">
                         <div className="font-medium text-slate-900">{adm.patientName || '—'}</div>
-                        <div className="text-xs text-slate-500">
-                          MRN: {adm.patientMRN || '—'}
-                          {adm.patientAge != null && ` · ${adm.patientAge}y`}
-                          {adm.patientGender && ` · ${adm.patientGender}`}
+                        <div className="text-xs text-slate-500 flex items-center gap-1 flex-wrap">
+                          <span>MRN:</span>
+                          <MrnLink mrn={adm.patientMRN} patientId={adm.patientId} />
+                          {adm.patientAge != null && <span>· {adm.patientAge}y</span>}
+                          {adm.patientGender && <span>· {adm.patientGender}</span>}
                         </div>
                         <div className="text-xs text-slate-500 mt-0.5">
                           Admitted: {adm.admissionDate} · By: {adm.admittingDoctor}
@@ -837,7 +839,10 @@ export default function Inpatient() {
                   <div>
                     <Label className="text-sm text-slate-500">Patient</Label>
                     <div className="font-medium">{selectedBed.admission.patientName}</div>
-                    <div className="text-xs text-slate-500">MRN: {selectedBed.admission.patientMRN}</div>
+                    <div className="text-xs text-slate-500 flex items-center gap-1">
+                      <span>MRN:</span>
+                      <MrnLink mrn={selectedBed.admission.patientMRN} patientId={selectedBed.admission.patientId} />
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>

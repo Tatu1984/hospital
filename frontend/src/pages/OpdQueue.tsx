@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import api from '../services/api';
 import { useToast } from '../components/Toast';
+import MrnLink from '../components/MrnLink';
 
 interface QueueRow {
   id: string;
@@ -199,8 +200,9 @@ function QueueCard({ row, onAction }: { row: QueueRow; onAction: (a: 'call' | 's
           </div>
           <div className="min-w-0 flex-1">
             <div className="font-medium text-slate-900 text-sm truncate">{row.patientName}</div>
-            <div className="text-[11px] text-slate-500 truncate">
-              {row.patientMRN || '—'} {row.doctorName && `· Dr. ${row.doctorName}`}
+            <div className="text-[11px] text-slate-500 truncate flex items-center gap-1 flex-wrap">
+              <MrnLink mrn={row.patientMRN} patientId={row.patientId} />
+              {row.doctorName && <span>· Dr. {row.doctorName}</span>}
             </div>
           </div>
         </div>

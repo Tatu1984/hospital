@@ -12,6 +12,7 @@ import api from '../services/api';
 import { useToast } from '../components/Toast';
 import { toArray } from '../utils/list';
 import { DoctorLabel } from '../components/DoctorLabel';
+import MrnLink from '../components/MrnLink';
 
 interface OpdAppointment {
   id: string;
@@ -132,6 +133,8 @@ export default function OPD() {
   // creation yet — that's a larger workflow refactor (next session).
   const encounters = filtered.map((a, i) => ({
     id: a.id,
+    patientId: a.patient?.id || a.patientId || null,
+    patientMrn: a.patient?.mrn || null,
     patientName: a.patient?.name || '—',
     doctorId: a.doctor?.id || a.doctorId || null,
     doctorName: a.doctor?.name || 'Unassigned',
@@ -329,6 +332,7 @@ export default function OPD() {
               <TableRow>
                 <TableHead>Token / Time</TableHead>
                 <TableHead>Patient</TableHead>
+                <TableHead>MRN</TableHead>
                 <TableHead>Doctor</TableHead>
                 <TableHead>Chief Complaint</TableHead>
                 <TableHead>Status</TableHead>
@@ -337,9 +341,9 @@ export default function OPD() {
             </TableHeader>
             <TableBody>
               {loading ? (
-                <TableRow><TableCell colSpan={6} className="py-10 text-center text-slate-500">Loading appointments…</TableCell></TableRow>
+                <TableRow><TableCell colSpan={7} className="py-10 text-center text-slate-500">Loading appointments…</TableCell></TableRow>
               ) : encounters.length === 0 ? (
-                <TableRow><TableCell colSpan={6} className="py-10 text-center text-slate-500">
+                <TableRow><TableCell colSpan={7} className="py-10 text-center text-slate-500">
                   {viewMode === 'upcoming'
                     ? 'No upcoming appointments in the next 30 days.'
                     : pickedDate === todayStr
@@ -355,6 +359,9 @@ export default function OPD() {
                 <TableRow key={encounter.id}>
                   <TableCell className="font-medium">{encounter.tokenNumber}</TableCell>
                   <TableCell>{encounter.patientName}</TableCell>
+                  <TableCell>
+                    <MrnLink mrn={encounter.patientMrn} patientId={encounter.patientId} />
+                  </TableCell>
                   <TableCell>
                     <DoctorLabel doctorId={encounter.doctorId} fallbackName={encounter.doctorName} mode="stacked" />
                   </TableCell>

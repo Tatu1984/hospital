@@ -36,6 +36,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import api from '../services/api';
+import MrnLink from '../components/MrnLink';
 
 interface IpdPatient {
   admissionId: string;
@@ -319,10 +320,13 @@ function OpdSection({ data, onPatientClick }: { data: DashboardData; onPatientCl
                 <div className="text-[10px] text-slate-400 uppercase mt-0.5">{a.status}</div>
               </div>
               <div className="flex-1 min-w-0">
-                <div className="font-medium text-slate-900 truncate">{a.patientName}</div>
-                <div className="text-xs text-slate-500 truncate">
-                  {a.mrn ? `MRN ${a.mrn}` : ''}{a.reason ? ` • ${a.reason}` : ''}
+                <div className="font-medium text-slate-900 truncate flex items-center gap-2">
+                  <span className="truncate">{a.patientName}</span>
+                  <MrnLink mrn={a.mrn} patientId={a.patientId} />
                 </div>
+                {a.reason && (
+                  <div className="text-xs text-slate-500 truncate">{a.reason}</div>
+                )}
               </div>
               <ChevronRight className="w-4 h-4 text-slate-400" />
             </button>
@@ -397,7 +401,10 @@ function PendingOrdersSection({ items, title, emptyText, onPatientClick }: {
                 {o.category === 'radiology' ? <Scan className="w-5 h-5 text-purple-600" /> : <FlaskConical className="w-5 h-5 text-cyan-600" />}
               </div>
               <div className="flex-1 min-w-0">
-                <div className="font-medium text-slate-900 truncate">{o.patientName} <span className="text-xs text-slate-500">• MRN {o.mrn}</span></div>
+                <div className="font-medium text-slate-900 truncate flex items-center gap-2">
+                  <span className="truncate">{o.patientName}</span>
+                  <MrnLink mrn={o.mrn} patientId={o.patientId} />
+                </div>
                 <div className="text-xs text-slate-500 truncate">{o.summary}</div>
                 <div className="text-[10px] text-slate-400 mt-0.5">Ordered {new Date(o.orderedAt).toLocaleString()} • {o.priority}</div>
               </div>
@@ -423,9 +430,12 @@ function PatientRow({ p, onClick }: { p: IpdPatient; onClick?: () => void }) {
         </div>
       )}
       <div className="flex-1 min-w-0">
-        <div className="font-medium text-slate-900 truncate">{p.patientName}</div>
+        <div className="font-medium text-slate-900 truncate flex items-center gap-2">
+          <span className="truncate">{p.patientName}</span>
+          <MrnLink mrn={p.mrn} patientId={p.patientId} />
+        </div>
         <div className="text-xs text-slate-500 truncate">
-          MRN {p.mrn || '—'} • Day {p.daysInWard} {p.diagnosis ? `• ${p.diagnosis}` : ''}
+          Day {p.daysInWard}{p.diagnosis ? ` • ${p.diagnosis}` : ''}
         </div>
       </div>
       <Clock className="w-4 h-4 text-slate-400" />

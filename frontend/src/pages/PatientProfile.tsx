@@ -87,6 +87,8 @@ interface ChartPatient {
   abhaNumber?: string | null;
   abhaAddress?: string | null;
   abhaLinkedAt?: string | null;
+  abhaVerifiedAt?: string | null;
+  abhaVerifyMethod?: string | null;
 }
 interface IPDNote {
   id: string;
@@ -2368,10 +2370,20 @@ function formatAbha(num?: string | null): string {
 
 function AbhaCard({ patient, onChanged }: { patient: ChartPatient; onChanged: () => void | Promise<void> }) {
   const [linkOpen, setLinkOpen] = useState(false);
+  const [verifyOpen, setVerifyOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [events, setEvents] = useState<AbdmEvent[] | null>(null);
+  const [gatewayStatus, setGatewayStatus] = useState<{ configured: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
   const toast = useToast();
+
+  // Fetch the gateway config status once. Controls whether the
+  // "Verify with OTP" button is enabled — if the deployment hasn't
+  // wired ABDM credentials, we surface that fact instead of letting
+  // the user click into a dead end.
+  useEffect(() => {
+    api.get('/api/abdm/status').then(r => setGatewayStatus(r.data)).catch(() => setGatewayStatus({ configured: false }));
+  }, []);
 
   async function loadEvents() {
     try {
@@ -2397,31 +2409,61 @@ function AbhaCard({ patient, onChanged }: { patient: ChartPatient; onChanged: ()
   }
 
   const isLinked = !!patient.abhaNumber;
+  const isVerified = !!patient.abhaVerifiedAt;
 
   return (
     <Card className="rounded-2xl border-slate-200/70">
       <CardContent className="p-5">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-emerald-50 ring-1 ring-emerald-100 flex items-center justify-center">
-              <ShieldAlert className="w-5 h-5 text-emerald-600" />
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${isVerified ? 'bg-emerald-50 ring-1 ring-emerald-100' : isLinked ? 'bg-amber-50 ring-1 ring-amber-100' : 'bg-slate-100 ring-1 ring-slate-200'}`}>
+              <ShieldAlert className={`w-5 h-5 ${isVerified ? 'text-emerald-600' : isLinked ? 'text-amber-600' : 'text-slate-600'}`} />
             </div>
             <div>
-              <div className="text-sm font-semibold text-slate-900">ABHA — Ayushman Bharat Health Account</div>
+              <div className="text-sm font-semibold text-slate-900 flex items-center gap-2 flex-wrap">
+                ABHA — Ayushman Bharat Health Account
+                {isLinked && (
+                  isVerified
+                    ? <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 font-semibold">verified</span>
+                    : <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 ring-1 ring-amber-300 font-semibold">unverified — not OTP-confirmed</span>
+                )}
+              </div>
               <div className="text-xs text-slate-500">National Digital Health Mission (ABDM) link</div>
             </div>
           </div>
-          {isLinked ? (
-            <Button variant="outline" size="sm" onClick={unlink} disabled={busy} className="rounded-lg">
-              {busy ? 'Working…' : 'Unlink'}
-            </Button>
-          ) : (
-            <Button size="sm" onClick={() => setLinkOpen(true)} className="rounded-lg bg-slate-900 hover:bg-slate-800">
-              Link ABHA
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            {isLinked && !isVerified && (
+              <Button
+                size="sm"
+                onClick={() => setVerifyOpen(true)}
+                disabled={busy}
+                className="rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white"
+                title={gatewayStatus?.configured === false ? 'ABDM gateway not configured on this deployment — verification will return 503 until credentials are added' : 'Send OTP to the patient\'s registered mobile and confirm ABHA'}
+              >
+                Verify with OTP
+              </Button>
+            )}
+            {isLinked ? (
+              <Button variant="outline" size="sm" onClick={unlink} disabled={busy} className="rounded-lg">
+                {busy ? 'Working…' : 'Unlink'}
+              </Button>
+            ) : (
+              <Button size="sm" onClick={() => setLinkOpen(true)} className="rounded-lg bg-slate-900 hover:bg-slate-800">
+                Link ABHA
+              </Button>
+            )}
+          </div>
         </div>
 
+        {isLinked && !isVerified && (
+          <div className="mt-3 p-3 rounded-lg bg-amber-50/80 border border-amber-200 text-[12px] text-amber-800">
+            <strong className="font-semibold">This ABHA hasn't been verified.</strong>{' '}
+            The number was recorded by staff but never confirmed against the NHA gateway.
+            {gatewayStatus?.configured === false
+              ? ' This deployment hasn\'t configured the ABDM gateway credentials yet — once they\'re added, click Verify with OTP to confirm.'
+              : ' Click Verify with OTP to send the patient a one-time code from the NHA gateway and confirm ownership.'}
+          </div>
+        )}
         {isLinked ? (
           <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
             <div>
@@ -2433,8 +2475,11 @@ function AbhaCard({ patient, onChanged }: { patient: ChartPatient; onChanged: ()
               <div className="text-slate-900 truncate" title={patient.abhaAddress || ''}>{patient.abhaAddress || '—'}</div>
             </div>
             <div>
-              <div className="text-[11px] uppercase tracking-wide text-slate-500">Linked at</div>
-              <div className="text-slate-900">{patient.abhaLinkedAt ? fmtDateTime(patient.abhaLinkedAt) : '—'}</div>
+              <div className="text-[11px] uppercase tracking-wide text-slate-500">{isVerified ? 'Verified at' : 'Linked at'}</div>
+              <div className="text-slate-900">{(isVerified ? patient.abhaVerifiedAt : patient.abhaLinkedAt) ? fmtDateTime(isVerified ? patient.abhaVerifiedAt! : patient.abhaLinkedAt!) : '—'}</div>
+              {isVerified && patient.abhaVerifyMethod && (
+                <div className="text-[10px] text-slate-500 uppercase tracking-wider mt-0.5">via {patient.abhaVerifyMethod.replace('_', ' ')}</div>
+              )}
             </div>
             <div className="md:col-span-3 mt-1">
               <button
@@ -2479,7 +2524,181 @@ function AbhaCard({ patient, onChanged }: { patient: ChartPatient; onChanged: ()
         patientId={patient.id}
         onLinked={onChanged}
       />
+      <AbhaVerifyDialog
+        open={verifyOpen}
+        onClose={() => setVerifyOpen(false)}
+        patientId={patient.id}
+        gatewayConfigured={!!gatewayStatus?.configured}
+        onVerified={onChanged}
+      />
     </Card>
+  );
+}
+
+// Two-step OTP verification dialog. Step 1 calls /abha/request-otp →
+// returns { txnId }. Step 2 collects the OTP and calls /abha/verify-otp.
+// On success the parent's onVerified() refetches the chart and the
+// UNVERIFIED badge disappears.
+//
+// When the gateway is not configured, the dialog still opens but
+// shows a clear "not configured" message and disables the actions —
+// the alternative (silently 503-ing on click) is worse UX.
+function AbhaVerifyDialog({
+  open, onClose, patientId, gatewayConfigured, onVerified,
+}: {
+  open: boolean;
+  onClose: () => void;
+  patientId: string;
+  gatewayConfigured: boolean;
+  onVerified: () => void | Promise<void>;
+}) {
+  const [authMode, setAuthMode] = useState<'MOBILE_OTP' | 'AADHAAR_OTP'>('MOBILE_OTP');
+  const [step, setStep] = useState<'request' | 'enter'>('request');
+  const [txnId, setTxnId] = useState('');
+  const [hint, setHint] = useState('');
+  const [otp, setOtp] = useState('');
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+
+  // Reset every time the dialog opens so a re-entry doesn't carry
+  // stale state from the previous attempt.
+  useEffect(() => {
+    if (open) {
+      setStep('request'); setTxnId(''); setHint(''); setOtp(''); setBusy(false);
+    }
+  }, [open]);
+
+  async function requestOtp() {
+    setBusy(true);
+    try {
+      const r = await api.post(`/api/patients/${patientId}/abha/request-otp`, { authMode });
+      setTxnId(r.data.txnId);
+      setHint(r.data.hint || 'OTP sent to the patient\'s registered mobile.');
+      setStep('enter');
+    } catch (e: any) {
+      const status = e?.response?.status;
+      const msg    = e?.response?.data?.error || 'Try again';
+      if (status === 503) {
+        toast.error('Gateway not configured', msg);
+      } else {
+        toast.error('Could not request OTP', msg);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function verifyOtp() {
+    if (!otp.trim()) { toast.error('Enter the OTP'); return; }
+    setBusy(true);
+    try {
+      const r = await api.post(`/api/patients/${patientId}/abha/verify-otp`, {
+        txnId,
+        otp: otp.trim(),
+        method: authMode === 'AADHAAR_OTP' ? 'aadhaar_otp' : 'mobile_otp',
+      });
+      if (r.data.demographicMismatches?.length) {
+        toast.success('ABHA verified', `Note: ${r.data.demographicMismatches.join(', ')} mismatch with stored record. Audit flag raised.`);
+      } else {
+        toast.success('ABHA verified', 'Patient identity confirmed against NHA gateway.');
+      }
+      await onVerified();
+      onClose();
+    } catch (e: any) {
+      toast.error('Verification failed', e?.response?.data?.error || 'Try again or request a new OTP');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="rounded-2xl">
+        <div className="flex items-center gap-3 mb-2">
+          <div className="w-10 h-10 rounded-xl bg-emerald-50 ring-1 ring-emerald-100 flex items-center justify-center">
+            <ShieldAlert className="w-5 h-5 text-emerald-600" />
+          </div>
+          <div>
+            <div className="text-lg font-semibold text-slate-900">Verify ABHA with OTP</div>
+            <div className="text-xs text-slate-500">Confirm patient ownership against the NHA gateway</div>
+          </div>
+        </div>
+
+        {!gatewayConfigured ? (
+          <div className="my-3 p-3 rounded-lg bg-amber-50 border border-amber-200 text-[13px] text-amber-800 space-y-1.5">
+            <div className="font-semibold">ABDM gateway not configured on this deployment.</div>
+            <div>
+              To enable real verification, set these env vars in <span className="font-mono">backend/.env</span> and restart:
+            </div>
+            <ul className="font-mono text-[11px] pl-4 list-disc">
+              <li>ABDM_BASE_URL</li>
+              <li>ABDM_CLIENT_ID</li>
+              <li>ABDM_CLIENT_SECRET</li>
+              <li>ABDM_HFR_ID</li>
+            </ul>
+            <div className="text-[11px]">
+              Sandbox credentials: register at <span className="font-mono">sandbox.abdm.gov.in/console</span>.
+            </div>
+          </div>
+        ) : step === 'request' ? (
+          <div className="space-y-3 py-2">
+            <Label className="text-xs text-slate-500">How should NHA contact the patient?</Label>
+            <div className="space-y-2">
+              <label className="flex items-start gap-2 border border-slate-200 rounded-lg p-2.5 cursor-pointer hover:bg-slate-50">
+                <input type="radio" checked={authMode === 'MOBILE_OTP'} onChange={() => setAuthMode('MOBILE_OTP')} className="mt-0.5" />
+                <div>
+                  <div className="text-sm font-medium text-slate-900">Mobile OTP</div>
+                  <div className="text-xs text-slate-500">Sends a one-time code to the mobile number registered with the patient's ABHA.</div>
+                </div>
+              </label>
+              <label className="flex items-start gap-2 border border-slate-200 rounded-lg p-2.5 cursor-pointer hover:bg-slate-50">
+                <input type="radio" checked={authMode === 'AADHAAR_OTP'} onChange={() => setAuthMode('AADHAAR_OTP')} className="mt-0.5" />
+                <div>
+                  <div className="text-sm font-medium text-slate-900">Aadhaar OTP</div>
+                  <div className="text-xs text-slate-500">Sends a one-time code to the mobile linked to the patient's Aadhaar.</div>
+                </div>
+              </label>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3 py-2">
+            <div className="text-sm text-slate-700">{hint}</div>
+            <div>
+              <Label className="text-xs text-slate-500 mb-1.5 block">Enter the {authMode === 'AADHAAR_OTP' ? 'Aadhaar' : 'mobile'} OTP</Label>
+              <Input
+                value={otp}
+                onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                placeholder="6-digit code"
+                className="font-mono text-lg tracking-widest text-center"
+                maxLength={8}
+                autoFocus
+              />
+            </div>
+            <button
+              type="button"
+              className="text-xs text-slate-500 hover:text-slate-900 underline underline-offset-2"
+              onClick={() => { setStep('request'); setOtp(''); setTxnId(''); }}
+            >
+              Didn't receive? Request again.
+            </button>
+          </div>
+        )}
+
+        <DialogFooter className="mt-2">
+          <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
+          {gatewayConfigured && step === 'request' && (
+            <Button onClick={requestOtp} disabled={busy} className="bg-emerald-600 hover:bg-emerald-700">
+              {busy ? 'Sending…' : 'Send OTP'}
+            </Button>
+          )}
+          {gatewayConfigured && step === 'enter' && (
+            <Button onClick={verifyOtp} disabled={busy} className="bg-emerald-600 hover:bg-emerald-700">
+              {busy ? 'Verifying…' : 'Verify'}
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

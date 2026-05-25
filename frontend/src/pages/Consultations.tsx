@@ -37,6 +37,7 @@ import {
 import api from '../services/api';
 import { useToast } from '../components/Toast';
 import { useAuth } from '../contexts/AuthContext';
+import MrnLink from '../components/MrnLink';
 
 // -------------------- types --------------------
 
@@ -373,7 +374,7 @@ export default function Consultations() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-medium text-slate-900 truncate">{c.patient?.name || '—'}</span>
-                        <span className="text-xs text-slate-500 font-mono">{c.patient?.mrn}</span>
+                        <MrnLink mrn={c.patient?.mrn} patientId={c.patient?.id} />
                         <Badge variant="outline" className={`text-[10px] font-normal ${URGENCY_TINTS[c.urgency]}`}>
                           {c.urgency.toUpperCase()}
                         </Badge>
@@ -410,8 +411,9 @@ export default function Consultations() {
                   </div>
                   <div className="min-w-0">
                     <SheetTitle className="truncate">{detail.patient?.name || '—'}</SheetTitle>
-                    <SheetDescription>
-                      {detail.patient?.mrn} · {detail.requestedBy?.name} → {detail.toDepartment}
+                    <SheetDescription className="flex items-center gap-1.5 flex-wrap">
+                      <MrnLink mrn={detail.patient?.mrn} patientId={detail.patient?.id} stopPropagation={false} />
+                      <span>· {detail.requestedBy?.name} → {detail.toDepartment}</span>
                     </SheetDescription>
                   </div>
                 </div>

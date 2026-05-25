@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Search, Package, CheckCircle, Barcode, Trash2, ShoppingCart, AlertTriangle, Plus, FileText, Wifi, Pill, TrendingUp, XCircle } from 'lucide-react';
 import api from '../services/api';
 import { useScanner } from '../hooks/useScanner';
+import MrnLink from '../components/MrnLink';
 
 interface Drug {
   id: string;
@@ -836,7 +837,11 @@ export default function Pharmacy() {
                         <TableCell>{new Date(sale.timestamp).toLocaleString()}</TableCell>
                         <TableCell>
                           {sale.patientName || 'Walk-in Customer'}
-                          {sale.patientMRN && <div className="text-xs text-slate-500">{sale.patientMRN}</div>}
+                          {sale.patientMRN && (
+                            <div className="text-xs mt-0.5">
+                              <MrnLink mrn={sale.patientMRN} />
+                            </div>
+                          )}
                         </TableCell>
                         <TableCell>{sale.items.length} item(s)</TableCell>
                         <TableCell>

@@ -13,6 +13,7 @@ import { Plus, Receipt, Trash2, Printer, DollarSign, TrendingUp, Clock, Wallet, 
 import api from '../services/api';
 import { generateBillPDF } from '../utils/pdfGenerator';
 import PdfPreviewDialog, { type PdfDoc } from '../components/PdfPreviewDialog';
+import MrnLink from '../components/MrnLink';
 
 interface BillItem {
   id: string;
@@ -660,7 +661,11 @@ export default function BillingPage() {
                     <TableCell className="font-medium">{bill.billNo}</TableCell>
                     <TableCell>
                       {bill.patientName}
-                      {bill.patientMRN && <div className="text-xs text-slate-500">{bill.patientMRN}</div>}
+                      {bill.patientMRN && (
+                        <div className="text-xs text-slate-500 mt-0.5">
+                          <MrnLink mrn={bill.patientMRN} patientId={bill.patientId} />
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline">{bill.billType}</Badge>

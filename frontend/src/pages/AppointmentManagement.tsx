@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Plus, Search, Clock, Stethoscope, Calendar, CheckCircle, XCircle } from 'lucide-react';
 import api from '../services/api';
+import MrnLink from '../components/MrnLink';
 
 interface Appointment {
   id: string;
@@ -395,7 +396,7 @@ export default function AppointmentManagement() {
                       </div>
                     </TableCell>
                     <TableCell>{appointment.patientName}</TableCell>
-                    <TableCell>{appointment.patientMRN}</TableCell>
+                    <TableCell><MrnLink mrn={appointment.patientMRN} patientId={appointment.patientId} /></TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
                         <Stethoscope className="w-4 h-4" />

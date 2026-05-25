@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DollarSign, Plus, Network, UserRound, Users, Clock, CheckCircle } from 'lucide-react';
 import api from '../services/api';
+import MrnLink from '../components/MrnLink';
 
 interface ReferralDoctor {
   id: string;
@@ -654,7 +655,11 @@ export default function ReferralCommission() {
                         <TableCell className="font-medium">{referral.referralDoctorName}</TableCell>
                         <TableCell>
                           {referral.patientName}
-                          {referral.patientMRN && <div className="text-xs text-slate-500">{referral.patientMRN}</div>}
+                          {referral.patientMRN && (
+                            <div className="text-xs text-slate-500 mt-0.5">
+                              <MrnLink mrn={referral.patientMRN} patientId={referral.patientId} />
+                            </div>
+                          )}
                         </TableCell>
                         <TableCell>{referral.serviceType}</TableCell>
                         <TableCell>Rs. {referral.billAmount.toFixed(2)}</TableCell>

@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Plus, Scan, FileImage, CheckCircle, Calendar, Clock, ListChecks } from 'lucide-react';
 import api from '../services/api';
+import MrnLink from '../components/MrnLink';
 
 interface RadiologyOrder {
   id: string;
@@ -474,7 +475,7 @@ export default function Radiology() {
                       <TableRow key={order.id}>
                         <TableCell className="font-medium">{order.orderId}</TableCell>
                         <TableCell>{order.patientName}</TableCell>
-                        <TableCell>{order.patientMRN}</TableCell>
+                        <TableCell><MrnLink mrn={order.patientMRN} patientId={order.patientId} /></TableCell>
                         <TableCell>
                           <div className="text-sm">
                             {order.details?.tests?.length || 0} study(ies)
@@ -558,6 +559,7 @@ export default function Radiology() {
                   <TableRow>
                     <TableHead>Order ID</TableHead>
                     <TableHead>Patient</TableHead>
+                    <TableHead>MRN</TableHead>
                     <TableHead>Studies</TableHead>
                     <TableHead>Priority</TableHead>
                     <TableHead>Actions</TableHead>
@@ -568,6 +570,7 @@ export default function Radiology() {
                     <TableRow key={order.id}>
                       <TableCell className="font-medium">{order.orderId}</TableCell>
                       <TableCell>{order.patientName}</TableCell>
+                      <TableCell><MrnLink mrn={order.patientMRN} patientId={order.patientId} /></TableCell>
                       <TableCell>{order.details?.tests?.length || 0} study(ies)</TableCell>
                       <TableCell>
                         <Badge variant={getPriorityColor(order.priority)}>
@@ -616,6 +619,7 @@ export default function Radiology() {
                   <TableRow>
                     <TableHead>Order ID</TableHead>
                     <TableHead>Patient</TableHead>
+                    <TableHead>MRN</TableHead>
                     <TableHead>Studies</TableHead>
                     <TableHead>Actions</TableHead>
                   </TableRow>
@@ -625,6 +629,7 @@ export default function Radiology() {
                     <TableRow key={order.id}>
                       <TableCell className="font-medium">{order.orderId}</TableCell>
                       <TableCell>{order.patientName}</TableCell>
+                      <TableCell><MrnLink mrn={order.patientMRN} patientId={order.patientId} /></TableCell>
                       <TableCell>{order.details?.tests?.length || 0} study(ies)</TableCell>
                       <TableCell>
                         <Button
@@ -647,6 +652,7 @@ export default function Radiology() {
                   <TableRow>
                     <TableHead>Order ID</TableHead>
                     <TableHead>Patient</TableHead>
+                    <TableHead>MRN</TableHead>
                     <TableHead>Studies</TableHead>
                     <TableHead>Completed</TableHead>
                     <TableHead>Actions</TableHead>
@@ -657,6 +663,7 @@ export default function Radiology() {
                     <TableRow key={order.id}>
                       <TableCell className="font-medium">{order.orderId}</TableCell>
                       <TableCell>{order.patientName}</TableCell>
+                      <TableCell><MrnLink mrn={order.patientMRN} patientId={order.patientId} /></TableCell>
                       <TableCell>{order.details?.tests?.length || 0} study(ies)</TableCell>
                       <TableCell>{order.orderedAt}</TableCell>
                       <TableCell>

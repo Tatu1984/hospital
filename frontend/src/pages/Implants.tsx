@@ -21,6 +21,7 @@ import {
 import { Box, Plus, Search, Trash2, ShieldAlert, CalendarClock, PackageOpen } from 'lucide-react';
 import api from '../services/api';
 import { useToast } from '../components/Toast';
+import MrnLink from '../components/MrnLink';
 
 interface PatientLite { id: string; mrn: string; name: string }
 
@@ -278,10 +279,13 @@ export default function Implants() {
                         </div>
                         <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-3 flex-wrap">
                           {i.patient && (
-                            <Link to={`/app/patients/${i.patient.id}`} onClick={(e) => e.stopPropagation()}
-                              className="text-blue-600 hover:underline">
-                              {i.patient.name} · {i.patient.mrn}
-                            </Link>
+                            <span className="flex items-center gap-1.5">
+                              <Link to={`/app/patients/${i.patient.id}`} onClick={(e) => e.stopPropagation()}
+                                className="text-blue-600 hover:underline">
+                                {i.patient.name}
+                              </Link>
+                              <MrnLink mrn={i.patient.mrn} patientId={i.patient.id} />
+                            </span>
                           )}
                           <span>Implanted {new Date(i.implantedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
                           {i.implantedByName && <span>by {i.implantedByName}</span>}

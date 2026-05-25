@@ -32,6 +32,7 @@ import api from '../services/api';
 import { StatusBadge, fmtDate } from '../components/modules/ResourceListPage';
 import { DIALYSIS_SLOTS, slotLabel } from '../lib/dialysisSlots';
 import { useToast } from '../components/Toast';
+import MrnLink from '../components/MrnLink';
 
 interface DialysisMachine {
   id: string;
@@ -274,7 +275,9 @@ function SessionsPanel({
                     </TableCell>
                     <TableCell>
                       <div className="font-medium">{patientName(s.patientId)}</div>
-                      <div className="text-xs text-slate-500">{patientMrn(s.patientId)}</div>
+                      <div className="text-xs text-slate-500 mt-0.5">
+                        <MrnLink mrn={patientMrn(s.patientId)} patientId={s.patientId} />
+                      </div>
                     </TableCell>
                     <TableCell>{s.machine?.machineName || '—'}</TableCell>
                     <TableCell>{s.modality}</TableCell>
@@ -852,8 +855,8 @@ function DialysisRegisterPanel({
                           <div className="text-xs font-medium text-slate-900 mt-0.5 line-clamp-1">
                             {sess.patient?.name || 'Unknown'}
                           </div>
-                          <div className="text-[10px] text-slate-500 line-clamp-1">
-                            {sess.patient?.mrn || ''}
+                          <div className="text-[10px] text-slate-500 line-clamp-1 mt-0.5">
+                            <MrnLink mrn={sess.patient?.mrn} patientId={sess.patient?.id} />
                           </div>
                           <div className="text-[10px] text-slate-600 mt-1 line-clamp-1">
                             {sess.patientDoctor ? `Dr ${sess.patientDoctor}` : 'No doctor assigned'}
@@ -900,8 +903,8 @@ function DialysisRegisterPanel({
                       <div className="text-xs font-medium text-slate-900 mt-0.5 line-clamp-1">
                         {row.patient?.name || 'Unknown'}
                       </div>
-                      <div className="text-[10px] text-slate-500 line-clamp-1">
-                        {row.patient?.mrn || ''}
+                      <div className="text-[10px] text-slate-500 line-clamp-1 mt-0.5">
+                        <MrnLink mrn={row.patient?.mrn} patientId={row.patient?.id} />
                       </div>
                       <div className="text-[10px] text-slate-600 mt-1 line-clamp-1">
                         {row.patientDoctor ? `Dr ${row.patientDoctor}` : 'No doctor assigned'}

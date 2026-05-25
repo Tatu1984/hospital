@@ -21,6 +21,7 @@ import {
 import { Baby, Plus, Bed, Settings, LogOut, AlertCircle } from 'lucide-react';
 import api from '../services/api';
 import { useToast } from '../components/Toast';
+import MrnLink from '../components/MrnLink';
 
 // -------------------- types --------------------
 
@@ -352,8 +353,11 @@ export default function NICU() {
                               <div className="font-medium text-slate-900 truncate">
                                 {b.currentStay.babyPatient?.name || 'Baby'}
                               </div>
-                              <div className="text-xs text-slate-500">
-                                MRN {b.currentStay.babyPatient?.mrn || '—'}
+                              <div className="text-xs text-slate-500 mt-0.5">
+                                <MrnLink
+                                  mrn={b.currentStay.babyPatient?.mrn}
+                                  patientId={b.currentStay.babyPatient?.id}
+                                />
                               </div>
                             </div>
                             <div className="grid grid-cols-2 text-xs gap-y-1 text-slate-700">

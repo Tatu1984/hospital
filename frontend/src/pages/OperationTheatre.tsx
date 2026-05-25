@@ -15,6 +15,7 @@ import OTLiveStatusDialog from '../components/OTLiveStatusDialog';
 import { DoctorLabel } from '../components/DoctorLabel';
 import SurgicalSafetyChecklistDialog from '../components/SurgicalSafetyChecklistDialog';
 import AnesthesiaRecordDialog from '../components/AnesthesiaRecordDialog';
+import MrnLink from '../components/MrnLink';
 
 interface Surgery {
   id: string;
@@ -517,7 +518,9 @@ export default function OperationTheatre() {
                         <TableCell>
                           <div>
                             <div className="font-medium">{surgery.patientName}</div>
-                            <div className="text-xs text-slate-500">{surgery.patientMRN}</div>
+                            <div className="text-xs text-slate-500">
+                              <MrnLink mrn={surgery.patientMRN} patientId={surgery.patientId} />
+                            </div>
                           </div>
                         </TableCell>
                         <TableCell>{surgery.procedureName}</TableCell>
@@ -644,7 +647,9 @@ export default function OperationTheatre() {
                         <TableCell className="font-medium">{surgery.otRoom}</TableCell>
                         <TableCell>
                           <div className="font-medium">{surgery.patientName}</div>
-                          <div className="text-xs text-slate-500">{surgery.patientMRN}</div>
+                          <div className="text-xs text-slate-500">
+                            <MrnLink mrn={surgery.patientMRN} patientId={surgery.patientId} />
+                          </div>
                         </TableCell>
                         <TableCell>{surgery.procedureName}</TableCell>
                         <TableCell><DoctorLabel doctorId={surgery.surgeonId} fallbackName={surgery.surgeonName} mode="stacked" /></TableCell>
@@ -930,7 +935,9 @@ export default function OperationTheatre() {
                 <div>
                   <Label className="text-sm text-slate-500">Patient</Label>
                   <div className="font-medium">{selectedSurgery.patientName}</div>
-                  <div className="text-sm text-slate-500">{selectedSurgery.patientMRN}</div>
+                  <div className="text-sm text-slate-500">
+                    <MrnLink mrn={selectedSurgery.patientMRN} patientId={selectedSurgery.patientId} />
+                  </div>
                 </div>
                 <div>
                   <Label className="text-sm text-slate-500">Age / Gender</Label>

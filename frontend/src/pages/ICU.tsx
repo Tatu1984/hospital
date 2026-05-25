@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Heart, Activity, Wind, Droplet, Thermometer, Users, Bed, TrendingUp, FileText } from 'lucide-react';
 import api from '../services/api';
 import { useToast } from '../components/Toast';
+import MrnLink from '../components/MrnLink';
 
 interface ICUBed {
   id: string;
@@ -612,8 +613,9 @@ export default function ICU() {
                         <div className="space-y-3">
                           <div>
                             <div className="font-medium">{bed.patient.name}</div>
-                            <div className="text-sm text-slate-500">
-                              {bed.patient.mrn} • {bed.patient.age}/{bed.patient.gender}
+                            <div className="text-sm text-slate-500 flex items-center gap-1 flex-wrap">
+                              <MrnLink mrn={bed.patient.mrn} patientId={bed.patient.id} />
+                              <span>• {bed.patient.age}/{bed.patient.gender}</span>
                             </div>
                             <div className="text-xs text-slate-500 mt-1">
                               {bed.admission?.diagnosis}
@@ -923,12 +925,13 @@ export default function ICU() {
                   )}
                 </DialogTitle>
                 {titlePatient && (
-                  <DialogDescription>
+                  <DialogDescription className="flex items-center gap-1 flex-wrap">
                     <span className="font-medium text-slate-700">{titlePatient.name}</span>
-                    {' · '}MRN {titlePatient.mrn}
-                    {titlePatient.age != null && ` · ${titlePatient.age}y`}
-                    {titlePatient.gender && ` · ${titlePatient.gender}`}
-                    {bedDetails?.admission?.admittingDoctor && ` · Under ${bedDetails.admission.admittingDoctor}`}
+                    <span>· MRN</span>
+                    <MrnLink mrn={titlePatient.mrn} patientId={titlePatient.id} />
+                    {titlePatient.age != null && <span>· {titlePatient.age}y</span>}
+                    {titlePatient.gender && <span>· {titlePatient.gender}</span>}
+                    {bedDetails?.admission?.admittingDoctor && <span>· Under {bedDetails.admission.admittingDoctor}</span>}
                   </DialogDescription>
                 )}
               </DialogHeader>
@@ -1173,6 +1176,7 @@ export default function ICU() {
                     const currentWard = adm.bed?.category || adm.wardName || (currentBed === 'Unassigned' ? '—' : 'Unknown');
                     const name = adm.patientName || adm.patient?.name || 'Unknown';
                     const mrn = adm.patientMRN || adm.patient?.mrn || '';
+                    const patientIdForLink = adm.patientId || adm.patient?.id || null;
                     return (
                       <button
                         key={adm.id}
@@ -1186,7 +1190,10 @@ export default function ICU() {
                         <div className="flex justify-between items-baseline gap-2 flex-wrap">
                           <div>
                             <div className="font-medium">{name}</div>
-                            <div className="text-xs text-slate-500">MRN: {mrn}</div>
+                            <div className="text-xs text-slate-500 flex items-center gap-1">
+                              <span>MRN:</span>
+                              <MrnLink mrn={mrn} patientId={patientIdForLink} />
+                            </div>
                           </div>
                           <div className="text-xs text-slate-500 text-right">
                             Currently:<br />

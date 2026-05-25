@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Plus, ShieldCheck, Clock, CheckCircle, IndianRupee } from 'lucide-react';
 import api from '../services/api';
+import MrnLink from '../components/MrnLink';
 
 interface InsuranceCompany {
   id: string;
@@ -518,7 +519,9 @@ export default function TPA() {
                         <TableCell className="font-medium">{claim.claimNumber}</TableCell>
                         <TableCell>
                           {claim.patientName}
-                          <div className="text-xs text-slate-500">{claim.patientMRN}</div>
+                          <div className="text-xs text-slate-500 mt-0.5">
+                            <MrnLink mrn={claim.patientMRN} patientId={claim.patientId} />
+                          </div>
                         </TableCell>
                         <TableCell>{claim.insuranceCompanyName}</TableCell>
                         <TableCell>
@@ -791,7 +794,9 @@ export default function TPA() {
                       <TableRow key={ins.id}>
                         <TableCell className="font-medium">
                           {ins.patientName}
-                          <div className="text-xs text-slate-500">{ins.patientMRN}</div>
+                          <div className="text-xs text-slate-500 mt-0.5">
+                            <MrnLink mrn={ins.patientMRN} patientId={ins.patientId} />
+                          </div>
                         </TableCell>
                         <TableCell>{ins.insuranceCompanyName}</TableCell>
                         <TableCell>{ins.policyNumber}</TableCell>

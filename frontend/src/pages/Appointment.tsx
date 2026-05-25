@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Calendar, Plus, Clock, CheckCircle, UserX } from 'lucide-react';
 import api from '../services/api';
+import MrnLink from '../components/MrnLink';
 
 interface Appointment {
   id: string;
@@ -337,6 +338,7 @@ export default function Appointment() {
             <TableHeader>
               <TableRow>
                 <TableHead>Patient</TableHead>
+                <TableHead>MRN</TableHead>
                 <TableHead>Doctor</TableHead>
                 <TableHead>Department</TableHead>
                 <TableHead>Date & Time</TableHead>
@@ -347,12 +349,13 @@ export default function Appointment() {
             </TableHeader>
             <TableBody>
               {loading && appointments.length === 0 ? (
-                <TableRow><TableCell colSpan={7} className="text-center text-sm text-slate-500 py-8">Loading…</TableCell></TableRow>
+                <TableRow><TableCell colSpan={8} className="text-center text-sm text-slate-500 py-8">Loading…</TableCell></TableRow>
               ) : appointments.length === 0 ? (
-                <TableRow><TableCell colSpan={7} className="text-center text-sm text-slate-500 py-8">No appointments yet. Click "Schedule Appointment" to create one.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={8} className="text-center text-sm text-slate-500 py-8">No appointments yet. Click "Schedule Appointment" to create one.</TableCell></TableRow>
               ) : appointments.map((appointment) => (
                 <TableRow key={appointment.id} data-testid={`apt-row-${appointment.id}`}>
                   <TableCell className="font-medium">{appointment.patient?.name || '—'}</TableCell>
+                  <TableCell><MrnLink mrn={appointment.patient?.mrn} patientId={appointment.patient?.id} /></TableCell>
                   <TableCell>{appointment.doctor?.name || '—'}</TableCell>
                   <TableCell>{appointment.department || '—'}</TableCell>
                   <TableCell>
