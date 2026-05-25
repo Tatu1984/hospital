@@ -3097,24 +3097,34 @@ clinicalModulesRouter.post('/patients/:id/abha/link', auth, async (req: AuthedRe
     }
     const abhaAddress: string | null = req.body?.abhaAddress ? String(req.body.abhaAddress) : null;
 
+    // IMPORTANT — link != verify.
+    // This endpoint records a CLAIMED ABHA number. abhaVerifiedAt
+    // stays null until the patient confirms an OTP from the NHA
+    // gateway via /abha/request-otp + /abha/verify-otp. The UI
+    // surfaces an "UNVERIFIED" badge whenever linkedAt is set but
+    // verifiedAt is not, so clinical staff don't trust a number that
+    // hasn't been validated against the source of truth.
     const updated = await prisma.patient.update({
       where: { id: patient.id },
       data: {
         abhaNumber,
         abhaAddress,
         abhaLinkedAt: new Date(),
+        // Re-linking a different number clears any prior verification.
+        abhaVerifiedAt: patient.abhaNumber !== abhaNumber ? null : undefined,
+        abhaVerifiedBy: patient.abhaNumber !== abhaNumber ? null : undefined,
+        abhaVerifyMethod: patient.abhaNumber !== abhaNumber ? null : undefined,
       },
-      select: { id: true, abhaNumber: true, abhaAddress: true, abhaLinkedAt: true },
+      select: { id: true, abhaNumber: true, abhaAddress: true, abhaLinkedAt: true, abhaVerifiedAt: true },
     });
 
-    // Stub: real impl would record the ABDM gateway txn id here.
     await prisma.abdmLinkEvent.create({
       data: {
         tenantId,
         patientId: patient.id,
-        eventType: 'link_verified',
-        status: 'success',
-        payload: { abhaAddress, source: 'stub' } as any,
+        eventType: 'link_claimed',
+        status: 'pending_verification',
+        payload: { abhaAddress, note: 'Number recorded; not yet verified via OTP' } as any,
       },
     });
 
@@ -3145,8 +3155,11 @@ clinicalModulesRouter.delete('/patients/:id/abha', auth, async (req: AuthedReq, 
 
     const updated = await prisma.patient.update({
       where: { id: patient.id },
-      data: { abhaNumber: null, abhaAddress: null, abhaLinkedAt: null },
-      select: { id: true, abhaNumber: true, abhaAddress: true, abhaLinkedAt: true },
+      data: {
+        abhaNumber: null, abhaAddress: null, abhaLinkedAt: null,
+        abhaVerifiedAt: null, abhaVerifiedBy: null, abhaVerifyMethod: null,
+      },
+      select: { id: true, abhaNumber: true, abhaAddress: true, abhaLinkedAt: true, abhaVerifiedAt: true },
     });
 
     await prisma.abdmLinkEvent.create({
@@ -3190,6 +3203,151 @@ clinicalModulesRouter.get('/patients/:id/abdm-events', auth, async (req: AuthedR
     res.json(events);
   } catch (e: any) {
     console.error('abdm events', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+// ABDM gateway status — used by the FE AbhaCard to decide whether to
+// show the "Verify with OTP" action or a "Gateway not configured" hint.
+clinicalModulesRouter.get('/abdm/status', auth, async (_req: AuthedReq, res: Response) => {
+  try {
+    const { getStatus } = await import('./services/abdmGateway');
+    res.json(getStatus());
+  } catch (e: any) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Step 1 of ABHA verification — request an OTP from the NHA gateway.
+// Patient must already have an abhaNumber linked. Stores the txnId in
+// AbdmLinkEvent so the verify step can correlate.
+clinicalModulesRouter.post('/patients/:id/abha/request-otp', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const patient = await prisma.patient.findFirst({
+      where: { id: req.params.id, tenantId },
+      select: { id: true, abhaNumber: true, abhaVerifiedAt: true },
+    });
+    if (!patient)              return res.status(404).json({ error: 'Patient not found' });
+    if (!patient.abhaNumber)   return res.status(400).json({ error: 'No ABHA number on file. Link one first.' });
+    if (patient.abhaVerifiedAt) return res.status(400).json({ error: 'ABHA is already verified.' });
+
+    const { requestOtp, AbdmNotConfigured } = await import('./services/abdmGateway');
+    const authMode = ['MOBILE_OTP','AADHAAR_OTP','DEMOGRAPHICS'].includes(req.body?.authMode)
+      ? req.body.authMode as 'MOBILE_OTP' | 'AADHAAR_OTP' | 'DEMOGRAPHICS'
+      : 'MOBILE_OTP';
+
+    try {
+      const result = await requestOtp({ abhaNumber: patient.abhaNumber, authMode });
+      await prisma.abdmLinkEvent.create({
+        data: {
+          tenantId, patientId: patient.id,
+          eventType: 'otp_requested',
+          abdmTxnId: result.txnId,
+          status: 'pending',
+          payload: { authMode } as any,
+        },
+      });
+      void writeAudit({
+        prisma, req,
+        action: 'ABHA_OTP_REQUEST',
+        resource: 'Patient', resourceId: patient.id,
+        newValue: { authMode, txnId: result.txnId },
+      });
+      res.json(result);
+    } catch (e: any) {
+      if (e instanceof AbdmNotConfigured) {
+        return res.status(503).json({ error: e.message, code: 'ABDM_NOT_CONFIGURED' });
+      }
+      throw e;
+    }
+  } catch (e: any) {
+    console.error('abha request-otp', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
+// Step 2 — confirm the OTP. On gateway success we stamp abhaVerifiedAt
+// + abhaVerifiedBy + abhaVerifyMethod and record the demographics
+// match (or mismatch flags) in the AbdmLinkEvent.payload for audit.
+clinicalModulesRouter.post('/patients/:id/abha/verify-otp', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const patient = await prisma.patient.findFirst({
+      where: { id: req.params.id, tenantId },
+      select: { id: true, abhaNumber: true, name: true, dob: true, gender: true },
+    });
+    if (!patient)            return res.status(404).json({ error: 'Patient not found' });
+    if (!patient.abhaNumber) return res.status(400).json({ error: 'No ABHA number on file' });
+
+    const txnId  = String(req.body?.txnId || '').trim();
+    const otp    = String(req.body?.otp   || '').trim();
+    const method = req.body?.method as 'mobile_otp' | 'aadhaar_otp' | 'demographics' | undefined;
+    if (!txnId) return res.status(400).json({ error: 'txnId is required' });
+    if (!otp || !/^\d{4,8}$/.test(otp)) return res.status(400).json({ error: 'otp must be 4-8 digits' });
+
+    const { verifyOtp, AbdmNotConfigured } = await import('./services/abdmGateway');
+    try {
+      const confirmation = await verifyOtp({ txnId, otp });
+      // Demographics cross-check: if the gateway returns a name and it
+      // diverges materially from what we have on file, flag it in the
+      // event payload but still mark verified — the gateway IS the
+      // source of truth for "this ABHA is real". Mismatched names are
+      // commonly just transliteration or short-vs-full-name and not
+      // worth blocking the link over; staff sees the flag and decides.
+      const mismatches: string[] = [];
+      if (confirmation.name   && patient.name && !patient.name.toLowerCase().includes(confirmation.name.toLowerCase().split(' ')[0])) mismatches.push('name');
+      if (confirmation.gender && patient.gender && confirmation.gender.toLowerCase() !== patient.gender.toLowerCase()) mismatches.push('gender');
+
+      const updated = await prisma.patient.update({
+        where: { id: patient.id },
+        data: {
+          abhaVerifiedAt: new Date(),
+          abhaVerifiedBy: req.user!.userId,
+          abhaVerifyMethod: method || 'mobile_otp',
+          // If gateway sent an abhaAddress (the @sbx handle) and we
+          // didn't have one yet, store it.
+          abhaAddress: confirmation.abhaAddress || undefined,
+        },
+        select: {
+          id: true, abhaNumber: true, abhaAddress: true,
+          abhaLinkedAt: true, abhaVerifiedAt: true, abhaVerifyMethod: true,
+        },
+      });
+
+      await prisma.abdmLinkEvent.create({
+        data: {
+          tenantId, patientId: patient.id,
+          eventType: 'link_verified',
+          abdmTxnId: txnId,
+          status: 'success',
+          payload: { method: method || 'mobile_otp', demographicMismatches: mismatches } as any,
+        },
+      });
+      void writeAudit({
+        prisma, req,
+        action: 'ABHA_VERIFY',
+        resource: 'Patient', resourceId: patient.id,
+        newValue: { method: method || 'mobile_otp', mismatches },
+      });
+      res.json({ ...updated, demographicMismatches: mismatches });
+    } catch (e: any) {
+      if (e instanceof AbdmNotConfigured) {
+        return res.status(503).json({ error: e.message, code: 'ABDM_NOT_CONFIGURED' });
+      }
+      await prisma.abdmLinkEvent.create({
+        data: {
+          tenantId, patientId: patient.id,
+          eventType: 'otp_failed',
+          abdmTxnId: txnId,
+          status: 'failed',
+          errorMessage: e?.message?.slice(0, 500) || 'Unknown error',
+        },
+      });
+      return res.status(400).json({ error: e?.message || 'OTP verification failed' });
+    }
+  } catch (e: any) {
+    console.error('abha verify-otp', e);
     res.status(500).json({ error: 'Internal server error', detail: e?.message });
   }
 });

@@ -289,7 +289,18 @@ model Patient {
   // gateway (sandbox or production). Optional; many patients won't have one.
   abhaNumber        String?
   abhaAddress       String?  // patient's @sbx.abdm.gov.in handle, e.g. 'sudipto.banerjee@sbx'
+  // `abhaLinkedAt` = a staff member entered an ABHA number into our DB.
+  // This is a CLAIMED link only — the number could be wrong, fake, or
+  // belong to someone else. `abhaVerifiedAt` is the source of truth for
+  // "this ABHA has been confirmed against the NHA gateway via OTP". The
+  // UI shows a red "UNVERIFIED" badge whenever linkedAt is set but
+  // verifiedAt is null, so clinical staff don't mistake a stub for a
+  // real linkage.
   abhaLinkedAt      DateTime?
+  abhaVerifiedAt    DateTime?
+  abhaVerifiedBy    String?   // userId of staff who completed OTP confirmation
+  // 'mobile_otp' | 'aadhaar_otp' | 'demographics' — how verification happened.
+  abhaVerifyMethod  String?
   // Aadhaar (last 4 digits only — full PAN is PHI we deliberately don't store).
   // For full Aadhaar-linked ABHA, the linking is done via OTP through ABDM
   // gateway; we don't persist the Aadhaar number itself.
