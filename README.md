@@ -1,36 +1,52 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Hospital ERP
 
-## Getting Started
+Multi-tenant hospital management system covering OPD, IPD, pharmacy, lab, radiology, billing, HR, accounting and a clinical AI copilot. Deployed on Vercel (backend + frontend) against Neon Postgres.
 
-First, run the development server:
+## Stack
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- **Backend** — Express + Prisma + TypeScript (`backend/`), serverless on Vercel
+- **Frontend** — Vite + React + Radix UI + Tailwind (`frontend/`)
+- **Mobile** — Expo (React Native) doctor and patient apps (`mobile/doctor`, `mobile/patient`)
+- **DB** — PostgreSQL via Prisma; Neon in production
+- **Cache / rate-limit** — Redis (optional; in-memory fallback for local)
+
+## Layout
+
+```
+backend/    Express API, Prisma schema, tests
+frontend/   Vite SPA — operator workstation UI
+mobile/     Expo apps (doctor, patient)
+docs/       SOW, developer guide, user manual, runbooks, source requirements
+scripts/    Local utilities (create-admin, smoke check, doc/diagram generators)
+loadtest/   k6 smoke scenarios
+nginx/      Reverse-proxy config for self-hosted Docker deployments
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Local development
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```sh
+# Postgres + redis
+docker-compose up -d db redis
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+# Backend
+cd backend && npm install && npm run prisma:migrate:deploy && npm run dev
 
-## Learn More
+# Frontend
+cd frontend && npm install && npm run dev
+```
 
-To learn more about Next.js, take a look at the following resources:
+Then `./start.sh` from the repo root handles the orchestration for both.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Default login: `admin` / `password123` (seeded). Change before any non-local use.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Documentation
 
-## Deploy on Vercel
+- [`docs/CLIENT_SOW.md`](docs/CLIENT_SOW.md) — scope of work
+- [`docs/sow/DEVELOPER_GUIDE.md`](docs/sow/DEVELOPER_GUIDE.md) — developer setup + architecture
+- [`docs/User-Manual.md`](docs/User-Manual.md) — operator manual
+- [`docs/RUNBOOK.md`](docs/RUNBOOK.md) — on-call runbook
+- [`docs/source/`](docs/source/) — original client requirement documents
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Deployment
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Vercel-only for backend + frontend. See [`backend/vercel.json`](backend/vercel.json) and [`frontend/vercel.json`](frontend/vercel.json). Neon hosts Postgres; Redis and S3/R2 are budgeted for May 2026.

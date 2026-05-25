@@ -1,0 +1,10 @@
+node_modules/
+dist/
+logs/
+uploads/
+.env
+.env.local
+.env.*.local
+*.log
+coverage/
+.vercel
