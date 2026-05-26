@@ -3424,6 +3424,11 @@ app.put('/api/lab-orders/:id', authenticateToken, async (req: any, res: Response
     const { id } = req.params;
     const { status } = req.body;
 
+    const owned = await prisma.order.findFirst({
+      where: { id, orderType: 'lab', patient: { tenantId: req.user.tenantId } },
+    });
+    if (!owned) return res.status(404).json({ error: 'Lab order not found' });
+
     const order = await prisma.order.update({
       where: { id },
       data: { status },
@@ -3509,6 +3514,11 @@ app.put('/api/radiology-orders/:id', authenticateToken, async (req: any, res: Re
   try {
     const { id } = req.params;
     const { status } = req.body;
+
+    const owned = await prisma.order.findFirst({
+      where: { id, orderType: 'radiology', patient: { tenantId: req.user.tenantId } },
+    });
+    if (!owned) return res.status(404).json({ error: 'Radiology order not found' });
 
     const order = await prisma.order.update({
       where: { id },
@@ -8403,6 +8413,8 @@ app.put('/api/users/:id', authenticateToken, async (req: any, res: Response) => 
 app.delete('/api/users/:id', authenticateToken, async (req: any, res: Response) => {
   try {
     const { id } = req.params;
+    const owned = await prisma.user.findFirst({ where: { id, tenantId: req.user.tenantId } });
+    if (!owned) return res.status(404).json({ error: 'User not found' });
     await prisma.user.delete({ where: { id } });
     res.json({ message: 'User deleted successfully' });
   } catch (error) {
@@ -8416,6 +8428,8 @@ app.post('/api/users/:id/reset-password', authenticateToken, async (req: any, re
   try {
     const { id } = req.params;
     const { newPassword } = req.body;
+    const owned = await prisma.user.findFirst({ where: { id, tenantId: req.user.tenantId } });
+    if (!owned) return res.status(404).json({ error: 'User not found' });
     const bcrypt = await import('bcryptjs');
     const passwordHash = await bcrypt.hash(newPassword, 10);
 
@@ -9924,61 +9938,54 @@ app.post('/api/ipd-billing', authenticateToken, async (req: any, res: Response) 
       return res.status(404).json({ error: 'Admission not found' });
     }
 
-    // Check if invoice already exists
     const existingInvoice = admission.encounter?.invoices?.[0];
-    let invoice;
 
-    if (existingInvoice) {
-      // Update existing invoice
-      invoice = await prisma.invoice.update({
-        where: { id: existingInvoice.id },
-        data: {
-          items: charges,
-          subtotal: subtotal || 0,
-          discount: discount || 0,
-          tax: tax || 0,
-          total: total || 0,
-          balance: total - Number(existingInvoice.paid),
-          status: Number(existingInvoice.paid) >= total ? 'paid' : Number(existingInvoice.paid) > 0 ? 'partial' : 'pending',
-        },
-      });
-    } else {
-      // Create new invoice
-      invoice = await prisma.invoice.create({
-        data: {
-          patientId,
-          encounterId: admission.encounterId,
-          type: 'ipd',
-          items: charges,
-          subtotal: subtotal || 0,
-          discount: discount || 0,
-          tax: tax || 0,
-          total: total || 0,
-          paid: 0,
-          balance: total || 0,
-          status: 'pending',
-        },
-      });
-    }
+    const invoice = await prisma.$transaction(async (tx) => {
+      const inv = existingInvoice
+        ? await tx.invoice.update({
+            where: { id: existingInvoice.id },
+            data: {
+              items: charges,
+              subtotal: subtotal || 0,
+              discount: discount || 0,
+              tax: tax || 0,
+              total: total || 0,
+              balance: total - Number(existingInvoice.paid),
+              status: Number(existingInvoice.paid) >= total ? 'paid' : Number(existingInvoice.paid) > 0 ? 'partial' : 'pending',
+            },
+          })
+        : await tx.invoice.create({
+            data: {
+              patientId,
+              encounterId: admission.encounterId,
+              type: 'ipd',
+              items: charges,
+              subtotal: subtotal || 0,
+              discount: discount || 0,
+              tax: tax || 0,
+              total: total || 0,
+              paid: 0,
+              balance: total || 0,
+              status: 'pending',
+            },
+          });
 
-    // Discharge patient if requested
-    if (dischargePatient) {
-      await prisma.admission.update({
-        where: { id: admissionId },
-        data: {
-          status: 'discharged',
-          dischargeDate: new Date(),
-        },
-      });
-
-      // Free up the bed
-      if (admission.bedId) {
-        await prisma.bed.update({
-          where: { id: admission.bedId },
-          data: { status: 'dirty' },
+      if (dischargePatient) {
+        await tx.admission.update({
+          where: { id: admissionId },
+          data: { status: 'discharged', dischargeDate: new Date() },
         });
+
+        if (admission.bedId) {
+          await tx.bed.update({
+            where: { id: admission.bedId },
+            data: { status: 'dirty' },
+          });
+        }
       }
-    }
+
+      return inv;
+    });
 
     res.status(existingInvoice ? 200 : 201).json({
       id: invoice.id,
