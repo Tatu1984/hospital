@@ -3269,6 +3269,28 @@ model PatientOtp {
   @@map("patient_otps")
 }
 
+// Public-website appointment request (a "lead"). Captured from the
+// marketing site's Book Appointment form by unauthenticated visitors —
+// it is NOT a confirmed Appointment (no patient/doctor FK). Front-office
+// staff triage these and convert them into real appointments.
+model AppointmentRequest {
+  id            String   @id @default(uuid())
+  tenantId      String?
+  name          String
+  phone         String
+  email         String?
+  speciality    String?
+  preferredTime String?
+  reason        String?
+  status        String   @default("new") // new | contacted | scheduled | closed
+  ipAddress     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([tenantId, status, createdAt])
+  @@map("appointment_requests")
+}
+
 // Patient-portal session. Issued after successful OTP verify; lasts
 // 30 days unless revoked. The token is a random 64-char hex; stored
 // hashed. Lookups by hash, not patientId, so the patient is unaware

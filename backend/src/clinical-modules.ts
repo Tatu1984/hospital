@@ -5170,6 +5170,51 @@ clinicalModulesRouter.get('/public/kiosk/:tenantId', async (req: Request, res: R
   }
 });
 
+// ---------- PUBLIC APPOINTMENT REQUEST (marketing-site "Book Appointment") ----------
+// Unauthenticated lead intake from the public website. Stores a request that
+// front-office staff later triage into a real Appointment. Never exposes PHI.
+clinicalModulesRouter.post('/public/appointment-requests', async (req: Request, res: Response) => {
+  try {
+    const b = req.body || {};
+    const name = String(b.name || '').trim();
+    const phone = String(b.phone || '').trim();
+    if (!name || !phone) {
+      return res.status(400).json({ error: 'name and phone are required' });
+    }
+    if (name.length > 120 || phone.length > 30) {
+      return res.status(400).json({ error: 'name or phone is too long' });
+    }
+
+    const clip = (v: unknown, max: number): string | null => {
+      const s = v === undefined || v === null ? '' : String(v).trim();
+      return s ? s.slice(0, max) : null;
+    };
+    const email = clip(b.email, 160);
+    const speciality = clip(b.speciality, 120);
+    const preferredTime = clip(b.preferredTime, 60);
+    const reason = clip(b.reason, 2000);
+    const tenantId = b.tenantId ? String(b.tenantId).trim().slice(0, 64) : 'tenant-1';
+    const ipAddress = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || null;
+
+    // Light anti-spam: cap at 5 requests/hour from the same phone.
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const recent = await prisma.appointmentRequest.count({
+      where: { phone, createdAt: { gte: oneHourAgo } },
+    });
+    if (recent >= 5) {
+      return res.status(429).json({ error: 'Too many requests — please call the front desk.' });
+    }
+
+    const created = await prisma.appointmentRequest.create({
+      data: { tenantId, name, phone, email, speciality, preferredTime, reason, ipAddress, status: 'new' },
+    });
+    return res.status(201).json({ ok: true, id: created.id });
+  } catch (e: any) {
+    console.error('public appointment-request', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
 // ---------- NPS / FEEDBACK ----------
 
 clinicalModulesRouter.post('/nps', auth, async (req: AuthedReq, res: Response) => {

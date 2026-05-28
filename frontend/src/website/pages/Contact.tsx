@@ -1,4 +1,5 @@
 import { useState, FormEvent } from 'react';
+import axios from 'axios';
 import { MapPin, Phone, Mail, Clock, AlertTriangle, Send, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,14 +11,48 @@ import { TextReveal } from '@/components/reactbits/TextReveal';
 import { BlurFade } from '@/components/reactbits/BlurFade';
 import { ShimmerButton } from '@/components/reactbits/ShimmerButton';
 
+// In dev, '' lets the Vite proxy forward /api/* to the backend; in prod
+// VITE_API_URL points at the API origin. Mirrors the patient-portal pages.
+const API_URL = (import.meta as any).env?.VITE_API_URL || '';
+
+const EMPTY_FORM = { name: '', phone: '', email: '', speciality: '', preferredTime: '', reason: '' };
+
 export default function Contact() {
   const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [form, setForm] = useState({ ...EMPTY_FORM });
+  const patch = (k: keyof typeof EMPTY_FORM) => (v: string) => setForm((f) => ({ ...f, [k]: v }));
 
-  const onSubmit = (e: FormEvent) => {
+  const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    // Hook this up to your backend / EmailJS / Formspree later.
-    // For the marketing site we just acknowledge success client-side.
-    setSubmitted(true);
+    if (submitting) return;
+    setError(null);
+    setSubmitting(true);
+    try {
+      await axios.post(`${API_URL}/api/public/appointment-requests`, {
+        name: form.name,
+        phone: form.phone,
+        email: form.email || undefined,
+        speciality: form.speciality || undefined,
+        preferredTime: form.preferredTime || undefined,
+        reason: form.reason || undefined,
+      });
+      setSubmitted(true);
+    } catch (err: any) {
+      setError(
+        err?.response?.data?.error ||
+          'Something went wrong sending your request. Please call the front desk.'
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const resetForm = () => {
+    setForm({ ...EMPTY_FORM });
+    setSubmitted(false);
+    setError(null);
   };
 
   return (
@@ -106,7 +141,7 @@ export default function Contact() {
                       </p>
                       <Button
                         variant="outline"
-                        onClick={() => setSubmitted(false)}
+                        onClick={resetForm}
                         className="mt-5 border-emerald-300 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800"
                       >
                         Submit another
@@ -116,19 +151,22 @@ export default function Contact() {
                     <form className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4" onSubmit={onSubmit}>
                       <div className="space-y-1.5">
                         <Label htmlFor="name">Full name</Label>
-                        <Input id="name" required placeholder="Your name" />
+                        <Input id="name" required placeholder="Your name"
+                          value={form.name} onChange={(e) => patch('name')(e.target.value)} />
                       </div>
                       <div className="space-y-1.5">
                         <Label htmlFor="phone">Phone</Label>
-                        <Input id="phone" type="tel" required placeholder="+91 …" />
+                        <Input id="phone" type="tel" required placeholder="+91 …"
+                          value={form.phone} onChange={(e) => patch('phone')(e.target.value)} />
                       </div>
                       <div className="space-y-1.5 sm:col-span-2">
                         <Label htmlFor="email">Email <span className="text-slate-400 font-normal">(optional)</span></Label>
-                        <Input id="email" type="email" placeholder="you@example.com" />
+                        <Input id="email" type="email" placeholder="you@example.com"
+                          value={form.email} onChange={(e) => patch('email')(e.target.value)} />
                       </div>
                       <div className="space-y-1.5">
                         <Label>Speciality</Label>
-                        <Select>
+                        <Select value={form.speciality || undefined} onValueChange={patch('speciality')}>
                           <SelectTrigger><SelectValue placeholder="Choose a department" /></SelectTrigger>
                           <SelectContent>
                             {[
@@ -140,7 +178,7 @@ export default function Contact() {
                       </div>
                       <div className="space-y-1.5">
                         <Label>Preferred time</Label>
-                        <Select>
+                        <Select value={form.preferredTime || undefined} onValueChange={patch('preferredTime')}>
                           <SelectTrigger><SelectValue placeholder="When?" /></SelectTrigger>
                           <SelectContent>
                             {['Today', 'Tomorrow', 'This week', 'Next week', 'Anytime'].map((s) => (
@@ -151,16 +189,23 @@ export default function Contact() {
                       </div>
                       <div className="space-y-1.5 sm:col-span-2">
                         <Label htmlFor="reason">Briefly, what's the concern?</Label>
-                        <Textarea id="reason" placeholder="A line or two so the doctor's desk can prepare." rows={4} />
+                        <Textarea id="reason" placeholder="A line or two so the doctor's desk can prepare." rows={4}
+                          value={form.reason} onChange={(e) => patch('reason')(e.target.value)} />
                       </div>
+
+                      {error && (
+                        <div className="sm:col-span-2 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                          {error}
+                        </div>
+                      )}
 
                       <div className="sm:col-span-2 flex items-center justify-between flex-wrap gap-3 pt-2">
                         <p className="text-xs text-slate-500 max-w-xs">
                           By submitting you agree we may contact you to confirm the appointment.
                         </p>
-                        <ShimmerButton type="submit" className="h-11 px-6">
+                        <ShimmerButton type="submit" disabled={submitting} className="h-11 px-6 disabled:opacity-60">
                           <Send className="h-4 w-4" />
-                          Request appointment
+                          {submitting ? 'Sending…' : 'Request appointment'}
                         </ShimmerButton>
                       </div>
                     </form>
