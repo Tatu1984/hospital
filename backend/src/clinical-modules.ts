@@ -5356,9 +5356,10 @@ clinicalModulesRouter.post('/public/portal/request-otp', async (req: Request, re
     });
 
     // TODO: dispatch via SMS provider (Twilio, MSG91, Gupshup, AWS SNS).
-    // Returning the OTP in the response is a STUB for local development
-    // and integration testing — do NOT return OTP in prod.
-    return res.json({ ok: true, otpDebug: otp });
+    // otpDebug is only included in non-production environments so developers
+    // can test the flow locally without a real SMS provider configured.
+    const isProduction = process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production';
+    return res.json({ ok: true, ...(isProduction ? {} : { otpDebug: otp }) });
   } catch (e: any) {
     console.error('portal request-otp', e);
     res.status(500).json({ error: 'Internal server error', detail: e?.message });

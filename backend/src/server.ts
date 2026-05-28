@@ -3272,6 +3272,9 @@ app.put('/api/appointments/:id', authenticateToken, async (req: any, res: Respon
     const { id } = req.params;
     const { appointmentDate, appointmentTime, type, reason, notes, status, department } = req.body;
 
+    const owned = await prisma.appointment.findFirst({ where: { id, tenantId: req.user.tenantId } });
+    if (!owned) return res.status(404).json({ error: 'Appointment not found' });
+
     const appointment = await prisma.appointment.update({
       where: { id },
       data: {
@@ -3300,6 +3303,9 @@ app.delete('/api/appointments/:id', authenticateToken, async (req: any, res: Res
   try {
     const { id } = req.params;
 
+    const owned = await prisma.appointment.findFirst({ where: { id, tenantId: req.user.tenantId } });
+    if (!owned) return res.status(404).json({ error: 'Appointment not found' });
+
     await prisma.appointment.delete({ where: { id } });
 
     res.json({ message: 'Appointment deleted successfully' });
@@ -3312,6 +3318,9 @@ app.delete('/api/appointments/:id', authenticateToken, async (req: any, res: Res
 app.post('/api/appointments/:id/check-in', authenticateToken, async (req: any, res: Response) => {
   try {
     const { id } = req.params;
+
+    const owned = await prisma.appointment.findFirst({ where: { id, tenantId: req.user.tenantId } });
+    if (!owned) return res.status(404).json({ error: 'Appointment not found' });
 
     const appointment = await prisma.appointment.update({
       where: { id },
@@ -3332,6 +3341,9 @@ app.post('/api/appointments/:id/check-in', authenticateToken, async (req: any, r
 app.post('/api/appointments/:id/cancel', authenticateToken, async (req: any, res: Response) => {
   try {
     const { id } = req.params;
+
+    const owned = await prisma.appointment.findFirst({ where: { id, tenantId: req.user.tenantId } });
+    if (!owned) return res.status(404).json({ error: 'Appointment not found' });
 
     const appointment = await prisma.appointment.update({
       where: { id },
