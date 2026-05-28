@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { DRUGS, LAB_TESTS, RADIOLOGY_TESTS, PROCEDURES, PACKAGES, WARDS, OT_THEATRES } from './masterData';
