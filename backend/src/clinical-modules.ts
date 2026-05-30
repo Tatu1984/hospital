@@ -5170,10 +5170,13 @@ clinicalModulesRouter.get('/public/kiosk/:tenantId', async (req: Request, res: R
   }
 });
 
-// ---------- PUBLIC APPOINTMENT REQUEST (marketing-site "Book Appointment") ----------
-// Unauthenticated lead intake from the public website. Stores a request that
-// front-office staff later triage into a real Appointment. Never exposes PHI.
-clinicalModulesRouter.post('/public/appointment-requests', async (req: Request, res: Response) => {
+// ---------- PUBLIC APPOINTMENT BOOKING (marketing-site "Book Appointment") ----------
+// Unauthenticated lead intake from the public website. We write directly
+// into the staff `appointments` table — a lead is an Appointment row with
+// status='pending', no doctorId, and no appointmentTime. Front-office
+// staff triage it from the same Appointment Management page and fill in
+// the missing slot/doctor.
+clinicalModulesRouter.post('/public/appointments', async (req: Request, res: Response) => {
   try {
     const b = req.body || {};
     const name = String(b.name || '').trim();
@@ -5194,23 +5197,85 @@ clinicalModulesRouter.post('/public/appointment-requests', async (req: Request, 
     const preferredTime = clip(b.preferredTime, 60);
     const reason = clip(b.reason, 2000);
     const tenantId = b.tenantId ? String(b.tenantId).trim().slice(0, 64) : 'tenant-1';
-    const ipAddress = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || null;
 
-    // Light anti-spam: cap at 5 requests/hour from the same phone.
+    // Light anti-spam: cap at 5 booking attempts / hour from the same phone.
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-    const recent = await prisma.appointmentRequest.count({
-      where: { phone, createdAt: { gte: oneHourAgo } },
+    const recent = await prisma.appointment.count({
+      where: { tenantId, createdAt: { gte: oneHourAgo }, patient: { contact: phone } },
     });
     if (recent >= 5) {
       return res.status(429).json({ error: 'Too many requests — please call the front desk.' });
     }
 
-    const created = await prisma.appointmentRequest.create({
-      data: { tenantId, name, phone, email, speciality, preferredTime, reason, ipAddress, status: 'new' },
+    // Patients carry a branchId FK, so we need a real branch before we
+    // can mint the patient row. Pick the tenant's first branch.
+    const branch = await prisma.branch.findFirst({
+      where: { tenantId },
+      select: { id: true },
+      orderBy: { createdAt: 'asc' },
     });
-    return res.status(201).json({ ok: true, id: created.id });
+    if (!branch) {
+      return res.status(503).json({ error: 'Booking unavailable — hospital is not set up.' });
+    }
+
+    // Reuse-or-create the Patient by phone within this tenant. Phone
+    // isn't a unique index, so we do findFirst-then-create rather than
+    // prisma.upsert(). MRN generation mirrors POST /api/patients.
+    let patient = await prisma.patient.findFirst({
+      where: { tenantId, contact: phone },
+      select: { id: true },
+    });
+    if (!patient) {
+      const lastPatient = await prisma.patient.findFirst({
+        where: { tenantId },
+        orderBy: { createdAt: 'desc' },
+        select: { mrn: true },
+      });
+      let mrnNumber = 1;
+      if (lastPatient) {
+        const n = parseInt(lastPatient.mrn.replace(/\D/g, ''), 10);
+        if (!Number.isNaN(n)) mrnNumber = n + 1;
+      }
+      const mrn = `MRN${mrnNumber.toString().padStart(6, '0')}`;
+      patient = await prisma.patient.create({
+        data: { tenantId, branchId: branch.id, mrn, name, contact: phone, email },
+        select: { id: true },
+      });
+    }
+
+    // Placeholder appointmentDate from the visitor's relative preference —
+    // the real slot is set by staff during triage. We just need a non-null
+    // date so the row shows up in the calendar view.
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const placeholder = new Date(today);
+    if (preferredTime === 'Tomorrow') placeholder.setDate(placeholder.getDate() + 1);
+    else if (preferredTime === 'Next week') placeholder.setDate(placeholder.getDate() + 7);
+    // "Today", "This week", "Anytime", or empty -> today.
+
+    const notesParts: string[] = ['Website booking.'];
+    if (preferredTime) notesParts.push(`Preferred: ${preferredTime}.`);
+    if (email) notesParts.push(`Email: ${email}.`);
+
+    const appointment = await prisma.appointment.create({
+      data: {
+        tenantId,
+        patientId: patient.id,
+        doctorId: null,
+        appointmentDate: placeholder,
+        appointmentTime: null,
+        type: 'consultation',
+        status: 'pending',
+        department: speciality,
+        reason,
+        notes: notesParts.join(' '),
+      },
+      select: { id: true },
+    });
+
+    return res.status(201).json({ ok: true, id: appointment.id });
   } catch (e: any) {
-    console.error('public appointment-request', e);
+    console.error('public appointment', e);
     res.status(500).json({ error: 'Internal server error', detail: e?.message });
   }
 });

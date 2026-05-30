@@ -30,7 +30,7 @@ export default function Contact() {
     setError(null);
     setSubmitting(true);
     try {
-      await axios.post(`${API_URL}/api/public/appointment-requests`, {
+      await axios.post(`${API_URL}/api/public/appointments`, {
         name: form.name,
         phone: form.phone,
         email: form.email || undefined,

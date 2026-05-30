@@ -33,7 +33,7 @@ export interface PatientHomeDTO {
     id: string;
     doctorName: string;
     appointmentDate: string;
-    appointmentTime: string;
+    appointmentTime: string | null;
     type: string;
     status: string;
   } | null;

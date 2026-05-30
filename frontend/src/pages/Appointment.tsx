@@ -14,11 +14,11 @@ import MrnLink from '../components/MrnLink';
 interface Appointment {
   id: string;
   patientId: string;
-  doctorId: string;
+  doctorId: string | null;
   patient?: { id: string; name: string; mrn?: string; contact?: string };
   doctor?: { id: string; name: string };
   appointmentDate: string; // ISO string from API; YYYY-MM-DD when posted
-  appointmentTime: string;
+  appointmentTime: string | null;
   department?: string;
   type: string;
   status: string;
@@ -126,7 +126,7 @@ export default function Appointment() {
     setFormData({
       ...emptyForm,
       date: toDateInput(appointment.appointmentDate),
-      time: appointment.appointmentTime,
+      time: appointment.appointmentTime || '',
     });
     setIsRescheduleDialogOpen(true);
   };
@@ -366,7 +366,7 @@ export default function Appointment() {
                       </span>
                       <span className="flex items-center gap-1 text-sm text-gray-500" data-testid={`apt-time-${appointment.id}`}>
                         <Clock className="w-4 h-4" />
-                        {appointment.appointmentTime}
+                        {appointment.appointmentTime || '—'}
                       </span>
                     </div>
                   </TableCell>

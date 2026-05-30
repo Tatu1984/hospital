@@ -69,8 +69,8 @@ export const securityHeaders = helmet({
 // Rate limiting - general
 const generalStore = buildSharedStore('general');
 export const generalRateLimiter = rateLimit({
-  windowMs: config.rateLimit.windowMs,
-  max: config.rateLimit.maxRequests,
+  windowMs: 60 * 1000, // 1 minute
+  max: 10000,          // 10,000 requests per minute
   store: generalStore,
   message: {
     error: 'Too many requests',
@@ -101,8 +101,8 @@ export const generalRateLimiter = rateLimit({
 // of every other endpoint.
 const writeStore = buildSharedStore('write');
 export const writeRateLimiter = rateLimit({
-  windowMs: config.rateLimit.windowMs,
-  max: Math.max(20, Math.floor(config.rateLimit.maxRequests / 4)),
+  windowMs: 60 * 1000, // 1 minute
+  max: 5000,           // 5,000 writes per minute per (IP+method+path)
   store: writeStore,
   standardHeaders: true,
   legacyHeaders: false,
@@ -113,6 +113,12 @@ export const writeRateLimiter = rateLimit({
     // generic write limiter also fire on /api/auth/* double-counts every
     // POST and locks legitimate users out after a few attempts.
     if (req.path.startsWith('/api/auth/')) return true;
+    // Public endpoints (e.g. /api/public/appointments) carry their own
+    // per-resource throttles (5/hour per phone) inside the handler, which
+    // is the right shape for unauthenticated traffic. The generic write
+    // limiter would lump them in with authenticated app writes and lock
+    // out genuine website visitors after a handful of attempts.
+    if (req.path.startsWith('/api/public/')) return true;
     return false;
   },
   keyGenerator: (req) =>

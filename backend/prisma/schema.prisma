@@ -354,9 +354,14 @@ model Appointment {
   id              String   @id @default(uuid())
   tenantId        String
   patientId       String
-  doctorId        String
+  // doctorId is optional so public website "Book Appointment" leads
+  // (which haven't been assigned to a specific doctor yet) can live
+  // in the same table. Staff assign a real doctorId when triaging.
+  doctorId        String?
   appointmentDate DateTime
-  appointmentTime String
+  // appointmentTime nullable for the same reason — public visitors
+  // choose a vague "Tomorrow / This week" preference, not a real slot.
+  appointmentTime String?
   type            String   @default("consultation")
   status          String   @default("scheduled")
   reason          String?
@@ -366,7 +371,7 @@ model Appointment {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   patient         Patient  @relation(fields: [patientId], references: [id])
-  doctor          User     @relation("DoctorAppointments", fields: [doctorId], references: [id])
+  doctor          User?    @relation("DoctorAppointments", fields: [doctorId], references: [id])
 
   @@index([patientId])
   @@index([doctorId])
@@ -3267,28 +3272,6 @@ model PatientOtp {
 
   @@index([tenantId, phone, createdAt])
   @@map("patient_otps")
-}
-
-// Public-website appointment request (a "lead"). Captured from the
-// marketing site's Book Appointment form by unauthenticated visitors —
-// it is NOT a confirmed Appointment (no patient/doctor FK). Front-office
-// staff triage these and convert them into real appointments.
-model AppointmentRequest {
-  id            String   @id @default(uuid())
-  tenantId      String?
-  name          String
-  phone         String
-  email         String?
-  speciality    String?
-  preferredTime String?
-  reason        String?
-  status        String   @default("new") // new | contacted | scheduled | closed
-  ipAddress     String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  @@index([tenantId, status, createdAt])
-  @@map("appointment_requests")
 }
 
 // Patient-portal session. Issued after successful OTP verify; lasts
