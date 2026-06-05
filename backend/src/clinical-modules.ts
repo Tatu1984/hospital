@@ -5031,6 +5031,180 @@ clinicalModulesRouter.post('/opd-queue/issue', auth, async (req: AuthedReq, res:
   }
 });
 
+// ---------- WALK-IN APPOINTMENT REGISTRATION ----------
+// Front-desk shortcut for patients who arrive without a prior appointment.
+// One atomic action: upsert Patient (by phone) -> create Appointment
+// (status='checked-in' since they're physically present, type='walk-in')
+// -> issue an OPD token. Returns all three so the UI can print the token.
+clinicalModulesRouter.post('/walk-ins', auth, async (req: AuthedReq, res: Response) => {
+  try {
+    const tenantId = req.user!.tenantId;
+    const userBranchId = req.user!.branchId || '';
+    const b = req.body || {};
+
+    const name = String(b.name || '').trim();
+    const contact = String(b.contact || '').trim();
+    if (!name || !contact) {
+      return res.status(400).json({ error: 'name and contact (phone) are required' });
+    }
+    if (name.length > 120 || contact.length > 30) {
+      return res.status(400).json({ error: 'name or contact is too long' });
+    }
+
+    const gender = b.gender ? String(b.gender).trim().slice(0, 20) : null;
+    const dob = b.dob ? new Date(b.dob) : null;
+    if (dob && Number.isNaN(dob.getTime())) {
+      return res.status(400).json({ error: 'dob is not a valid date' });
+    }
+    const doctorId = b.doctorId ? String(b.doctorId).trim() : null;
+    const reason = b.reason ? String(b.reason).trim().slice(0, 2000) : null;
+    const priority = ['normal', 'urgent', 'follow_up'].includes(b.priority) ? b.priority : 'normal';
+
+    // Resolve the doctor (if assigned) up-front — we need their name and
+    // department to build the token's display code and to record on the
+    // OPD token for the kiosk board.
+    let doctorName: string | null = null;
+    let department: string | null = b.department ? String(b.department).trim().slice(0, 120) : null;
+    if (doctorId) {
+      const doc = await prisma.user.findFirst({
+        where: { id: doctorId, tenantId, isActive: true },
+        select: { id: true, name: true, profile: true },
+      });
+      if (!doc) return res.status(400).json({ error: 'doctor not found' });
+      doctorName = doc.name;
+      // Department comes from the doctor's profile JSON; fall back to whatever
+      // the caller passed.
+      const profileDept = (doc.profile as any)?.department;
+      if (!department && typeof profileDept === 'string') department = profileDept;
+    }
+
+    // Branch: prefer the receptionist's own branch; fall back to tenant's first.
+    let branchId = userBranchId;
+    if (!branchId) {
+      const fallback = await prisma.branch.findFirst({
+        where: { tenantId },
+        select: { id: true },
+        orderBy: { createdAt: 'asc' },
+      });
+      if (!fallback) return res.status(503).json({ error: 'No branch configured for this tenant' });
+      branchId = fallback.id;
+    }
+
+    // The whole flow lives in one transaction so a crash between any two
+    // writes (e.g. token issued but appointment never created) can't leave
+    // the OPD queue in a half-broken state.
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Find-or-create patient by phone within this tenant.
+      let patient = await tx.patient.findFirst({
+        where: { tenantId, contact },
+        select: { id: true, name: true, mrn: true, contact: true, branchId: true },
+      });
+      let isNewPatient = false;
+      if (!patient) {
+        isNewPatient = true;
+        const last = await tx.patient.findFirst({
+          where: { tenantId },
+          orderBy: { createdAt: 'desc' },
+          select: { mrn: true },
+        });
+        let mrnNumber = 1;
+        if (last) {
+          const n = parseInt(last.mrn.replace(/\D/g, ''), 10);
+          if (!Number.isNaN(n)) mrnNumber = n + 1;
+        }
+        const mrn = `MRN${mrnNumber.toString().padStart(6, '0')}`;
+        const created = await tx.patient.create({
+          data: { tenantId, branchId, mrn, name, contact, gender, dob, referralSourceId: null },
+          select: { id: true, name: true, mrn: true, contact: true, branchId: true },
+        });
+        patient = created;
+      }
+
+      // 2. Compute today's sequential token for this (tenant, doctor).
+      const { start, end } = dayBounds();
+      const lastToken = await tx.opdToken.findFirst({
+        where: { tenantId, issuedAt: { gte: start, lt: end }, doctorId: doctorId || null },
+        orderBy: { tokenNumber: 'desc' },
+        select: { tokenNumber: true },
+      });
+      const tokenNumber = (lastToken?.tokenNumber || 0) + 1;
+      let prefix = 'GEN';
+      if (department) prefix = department.slice(0, 4).toUpperCase();
+      else if (doctorName) prefix = doctorName.charAt(0).toUpperCase();
+      const displayCode = `OPD-${prefix}-${String(tokenNumber).padStart(3, '0')}`;
+
+      // 3. Issue the OPD token.
+      const token = await tx.opdToken.create({
+        data: {
+          tenantId,
+          branchId: patient.branchId || branchId,
+          tokenNumber,
+          displayCode,
+          patientId: patient.id,
+          doctorId,
+          doctorName,
+          department,
+          priority,
+          status: 'waiting',
+        },
+      });
+
+      // 4. Create the Appointment row. They're physically here, so we go
+      //    straight to status='checked-in' and stamp the current HH:MM as
+      //    the appointmentTime. Type='walk-in' so MIS reports can split
+      //    walk-ins vs scheduled.
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2, '0');
+      const mm = String(now.getMinutes()).padStart(2, '0');
+      const todayMidnight = new Date(now);
+      todayMidnight.setHours(0, 0, 0, 0);
+
+      const appointment = await tx.appointment.create({
+        data: {
+          tenantId,
+          patientId: patient.id,
+          doctorId,
+          appointmentDate: todayMidnight,
+          appointmentTime: `${hh}:${mm}`,
+          type: 'walk-in',
+          status: 'checked-in',
+          department,
+          reason,
+          notes: `Walk-in. Token ${displayCode}.`,
+          createdBy: req.user!.userId || null,
+        },
+        select: {
+          id: true,
+          status: true,
+          appointmentDate: true,
+          appointmentTime: true,
+          type: true,
+        },
+      });
+
+      return { patient: { ...patient, isNew: isNewPatient }, appointment, token };
+    });
+
+    void writeAudit({
+      prisma, req,
+      action: 'WALKIN_REGISTER',
+      resource: 'Appointment',
+      resourceId: result.appointment.id,
+      newValue: {
+        patientId: result.patient.id,
+        patientIsNew: result.patient.isNew,
+        tokenDisplayCode: result.token.displayCode,
+        doctorId,
+      },
+    });
+
+    return res.status(201).json(result);
+  } catch (e: any) {
+    console.error('walk-in register', e);
+    res.status(500).json({ error: 'Internal server error', detail: e?.message });
+  }
+});
+
 // Tiny helper for the status-flip endpoints below — they all share the
 // same shape (tenant-check + setStatus + audit).
 async function flipOpdStatus(

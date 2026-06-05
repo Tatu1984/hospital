@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Calendar, Plus, Clock, CheckCircle, UserX } from 'lucide-react';
+import { Calendar, Plus, Clock, CheckCircle, UserX, UserPlus, Ticket } from 'lucide-react';
 import api from '../services/api';
 import MrnLink from '../components/MrnLink';
 
@@ -52,6 +52,20 @@ export default function Appointment() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isRescheduleDialogOpen, setIsRescheduleDialogOpen] = useState(false);
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
+
+  // Walk-in flow: receptionist registers a patient who arrived without a
+  // prior appointment, picks a doctor, and issues an OPD token in one shot.
+  const [isWalkInOpen, setIsWalkInOpen] = useState(false);
+  const [walkInSubmitting, setWalkInSubmitting] = useState(false);
+  const [walkInError, setWalkInError] = useState<string | null>(null);
+  const emptyWalkIn = { name: '', contact: '', gender: '', dob: '', doctorId: '', reason: '', priority: 'normal' };
+  const [walkIn, setWalkIn] = useState({ ...emptyWalkIn });
+  type WalkInResult = {
+    patient: { id: string; name: string; mrn: string; contact: string | null; isNew: boolean };
+    appointment: { id: string; status: string; appointmentTime: string | null };
+    token: { id: string; tokenNumber: number; displayCode: string; doctorName: string | null; department: string | null };
+  };
+  const [walkInResult, setWalkInResult] = useState<WalkInResult | null>(null);
 
   const emptyForm = {
     patientId: '',
@@ -162,6 +176,40 @@ export default function Appointment() {
     }
   };
 
+  const submitWalkIn = async () => {
+    if (walkInSubmitting) return;
+    if (!walkIn.name.trim() || !walkIn.contact.trim()) {
+      setWalkInError('Name and contact (phone) are required.');
+      return;
+    }
+    setWalkInError(null);
+    setWalkInSubmitting(true);
+    try {
+      const r = await api.post('/api/walk-ins', {
+        name: walkIn.name.trim(),
+        contact: walkIn.contact.trim(),
+        gender: walkIn.gender || undefined,
+        dob: walkIn.dob || undefined,
+        doctorId: walkIn.doctorId || undefined,
+        reason: walkIn.reason.trim() || undefined,
+        priority: walkIn.priority,
+      });
+      setWalkInResult(r.data as WalkInResult);
+      await fetchAll();
+    } catch (e: any) {
+      setWalkInError(e?.response?.data?.error || e?.response?.data?.detail || 'Walk-in registration failed.');
+    } finally {
+      setWalkInSubmitting(false);
+    }
+  };
+
+  const closeWalkIn = () => {
+    setIsWalkInOpen(false);
+    setWalkIn({ ...emptyWalkIn });
+    setWalkInError(null);
+    setWalkInResult(null);
+  };
+
   const getStatusColor = (status: string): any => {
     const colors: Record<string, string> = {
       scheduled: 'secondary',
@@ -198,6 +246,152 @@ export default function Appointment() {
             <p className="text-sm text-slate-500 mt-0.5">Schedule and manage patient appointments</p>
           </div>
         </div>
+        <div className="flex items-center gap-2 flex-wrap">
+        <Dialog
+          open={isWalkInOpen}
+          onOpenChange={(open) => { if (open) setIsWalkInOpen(true); else closeWalkIn(); }}
+        >
+          <DialogTrigger asChild>
+            <Button
+              variant="outline"
+              className="gap-1.5 h-10 px-4 rounded-xl shadow-sm border-amber-200 text-amber-700 hover:bg-amber-50 hover:text-amber-800"
+            >
+              <UserPlus className="w-4 h-4" />
+              Walk-in
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-xl">
+            {!walkInResult ? (
+              <>
+                <DialogHeader>
+                  <DialogTitle>Walk-in Registration</DialogTitle>
+                  <DialogDescription>
+                    Register a patient who arrived without an appointment. Creates the
+                    patient (if new), opens a same-day appointment, and issues an OPD token.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="grid grid-cols-2 gap-4 py-2">
+                  <div className="space-y-1.5 col-span-2">
+                    <Label htmlFor="wi-name">Full name *</Label>
+                    <Input id="wi-name" value={walkIn.name}
+                      onChange={(e) => setWalkIn(s => ({ ...s, name: e.target.value }))}
+                      placeholder="e.g. Asha Verma" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="wi-contact">Phone *</Label>
+                    <Input id="wi-contact" value={walkIn.contact}
+                      onChange={(e) => setWalkIn(s => ({ ...s, contact: e.target.value }))}
+                      placeholder="+91 …" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="wi-gender">Gender</Label>
+                    <Select value={walkIn.gender || undefined}
+                      onValueChange={(v) => setWalkIn(s => ({ ...s, gender: v }))}>
+                      <SelectTrigger id="wi-gender"><SelectValue placeholder="—" /></SelectTrigger>
+                      <SelectContent>
+                        {['Male', 'Female', 'Other'].map(g => <SelectItem key={g} value={g}>{g}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="wi-dob">Date of birth</Label>
+                    <Input id="wi-dob" type="date" value={walkIn.dob}
+                      onChange={(e) => setWalkIn(s => ({ ...s, dob: e.target.value }))} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="wi-doctor">Doctor</Label>
+                    <Select value={walkIn.doctorId || undefined}
+                      onValueChange={(v) => setWalkIn(s => ({ ...s, doctorId: v }))}>
+                      <SelectTrigger id="wi-doctor">
+                        <SelectValue placeholder={doctors.length ? 'Assign now (optional)' : 'No doctors available'} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {doctors.map(d => (
+                          <SelectItem key={d.id} value={d.id}>
+                            {d.name}{d.department ? ` — ${d.department}` : ''}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5 col-span-2">
+                    <Label htmlFor="wi-reason">Chief complaint</Label>
+                    <Input id="wi-reason" value={walkIn.reason}
+                      onChange={(e) => setWalkIn(s => ({ ...s, reason: e.target.value }))}
+                      placeholder="e.g. Chest pain, fever 3 days, follow-up" />
+                  </div>
+                  <div className="space-y-1.5 col-span-2">
+                    <Label>Priority</Label>
+                    <Select value={walkIn.priority}
+                      onValueChange={(v) => setWalkIn(s => ({ ...s, priority: v }))}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="normal">Normal</SelectItem>
+                        <SelectItem value="urgent">Urgent</SelectItem>
+                        <SelectItem value="follow_up">Follow-up</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {walkInError && (
+                    <div className="col-span-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                      {walkInError}
+                    </div>
+                  )}
+                </div>
+                <DialogFooter>
+                  <Button variant="ghost" onClick={closeWalkIn} disabled={walkInSubmitting}>Cancel</Button>
+                  <Button onClick={submitWalkIn} disabled={walkInSubmitting}
+                    className="bg-amber-600 hover:bg-amber-700 text-white">
+                    {walkInSubmitting ? 'Registering…' : 'Register & Issue Token'}
+                  </Button>
+                </DialogFooter>
+              </>
+            ) : (
+              <>
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    <CheckCircle className="w-5 h-5 text-emerald-600" /> Token issued
+                  </DialogTitle>
+                  <DialogDescription>
+                    Hand this token to the patient and direct them to the OPD waiting area.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="py-4 space-y-4">
+                  <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-center">
+                    <div className="flex items-center justify-center gap-2 text-amber-700 text-xs uppercase tracking-wider font-semibold">
+                      <Ticket className="w-4 h-4" /> OPD Token
+                    </div>
+                    <div className="mt-2 text-4xl font-bold tracking-tight text-amber-900">
+                      {walkInResult.token.displayCode}
+                    </div>
+                    {walkInResult.token.doctorName && (
+                      <div className="mt-1 text-sm text-amber-800">
+                        For {walkInResult.token.doctorName}
+                        {walkInResult.token.department ? ` · ${walkInResult.token.department}` : ''}
+                      </div>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <div className="text-slate-500 text-xs">Patient</div>
+                      <div className="font-medium text-slate-900">{walkInResult.patient.name}</div>
+                      <div className="text-slate-500">{walkInResult.patient.mrn}{walkInResult.patient.isNew ? ' · NEW' : ''}</div>
+                    </div>
+                    <div>
+                      <div className="text-slate-500 text-xs">Appointment</div>
+                      <div className="font-medium text-slate-900 capitalize">{walkInResult.appointment.status}</div>
+                      <div className="text-slate-500">{walkInResult.appointment.appointmentTime || '—'} today</div>
+                    </div>
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => window.print()}>Print</Button>
+                  <Button onClick={closeWalkIn} className="bg-slate-900 hover:bg-slate-800">Done</Button>
+                </DialogFooter>
+              </>
+            )}
+          </DialogContent>
+        </Dialog>
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
             <Button className="gap-1.5 h-10 px-4 rounded-xl shadow-sm bg-slate-900 hover:bg-slate-800">
@@ -274,6 +468,7 @@ export default function Appointment() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
