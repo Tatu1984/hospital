@@ -408,6 +408,12 @@ app.use('/api/mobile/v1', mobileRouter);
 import { clinicalModulesRouter } from './clinical-modules';
 // Side-effect import — registers Claude-API copilot routes onto the shared router.
 import './clinical-copilot';
+// View-only enforcement for accounts flagged read-only on a section (e.g.
+// the auditor admin). Mounted BEFORE clinicalModulesRouter so it intercepts
+// that router's auth-only write endpoints. Blocks write verbs only; GETs
+// (viewing, incl. Audit Log + Activity Monitor) always pass through.
+import { readOnlyGuard } from './middleware/readOnlyGuard';
+app.use(readOnlyGuard);
 app.use('/api', clinicalModulesRouter);
 
 app.get('/api/health', async (req: Request, res: Response) => {
