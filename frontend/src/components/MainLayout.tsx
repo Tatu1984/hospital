@@ -390,7 +390,7 @@ const MainLayout = () => {
                 <DropdownMenuContent align="end" className="w-56 bg-white rounded-xl">
                   <DropdownMenuLabel className="text-[11px] uppercase tracking-wider text-slate-500 font-medium">Account</DropdownMenuLabel>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem className="text-[13px]">
+                  <DropdownMenuItem onClick={() => navigate('/app/profile')} className="text-[13px] cursor-pointer">
                     <User className="mr-2 h-3.5 w-3.5" />
                     <span>Profile</span>
                   </DropdownMenuItem>

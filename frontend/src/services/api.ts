@@ -141,6 +141,12 @@ export const authAPI = {
   refresh: () => api.post('/api/auth/refresh', {}),
   logout: () => api.post('/api/auth/logout'),
   me: () => api.get('/api/auth/me'),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    api.post('/api/auth/change-password', { currentPassword, newPassword }),
+};
+
+export const userAPI = {
+  update: (id: string, data: any) => api.put(`/api/users/${id}`, data),
 };
 
 export const patientAPI = {
