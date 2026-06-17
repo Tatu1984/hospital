@@ -97,6 +97,7 @@ const CathLab = lazy(() => import('./pages/CathLab'));
 const Radiotherapy = lazy(() => import('./pages/Radiotherapy'));
 // Phase 5 closeout — OPD queue + kiosk + NPS + patient portal.
 const OpdQueue = lazy(() => import('./pages/OpdQueue'));
+const Profile = lazy(() => import('./pages/Profile'));
 const KioskBoard = lazy(() => import('./pages/KioskBoard'));
 const Feedback = lazy(() => import('./pages/Feedback'));
 const PatientPortalLogin = lazy(() => import('./pages/portal/PatientPortalLogin'));
@@ -268,6 +269,7 @@ const AppRoutes = () => {
         }
       >
         <Route index element={<PortalLanding />} />
+        <Route path="profile" element={<Suspense fallback={<RouteSpinner />}><Profile /></Suspense>} />
         <Route path="live-dashboard" element={<RoleProtectedRoute path="live-dashboard"><LiveDashboard /></RoleProtectedRoute>} />
         {/* Comprehensive patient chart — opened from doctor dashboard rows.
             Auth via the shared portal token; backend endpoint is RBAC-gated
