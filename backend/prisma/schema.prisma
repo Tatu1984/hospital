@@ -658,6 +658,171 @@ model AuditLog {
   @@map("audit_logs")
 }
 
+// ============================================================================
+// LOGIN SECURITY / IP TRACKING  (ported from HRMS, multi-tenant)
+// ----------------------------------------------------------------------------
+// AuthEvent      — one row per login/logout/failed attempt, with the network,
+//                  IP-geo, precise GPS, device and anomaly context captured at
+//                  that moment. The audit feed + risk dashboard read from here.
+// LoginSession   — a lightweight session row created at login (keyed by the
+//                  access token's jti). Hospital auth is otherwise stateless
+//                  JWT; this row exists so we can detect concurrent sessions
+//                  from different networks and revoke on logout.
+// TrustedLoginLocation — admin allowlist of (user, IP). Approving a flagged
+//                  login adds the IP here so it never re-flags.
+// LocationConsent — per-user record of precise-location (GPS) consent plus the
+//                  latest fix, for the consent gate + admin map.
+// ============================================================================
+
+enum AuthEventType {
+  LOGIN_SUCCESS
+  LOGIN_FAILED
+  LOGOUT
+  SESSION_EXPIRED
+  SESSION_REVOKED
+}
+
+enum LocationConsentStatus {
+  PENDING
+  GRANTED
+  DENIED
+}
+
+model AuthEvent {
+  id            String        @id @default(uuid())
+  tenantId      String
+  eventType     AuthEventType
+  userId        String?
+  userName      String?
+  userRole      String?
+  sessionId     String? // jti of the access token issued for this login
+  usernameTried String? // captured even when the user does not exist (failed logins)
+  failureReason String?
+
+  // Network + IP geolocation
+  ipAddress    String?
+  city         String?
+  district     String? // locality / neighbourhood
+  region       String?
+  postal       String? // PIN / ZIP code
+  country      String?
+  latitude     Float?
+  longitude    Float?
+  geoSource    String? // "vercel-ip" | "ipinfo" | "ip-api" | "unknown"
+  isp          String?
+  asn          String?
+  org          String?
+  isVpnOrProxy Boolean?
+  ipTimezone   String? // tz the IP maps to; mismatch vs clientTimezone is a signal
+
+  // Device
+  userAgent         String?
+  browserName       String?
+  osName            String?
+  deviceType        String?
+  deviceFingerprint String?
+  clientTimezone    String? // browser-reported tz
+
+  // Precise browser GPS — only populated once the user consents to location
+  // sharing (navigator.geolocation). Far more accurate than IP geo.
+  gpsLatitude  Float?
+  gpsLongitude Float?
+  gpsAccuracyM Float? // accuracy radius in metres reported by the browser
+
+  // Anomaly detection
+  anomalies Json? // Array<{ code, severity, detail }>
+  riskScore Int?
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([userId, eventType])
+  @@index([ipAddress])
+  @@index([deviceFingerprint])
+  @@map("auth_events")
+}
+
+model LoginSession {
+  id            String    @id @default(uuid())
+  tenantId      String
+  sessionId     String    @unique // jti baked into the access token
+  userId        String
+  userName      String?
+  userRole      String?
+  createdAt     DateTime  @default(now())
+  expiresAt     DateTime
+  lastSeenAt    DateTime  @default(now())
+  revokedAt     DateTime?
+  revokedReason String?
+
+  // Snapshot of the login context (so the active-session list is self-contained)
+  ipAddress         String?
+  city              String?
+  district          String?
+  region            String?
+  postal            String?
+  country           String?
+  latitude          Float?
+  longitude         Float?
+  isp               String?
+  asn               String?
+  isVpnOrProxy      Boolean?
+  deviceFingerprint String?
+  userAgent         String?
+
+  @@index([tenantId, userId])
+  @@index([userId, revokedAt, expiresAt])
+  @@map("login_sessions")
+}
+
+model TrustedLoginLocation {
+  id        String  @id @default(uuid())
+  tenantId  String
+  userId    String
+  userName  String?
+  ipAddress String?
+
+  // Location snapshot at approval time (for display in the audit UI)
+  city    String?
+  region  String?
+  country String?
+  asn     String?
+  isp     String?
+
+  label          String? // optional admin note, e.g. "home office"
+  approvedBy     String? // userId of the admin who approved
+  approvedByName String?
+  approvedAt     DateTime @default(now())
+  lastSeenAt     DateTime @default(now()) // bumped each time a trusted login arrives
+
+  @@unique([userId, ipAddress])
+  @@index([tenantId, userId])
+  @@map("trusted_login_locations")
+}
+
+model LocationConsent {
+  id          String                @id @default(uuid())
+  tenantId    String
+  userId      String                @unique
+  userName    String?
+  userRole    String?
+  status      LocationConsentStatus @default(PENDING)
+  respondedAt DateTime? // when the user last granted/denied
+
+  // Latest precise fix captured while consent was GRANTED
+  latitude   Float?
+  longitude  Float?
+  accuracyM  Float?
+  capturedAt DateTime?
+  userAgent  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, status])
+  @@map("location_consents")
+}
+
 model Drug {
   id          String  @id @default(uuid())
   name        String

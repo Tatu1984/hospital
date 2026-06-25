@@ -174,6 +174,14 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   'GET /api/admin/activity/overview': ['system:manage'],
   'GET /api/admin/activity/timeline/:userId': ['system:manage'],
   'GET /api/admin/activity/page-stats': ['system:manage'],
+  // Login security / IP tracking. Precise-location consent is self-service
+  // (any authenticated user records their own GPS consent), so it uses the
+  // permissive 'dashboard:view' key. The admin dashboard + approve action are
+  // system:manage.
+  'GET /api/auth/location-consent': ['dashboard:view'],
+  'POST /api/auth/location-consent': ['dashboard:view'],
+  'GET /api/admin/login-security': ['system:manage'],
+  'POST /api/admin/auth-events/:id/approve': ['system:manage'],
   // PAGE_VIEW logger — every authenticated user posts here on route
   // change. The endpoint is dashboard:view-gated (a permission every
   // role has) so it doesn't break for any logged-in user.

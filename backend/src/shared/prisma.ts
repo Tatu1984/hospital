@@ -18,8 +18,37 @@ import {
   decryptPatientFields,
 } from './phi-encryption';
 
+// Normalise the Postgres connection string before Prisma uses it. Neon's
+// Vercel integration periodically rewrites DATABASE_URL with
+// `channel_binding=require` and WITHOUT `pgbouncer=true`. Prisma 5.7's query
+// engine can't negotiate channel binding and needs pgbouncer mode on Neon's
+// pooled (`-pooler`) host — so that silent rewrite intermittently kills ALL
+// database access (requests hang on "Can't reach database" / "Timed out
+// fetching a connection from the pool", the app "randomly" stops loading).
+// Sanitising the URL here means a surprise env change can't take prod down.
+function normalizeDbUrl(raw: string | undefined): string | undefined {
+  if (!raw) return raw;
+  try {
+    const u = new URL(raw);
+    u.searchParams.delete('channel_binding'); // Prisma's engine can't do it
+    if (!u.searchParams.has('sslmode')) u.searchParams.set('sslmode', 'require');
+    if (/-pooler\./.test(u.hostname)) {
+      // Required for Prisma against a PgBouncer / Neon pooled endpoint.
+      if (!u.searchParams.has('pgbouncer')) u.searchParams.set('pgbouncer', 'true');
+      // One connection per serverless instance; Vercel scales horizontally.
+      if (!u.searchParams.has('connection_limit')) u.searchParams.set('connection_limit', '1');
+    }
+    return u.toString();
+  } catch {
+    return raw; // not a parseable URL — leave it untouched
+  }
+}
+
+const DATABASE_URL = normalizeDbUrl(process.env.DATABASE_URL);
+
 const base = new PrismaClient({
   log: process.env.PRISMA_LOG === 'true' ? ['query', 'warn', 'error'] : ['warn', 'error'],
+  ...(DATABASE_URL ? { datasources: { db: { url: DATABASE_URL } } } : {}),
 });
 
 // Encrypt on write, decrypt on read for Patient PHI fields. Both directions
