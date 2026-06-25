@@ -116,6 +116,16 @@ import { paginate } from './utils/tenantScope';
 
 // Audit log writer (persists to AuditLog table)
 import { writeAudit, clientIp } from './utils/audit';
+import { resolveGeo } from './shared/geo';
+import { parseDevice, type ClientHints } from './shared/device';
+import {
+  recordAuthEvent,
+  detectLoginAnomalies,
+  createLoginSession,
+  revokeLoginSession,
+  approveLoginEvent,
+  trustedKeysFor,
+} from './shared/auth-audit';
 import { encryptCredentials, decryptCredentials } from './utils/integrationSecrets';
 import { assertSafeOutboundUrl, UnsafeOutboundUrlError } from './utils/ssrf';
 import {
@@ -131,7 +141,7 @@ import {
 // OT live-status feature
 import { notificationService } from './services/notification';
 import { SURGERY_STAGES, isValidStage, getStage, legacyStatusToStage } from './services/surgeryStages';
-import { randomBytes } from 'crypto';
+import { randomBytes, randomUUID } from 'crypto';
 
 // Mobile + layered-architecture API surface (see backend/src/modules/README.md)
 import mobileRouter from './modules';
@@ -868,8 +878,22 @@ app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (r
     const validPassword = await bcrypt.compare(password, user.passwordHash);
     if (!validPassword) {
       const failedCount = await recordFailedLogin(user.id);
-      auditLogger.securityEvent('LOGIN_FAILED', { username, reason: 'invalid_password', ip: clientIp(req), failedCount });
+      const failIp = clientIp(req);
+      auditLogger.securityEvent('LOGIN_FAILED', { username, reason: 'invalid_password', ip: failIp, failedCount });
       void writeAudit({ prisma, req, userId: user.id, tenantId: user.tenantId, action: 'LOGIN_FAILED', resource: 'Authentication', resourceId: username });
+      void recordAuthEvent({
+        tenantId: user.tenantId,
+        eventType: 'LOGIN_FAILED',
+        userId: user.id,
+        userName: user.name,
+        userRole: user.roleIds?.[0] ?? null,
+        usernameTried: username,
+        failureReason: 'invalid_password',
+        ipAddress: failIp,
+        userAgent: req.headers['user-agent'] as string | undefined,
+        geo: await resolveGeo(req, failIp),
+        device: parseDevice(req.headers['user-agent']),
+      });
       // Tell the user when they're getting close — once they hit the
       // threshold the next attempt returns ACCOUNT_LOCKED above. Not
       // leaking exact remaining attempts to keep brute-force harder.
@@ -892,6 +916,27 @@ app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (r
     // take effect for the affected user until their token expires
     // (max 1 hour) — same trade-off the JWT-based RBAC already has for
     // role changes.
+    // ---- IP tracking / login security (ported from HRMS) -----------------
+    // Resolve the richest location we can (Vercel headers + ipinfo + reverse
+    // geocode + ip-api baseline), fingerprint the device, and score the login
+    // for anomalies (impossible travel, VPN, new device/country, concurrent
+    // sessions from another network, etc.). The access token carries a session
+    // id (jti) so we can track and revoke this specific session.
+    const ip = clientIp(req);
+    const clientContext = ((req.body && req.body.clientContext) || {}) as ClientHints;
+    const device = parseDevice(req.headers['user-agent'], clientContext);
+    const geo = await resolveGeo(req, ip);
+    const { anomalies, riskScore } = await detectLoginAnomalies({
+      tenantId: user.tenantId,
+      userId: user.id,
+      ipAddress: ip,
+      geo,
+      device,
+      clientTimezone: clientContext.timezone,
+    });
+    const userRole = user.roleIds?.[0] ?? null;
+    const sessionId = randomUUID();
+
     const accessTokenPayload = {
       userId: user.id,
       username: user.username,
@@ -900,6 +945,7 @@ app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (r
       roleIds: user.roleIds,
       extraPermissions: user.extraPermissions || [],
       revokedPermissions: user.revokedPermissions || [],
+      jti: sessionId,
     };
     const token = jwt.sign(
       accessTokenPayload,
@@ -907,15 +953,46 @@ app.post('/api/auth/login', authRateLimiter, validateBody(loginSchema), async (r
       { expiresIn: process.env.JWT_EXPIRES_IN || '1h' } as jwt.SignOptions
     );
     const refreshToken = jwt.sign(
-      { userId: user.id, type: 'refresh' },
+      // jti ties the refresh token to the same session so logout/rotation can
+      // resolve and revoke the LoginSession row.
+      { userId: user.id, type: 'refresh', jti: sessionId },
       process.env.REFRESH_TOKEN_SECRET!,
       { expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || '7d' } as jwt.SignOptions
     );
+    const refreshExp = (jwt.decode(refreshToken) as { exp?: number } | null)?.exp;
+    const sessionExpiresAt = refreshExp ? new Date(refreshExp * 1000) : new Date(Date.now() + 7 * 24 * 3600 * 1000);
 
     // lastLoginAt is already stamped inside clearFailedLogins above.
 
-    auditLogger.securityEvent('LOGIN_SUCCESS', { userId: user.id, username, ip: clientIp(req) });
+    auditLogger.securityEvent('LOGIN_SUCCESS', { userId: user.id, username, ip, riskScore, anomalies: anomalies.map((a) => a.code) });
     void writeAudit({ prisma, req, userId: user.id, tenantId: user.tenantId, action: 'LOGIN_SUCCESS', resource: 'Authentication', resourceId: user.id });
+    void recordAuthEvent({
+      tenantId: user.tenantId,
+      eventType: 'LOGIN_SUCCESS',
+      userId: user.id,
+      userName: user.name,
+      userRole,
+      sessionId,
+      ipAddress: ip,
+      userAgent: req.headers['user-agent'] as string | undefined,
+      geo,
+      device,
+      clientTimezone: clientContext.timezone,
+      anomalies,
+      riskScore,
+    });
+    void createLoginSession({
+      tenantId: user.tenantId,
+      sessionId,
+      userId: user.id,
+      userName: user.name,
+      userRole,
+      expiresAt: sessionExpiresAt,
+      ipAddress: ip,
+      geo,
+      device,
+      userAgent: req.headers['user-agent'] as string | undefined,
+    });
 
     // Set the refresh token as an httpOnly cookie so JS in the page (and
     // therefore an XSS payload) can't read it. Cross-site cookie because
@@ -979,6 +1056,15 @@ app.post('/api/auth/refresh', async (req: Request, res: Response) => {
     }
     // Rotate: blacklist the just-used refresh so it can't be replayed.
     void blacklistRefreshToken(refreshToken, { userId: user.id, reason: 'rotation' });
+    // Carry the session id forward across rotation so the LoginSession row
+    // stays the same; bump its lastSeenAt so concurrent-session detection
+    // treats an actively-refreshing session as live.
+    const sessionId: string | undefined = typeof decoded.jti === 'string' ? decoded.jti : undefined;
+    if (sessionId) {
+      void prisma.loginSession
+        .updateMany({ where: { sessionId, revokedAt: null }, data: { lastSeenAt: new Date() } })
+        .catch(() => undefined);
+    }
     const newAccess = jwt.sign(
       {
         userId: user.id,
@@ -991,12 +1077,13 @@ app.post('/api/auth/refresh', async (req: Request, res: Response) => {
         // refresh cycle (not stuck on the old token until logout).
         extraPermissions: user.extraPermissions || [],
         revokedPermissions: user.revokedPermissions || [],
+        ...(sessionId ? { jti: sessionId } : {}),
       },
       process.env.JWT_SECRET!,
       { expiresIn: process.env.JWT_EXPIRES_IN || '1h' } as jwt.SignOptions
     );
     const newRefresh = jwt.sign(
-      { userId: user.id, type: 'refresh' },
+      { userId: user.id, type: 'refresh', ...(sessionId ? { jti: sessionId } : {}) },
       process.env.REFRESH_TOKEN_SECRET!,
       { expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || '7d' } as jwt.SignOptions
     );
@@ -1020,16 +1107,170 @@ app.post('/api/auth/logout', async (req: Request, res: Response) => {
   clearRefreshCookie(res);
   if (refreshToken) {
     let userId: string | null = null;
+    let sessionId: string | null = null;
     try {
-      const decoded = jwt.decode(refreshToken) as { userId?: string } | null;
+      const decoded = jwt.decode(refreshToken) as { userId?: string; jti?: string } | null;
       userId = decoded?.userId || null;
+      sessionId = decoded?.jti || null;
     } catch {
       /* ignore — still want to record the blacklist row */
     }
     await blacklistRefreshToken(refreshToken, { userId, reason: 'logout' }).catch(() => undefined);
+    if (sessionId) {
+      // Revoke the LoginSession + record a LOGOUT auth event. The session row
+      // carries the tenant context (logout is unauthenticated otherwise).
+      const session = await prisma.loginSession.findUnique({ where: { sessionId } }).catch(() => null);
+      void revokeLoginSession(sessionId, 'logout');
+      if (session) {
+        void recordAuthEvent({
+          tenantId: session.tenantId,
+          eventType: 'LOGOUT',
+          userId: session.userId,
+          userName: session.userName,
+          userRole: session.userRole,
+          sessionId,
+          ipAddress: clientIp(req),
+          userAgent: req.headers['user-agent'] as string | undefined,
+        });
+      }
+    }
   }
   auditLogger.securityEvent('LOGOUT', { ip: clientIp(req) });
   return res.status(204).end();
+});
+
+// ============================================
+// LOCATION CONSENT (precise browser GPS)
+// ============================================
+// The frontend consent gate asks the signed-in user to share precise device
+// location (navigator.geolocation). On GRANT we store the fix here AND stamp
+// it onto this session's LOGIN_SUCCESS auth event, so the admin dashboard can
+// show metre-accurate location instead of approximate IP geo.
+
+app.get('/api/auth/location-consent', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const row = await prisma.locationConsent.findUnique({ where: { userId: req.user.userId } });
+    return res.json({ status: row?.status ?? 'NONE' });
+  } catch {
+    // Table may not exist yet (migration not applied) — treat as not-yet-asked.
+    return res.json({ status: 'NONE' });
+  }
+});
+
+app.post('/api/auth/location-consent', authenticateToken, async (req: any, res: Response) => {
+  const { status, latitude, longitude, accuracy } = req.body || {};
+  if (status !== 'GRANTED' && status !== 'DENIED') {
+    return res.status(400).json({ error: 'INVALID_REQUEST', message: 'status must be GRANTED or DENIED' });
+  }
+  const hasFix =
+    status === 'GRANTED' && typeof latitude === 'number' && typeof longitude === 'number';
+  try {
+    const base = {
+      tenantId: req.user.tenantId,
+      userName: req.user.username ?? null,
+      userRole: req.user.roleIds?.[0] ?? null,
+      status,
+      respondedAt: new Date(),
+      userAgent: (req.headers['user-agent'] as string) ?? null,
+      ...(hasFix
+        ? { latitude, longitude, accuracyM: typeof accuracy === 'number' ? accuracy : null, capturedAt: new Date() }
+        : {}),
+    };
+    await prisma.locationConsent.upsert({
+      where: { userId: req.user.userId },
+      create: { userId: req.user.userId, ...base },
+      update: base,
+    });
+
+    // Stamp the precise fix onto this session's login event for the audit map.
+    if (hasFix && req.user.jti) {
+      await prisma.authEvent
+        .updateMany({
+          where: { sessionId: req.user.jti, eventType: 'LOGIN_SUCCESS' },
+          data: { gpsLatitude: latitude, gpsLongitude: longitude, gpsAccuracyM: typeof accuracy === 'number' ? accuracy : null },
+        })
+        .catch(() => undefined);
+    }
+    return res.status(204).end();
+  } catch (e: any) {
+    logger.warn('location-consent write failed', { error: e?.message });
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ============================================
+// ADMIN: LOGIN SECURITY DASHBOARD
+// ============================================
+// Recent login events with risk scores + anomalies, active sessions, and
+// per-user location-consent state. Approving a flagged event allowlists its
+// (user, IP) so it stops re-flagging.
+
+app.get('/api/admin/login-security', authenticateToken, requirePermission('system:manage'), async (req: any, res: Response) => {
+  try {
+    const tenantId: string = req.user.tenantId;
+    const limit = Math.min(Number(req.query.limit) || 300, 1000);
+
+    const events = await prisma.authEvent.findMany({
+      where: { tenantId },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+    const trusted = await trustedKeysFor(events.map((e) => e.userId).filter(Boolean) as string[]);
+    const withTrust = events.map((e) => ({
+      ...e,
+      trusted: e.userId && e.ipAddress ? trusted.has(`${e.userId}|${e.ipAddress}`) : false,
+    }));
+
+    const now = new Date();
+    const sessions = await prisma.loginSession.findMany({
+      where: { tenantId, revokedAt: null, expiresAt: { gt: now } },
+      orderBy: { lastSeenAt: 'desc' },
+      take: 300,
+    });
+    const consents = await prisma.locationConsent.findMany({
+      where: { tenantId },
+      orderBy: { updatedAt: 'desc' },
+      take: 500,
+    });
+
+    return res.json({ events: withTrust, sessions, consents });
+  } catch (e: any) {
+    logger.warn('login-security fetch failed', { error: e?.message });
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/admin/auth-events/:id/approve', authenticateToken, requirePermission('system:manage'), async (req: any, res: Response) => {
+  try {
+    const tenantId: string = req.user.tenantId;
+    const event = await prisma.authEvent.findFirst({ where: { id: req.params.id, tenantId } });
+    if (!event) return res.status(404).json({ error: 'NOT_FOUND' });
+
+    const trustedId = await approveLoginEvent({
+      event: {
+        tenantId,
+        userId: event.userId,
+        userName: event.userName,
+        ipAddress: event.ipAddress,
+        city: event.city,
+        region: event.region,
+        country: event.country,
+        asn: event.asn,
+        isp: event.isp,
+      },
+      approvedBy: req.user.userId,
+      approvedByName: req.user.username,
+      label: typeof req.body?.label === 'string' ? req.body.label : null,
+    });
+    if (!trustedId) {
+      return res.status(400).json({ error: 'INVALID_EVENT', message: 'Event has no user/IP to trust' });
+    }
+    void writeAudit({ prisma, req, userId: event.userId, tenantId, action: 'LOGIN_LOCATION_APPROVED', resource: 'Authentication', resourceId: event.id });
+    return res.json({ trustedId });
+  } catch (e: any) {
+    logger.warn('auth-event approve failed', { error: e?.message });
+    return res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // ============================================
