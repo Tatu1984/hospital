@@ -13,6 +13,7 @@ export type NotificationType =
   | 'PAYMENT_RECEIPT'
   | 'BILL_GENERATED'
   | 'PASSWORD_RESET'
+  | 'PASSWORD_RESET_ADMIN_ALERT'
   | 'EMERGENCY_ALERT'
   | 'ADMISSION_NOTIFICATION'
   | 'SURGERY_SCHEDULED'
@@ -37,12 +38,13 @@ interface SMSConfig {
 }
 
 interface EmailConfig {
-  provider: 'smtp' | 'sendgrid' | 'aws-ses' | 'mock';
+  provider: 'smtp' | 'sendgrid' | 'resend' | 'aws-ses' | 'mock';
   host?: string;
   port?: number;
   user?: string;
   pass?: string;
   apiKey?: string;
+  resendApiKey?: string;
   from?: string;
 }
 
@@ -264,7 +266,7 @@ Best regards,
     },
   },
   PASSWORD_RESET: {
-    sms: 'Your OTP for password reset is {{otp}}. Valid for 10 minutes. Do not share. {{hospitalName}}',
+    sms: 'Password reset requested for your {{hospitalName}} account. Open the link sent to your email to continue.',
     email: {
       subject: 'Password Reset Request - {{hospitalName}}',
       body: `
@@ -272,13 +274,31 @@ Dear {{userName}},
 
 You have requested to reset your password.
 
-Your OTP is: {{otp}}
+Click the link below to choose a new password:
+{{resetLink}}
 
-This OTP is valid for 10 minutes.
+This link is valid for 30 minutes.
 
-If you did not request this, please contact IT support immediately.
+If you did not request this, please contact IT support immediately and ignore this email.
 
 Best regards,
+{{hospitalName}}
+      `,
+    },
+  },
+  PASSWORD_RESET_ADMIN_ALERT: {
+    sms: 'Password reset requested at {{hospitalName}} by {{requestingUsername}} ({{requestingEmail}}).',
+    email: {
+      subject: 'Password Reset Requested - {{hospitalName}}',
+      body: `
+A user has requested a password reset and needs your action.
+
+Username: {{requestingUsername}}
+Email: {{requestingEmail}}
+Requested At: {{timestamp}}
+
+Please verify the user's identity and reset their password from the admin panel (Users > Reset Password), then share the new password with them through a trusted channel.
+
 {{hospitalName}}
       `,
     },
@@ -545,7 +565,12 @@ class EmailService {
       user: config.email?.user,
       pass: config.email?.pass,
       apiKey: process.env.SENDGRID_API_KEY,
-      from: config.email?.from || 'noreply@hospital.com',
+      resendApiKey: process.env.RESEND_API_KEY,
+      // EMAIL_FROM is the dedicated var for API-based providers (SendGrid,
+      // Resend). config.email.from reads SMTP_FROM, which only applies to
+      // the SMTP path — checking it first here meant EMAIL_FROM was always
+      // shadowed by its 'noreply@hospital.com' default and silently ignored.
+      from: process.env.EMAIL_FROM || config.email?.from || 'noreply@hospital.com',
     };
   }
 
@@ -556,7 +581,10 @@ class EmailService {
     attachments?: any[]
   ): Promise<boolean> {
     try {
-      if (this.config.provider === 'mock' || !this.config.host) {
+      // Only smtp actually needs `host`; sendgrid/resend/aws-ses authenticate
+      // with an API key instead, so gating on `host` here would silently
+      // fall through to mock for those providers even when fully configured.
+      if (this.config.provider === 'mock') {
         // Mock implementation - log instead of sending
         logger.info('EMAIL_MOCK', {
           to,
@@ -573,6 +601,8 @@ class EmailService {
           return await this.sendViaSMTP(to, subject, body, attachments);
         case 'sendgrid':
           return await this.sendViaSendGrid(to, subject, body, attachments);
+        case 'resend':
+          return await this.sendViaResend(to, subject, body, attachments);
         case 'aws-ses':
           return await this.sendViaAWSSES(to, subject, body, attachments);
         default:
@@ -638,6 +668,50 @@ class EmailService {
       return true;
     } catch (e) {
       logger.error('SendGrid email network failure', { e });
+      return false;
+    }
+  }
+
+  // Resend via its REST API (no SDK dependency, same fetch-based pattern as
+  // the other providers). Requires RESEND_API_KEY. EMAIL_FROM must be a
+  // verified sender/domain in the Resend dashboard, otherwise the API
+  // rejects the send with a 403. Body is sent as both text and a minimal
+  // HTML alternative so it renders in any client.
+  private async sendViaResend(
+    to: string,
+    subject: string,
+    body: string,
+    _attachments?: any[]
+  ): Promise<boolean> {
+    const apiKey = this.config.resendApiKey || process.env.RESEND_API_KEY;
+    const from = this.config.from || process.env.EMAIL_FROM;
+    if (!apiKey || !from) {
+      logger.warn('Resend email skipped — missing RESEND_API_KEY / EMAIL_FROM');
+      return false;
+    }
+    try {
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from,
+          to: [to],
+          subject,
+          text: body,
+          html: `<pre style="font-family:system-ui,sans-serif;white-space:pre-wrap;">${escapeHtml(body)}</pre>`,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.text();
+        logger.error('Resend email non-2xx', { status: res.status, err: err.slice(0, 300) });
+        return false;
+      }
+      return true;
+    } catch (e) {
+      logger.error('Resend email network failure', { e });
       return false;
     }
   }

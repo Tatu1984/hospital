@@ -9,21 +9,21 @@ import { useToast } from '../components/Toast';
 
 export default function ForgotPassword() {
   const toast = useToast();
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email) {
-      toast.warning('Missing email', 'Enter the email associated with your account.');
+    if (!username) {
+      toast.warning('Missing username', 'Enter the username associated with your account.');
       return;
     }
     setSubmitting(true);
     try {
-      await api.post('/api/auth/forgot-password', { email });
+      await api.post('/api/auth/forgot-password', { username });
       setSubmitted(true);
-      toast.success('Check your email', 'If the address is registered, we have sent a reset link.');
+      toast.success('Request sent', 'If the username is registered, an administrator has been notified.');
     } catch (e: any) {
       toast.error('Could not request reset', e?.response?.data?.error || 'Please try again.');
     } finally {
@@ -37,19 +37,17 @@ export default function ForgotPassword() {
         <CardHeader>
           <CardTitle>Reset your password</CardTitle>
           <CardDescription>
-            Enter your account email and we'll send a reset link valid for 30 minutes.
+            Enter your account username. An administrator will be notified and will reset your password
+            for you.
           </CardDescription>
         </CardHeader>
         <CardContent>
           {submitted ? (
             <div className="space-y-4">
               <p className="text-sm text-slate-700">
-                If <span className="font-medium">{email}</span> matches an account, a reset link has been
-                generated. Check your inbox (and spam) for instructions.
-              </p>
-              <p className="text-xs text-slate-500">
-                Demo deploys without an email gateway: ask the operator to fetch the token from the
-                backend logs.
+                If <span className="font-medium">{username}</span> matches an account, an administrator has
+                been notified of your request. They will verify your identity and reset your password,
+                then share the new password with you directly.
               </p>
               <Link to="/login" className="text-sm text-blue-600 hover:underline">
                 ← Back to login
@@ -58,18 +56,18 @@ export default function ForgotPassword() {
           ) : (
             <form onSubmit={onSubmit} className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
+                <Label htmlFor="username">Username</Label>
                 <Input
-                  id="email"
-                  type="email"
-                  autoComplete="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  id="username"
+                  type="text"
+                  autoComplete="username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
                   required
                 />
               </div>
               <Button type="submit" className="w-full" disabled={submitting}>
-                {submitting ? 'Sending…' : 'Send reset link'}
+                {submitting ? 'Sending…' : 'Notify administrator'}
               </Button>
               <div className="text-center">
                 <Link to="/login" className="text-sm text-blue-600 hover:underline">
