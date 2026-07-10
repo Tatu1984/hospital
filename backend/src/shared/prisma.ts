@@ -35,8 +35,16 @@ function normalizeDbUrl(raw: string | undefined): string | undefined {
     if (/-pooler\./.test(u.hostname)) {
       // Required for Prisma against a PgBouncer / Neon pooled endpoint.
       if (!u.searchParams.has('pgbouncer')) u.searchParams.set('pgbouncer', 'true');
-      // One connection per serverless instance; Vercel scales horizontally.
-      if (!u.searchParams.has('connection_limit')) u.searchParams.set('connection_limit', '1');
+      if (!u.searchParams.has('connection_limit')) {
+        // On Vercel each request runs in its own serverless invocation, so 1
+        // connection per instance is correct — Vercel scales horizontally and
+        // PgBouncer fans that out across instances. Locally / in Docker the
+        // app is ONE long-lived process serving every concurrent request, so
+        // capping at 1 serializes all DB access — anything that doesn't get
+        // its turn within the pool timeout (10s) fails with P2024. Give the
+        // single-process case a real pool.
+        u.searchParams.set('connection_limit', process.env.VERCEL ? '1' : '10');
+      }
     }
     return u.toString();
   } catch {

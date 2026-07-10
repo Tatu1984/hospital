@@ -337,6 +337,12 @@ const TESTIMONIALS = [
   { name: 'Dr. Pal', role: 'Referring physician', body: 'I refer my OPD cases here for cross-consults. Reports come back the same day, formatted, on the patient portal.' },
   { name: 'Anita M.', role: 'Maternity', body: 'Two pregnancies, two safe deliveries. The OB-GYN team listens to questions instead of brushing them off.' },
   { name: 'Prashant T.', role: 'Diabetes care', body: 'I\'ve been a patient for 9 years. They updated my prescription on the app — no more clinic queue for renewals.' },
+  { name: 'Kavya S.', role: 'Oncology · Stage II', body: 'The oncology team explained every step of my chemo plan. Having the schedule on the app helped my family coordinate visits around my sessions.' },
+  { name: 'Ramesh B.', role: 'Emergency · Trauma', body: 'Brought in after a road accident at 2 AM. Surgery was under way within 40 minutes of arrival. The trauma team\'s speed saved my leg.' },
+  { name: 'Meera N.', role: 'Neurology', body: 'My migraines were debilitating. After the MRI and consult here, I finally have a treatment plan that actually works. Three months migraine-free.' },
+  { name: 'Tarun & Pooja', role: 'IVF · Twin pregnancy', body: 'After two failed cycles elsewhere, we came here. The fertility team was transparent about every number. Our twins are 8 months old now.' },
+  { name: 'Col. Sharma (Retd.)', role: 'Cardiac · Bypass', body: 'Triple bypass at 68. The post-op cardiac rehab program was structured and the physiotherapy team pushed me at exactly the right pace.' },
+  { name: 'Sneha R.', role: 'Paediatrics', body: 'My son has a rare enzyme disorder. The paeds team here coordinates with the metabolic specialist and keeps his records updated in one place.' },
 ];
 
 function Testimonials() {

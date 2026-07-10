@@ -81,4 +81,21 @@
     0%, 100% { filter: brightness(1)    saturate(1);    box-shadow: inset 0 0 0 0 rgb(255 255 255 / 0); }
     50%      { filter: brightness(1.08) saturate(1.15); box-shadow: inset 0 0 0 3px rgb(255 255 255 / 0.2); }
   }
+
+  @keyframes marquee {
+    from { transform: translateX(0); }
+    to   { transform: translateX(calc(-100% - var(--marquee-gap, 1.5rem))); }
+  }
+}
+
+.animate-marquee {
+  animation: marquee var(--marquee-duration, 40s) linear infinite;
+}
+
+.animate-marquee-reverse {
+  animation: marquee var(--marquee-duration, 40s) linear infinite reverse;
+}
+
+.group:hover .pause-on-hover {
+  animation-play-state: paused;
 }
