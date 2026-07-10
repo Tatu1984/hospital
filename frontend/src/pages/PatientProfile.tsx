@@ -55,6 +55,7 @@ import {
   Search,
   Check,
   ShieldAlert,
+  Pencil,
 } from 'lucide-react';
 import { LineChart, Line, AreaChart, Area, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from 'recharts';
 import api from '../services/api';
@@ -333,6 +334,177 @@ function asText(v: any): string {
   return typeof v === 'string' ? v : JSON.stringify(v);
 }
 
+// --- Edit Patient Dialog ---
+
+const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'] as const;
+const GENDERS = ['MALE', 'FEMALE', 'OTHER'] as const;
+
+function EditPatientDialog({
+  patient,
+  open,
+  onOpenChange,
+  onSaved,
+}: {
+  patient: ChartPatient;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onSaved: () => void;
+}) {
+  const { showToast } = useToast();
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    name: patient.name ?? '',
+    dob: patient.dob ? patient.dob.slice(0, 10) : '',
+    gender: patient.gender ?? '',
+    contact: patient.contact ?? '',
+    email: patient.email ?? '',
+    address: patient.address ?? '',
+    bloodGroup: patient.bloodGroup ?? '',
+    emergencyContact: patient.emergencyContact ?? '',
+    allergies: patient.allergies ?? '',
+    purpose: patient.purpose ?? '',
+  });
+
+  // Reset form whenever dialog opens with fresh patient data
+  useEffect(() => {
+    if (open) {
+      setForm({
+        name: patient.name ?? '',
+        dob: patient.dob ? patient.dob.slice(0, 10) : '',
+        gender: patient.gender ?? '',
+        contact: patient.contact ?? '',
+        email: patient.email ?? '',
+        address: patient.address ?? '',
+        bloodGroup: patient.bloodGroup ?? '',
+        emergencyContact: patient.emergencyContact ?? '',
+        allergies: patient.allergies ?? '',
+        purpose: patient.purpose ?? '',
+      });
+    }
+  }, [open, patient]);
+
+  function set(field: string, value: string) {
+    setForm((f) => ({ ...f, [field]: value }));
+  }
+
+  async function handleSave() {
+    if (!form.name.trim()) {
+      showToast('Patient name is required', 'error');
+      return;
+    }
+    try {
+      setSaving(true);
+      const nullify = (v: string) => (v === '' || v === 'NONE') ? null : v;
+      await api.put(`/api/patients/${patient.id}`, {
+        name: form.name.trim(),
+        dob: nullify(form.dob),
+        gender: nullify(form.gender),
+        contact: nullify(form.contact),
+        email: nullify(form.email),
+        address: nullify(form.address),
+        bloodGroup: nullify(form.bloodGroup),
+        emergencyContact: nullify(form.emergencyContact),
+        allergies: nullify(form.allergies),
+        purpose: nullify(form.purpose),
+      });
+      showToast('Patient details updated', 'success');
+      onOpenChange(false);
+      onSaved();
+    } catch (e: any) {
+      showToast(e?.response?.data?.message || 'Failed to update patient', 'error');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Pencil className="w-4 h-4" /> Edit Patient Details
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-2">
+          <div className="sm:col-span-2 space-y-1.5">
+            <Label htmlFor="ep-name">Full Name <span className="text-red-500">*</span></Label>
+            <Input id="ep-name" value={form.name} onChange={(e) => set('name', e.target.value)} />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="ep-dob">Date of Birth</Label>
+            <Input id="ep-dob" type="date" value={form.dob} onChange={(e) => set('dob', e.target.value)} />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Gender</Label>
+            <Select value={form.gender} onValueChange={(v) => set('gender', v)}>
+              <SelectTrigger><SelectValue placeholder="Select gender" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="NONE">— None —</SelectItem>
+                {GENDERS.map((g) => (
+                  <SelectItem key={g} value={g}>{g.charAt(0) + g.slice(1).toLowerCase()}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="ep-contact">Phone</Label>
+            <Input id="ep-contact" value={form.contact} onChange={(e) => set('contact', e.target.value)} placeholder="+91 XXXXX XXXXX" />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Blood Group</Label>
+            <Select value={form.bloodGroup} onValueChange={(v) => set('bloodGroup', v)}>
+              <SelectTrigger><SelectValue placeholder="Select blood group" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="NONE">— Unknown —</SelectItem>
+                {BLOOD_GROUPS.map((bg) => (
+                  <SelectItem key={bg} value={bg}>{bg}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="sm:col-span-2 space-y-1.5">
+            <Label htmlFor="ep-email">Email</Label>
+            <Input id="ep-email" type="email" value={form.email} onChange={(e) => set('email', e.target.value)} />
+          </div>
+
+          <div className="sm:col-span-2 space-y-1.5">
+            <Label htmlFor="ep-address">Address</Label>
+            <Textarea id="ep-address" rows={2} value={form.address} onChange={(e) => set('address', e.target.value)} />
+          </div>
+
+          <div className="sm:col-span-2 space-y-1.5">
+            <Label htmlFor="ep-emergency">Emergency Contact</Label>
+            <Input id="ep-emergency" value={form.emergencyContact} onChange={(e) => set('emergencyContact', e.target.value)} placeholder="Name — Phone" />
+          </div>
+
+          <div className="sm:col-span-2 space-y-1.5">
+            <Label htmlFor="ep-allergies">Known Allergies (free text)</Label>
+            <Input id="ep-allergies" value={form.allergies} onChange={(e) => set('allergies', e.target.value)} placeholder="e.g. Penicillin, Shellfish" />
+          </div>
+
+          <div className="sm:col-span-2 space-y-1.5">
+            <Label htmlFor="ep-purpose">Purpose of Visit</Label>
+            <Input id="ep-purpose" value={form.purpose} onChange={(e) => set('purpose', e.target.value)} />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
+          <Button onClick={handleSave} disabled={saving} className="bg-slate-900 hover:bg-slate-800">
+            {saving ? 'Saving…' : 'Save Changes'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // --- main component ---
 
 export default function PatientProfile() {
@@ -342,6 +514,7 @@ export default function PatientProfile() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
 
   async function load() {
     if (!patientId) return;
@@ -394,6 +567,9 @@ export default function PatientProfile() {
         <div className="flex items-center gap-2">
           <Button variant="ghost" onClick={() => navigate(-1)} className="gap-2">
             <ArrowLeft className="w-4 h-4" /> Back
+          </Button>
+          <Button variant="outline" onClick={() => setEditOpen(true)} className="gap-1.5 h-10 px-4 rounded-xl">
+            <Pencil className="w-4 h-4" /> Edit Patient
           </Button>
           <Button onClick={load} disabled={refreshing} className="gap-1.5 h-10 px-4 rounded-xl shadow-sm bg-slate-900 hover:bg-slate-800">
             <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
@@ -505,6 +681,13 @@ export default function PatientProfile() {
         <TabsContent value="surgeries"><SurgeriesSection surgeries={data.surgeries} /></TabsContent>
         <TabsContent value="bills"><BillsSection invoices={data.invoices} onChanged={load} /></TabsContent>
       </Tabs>
+
+      <EditPatientDialog
+        patient={p}
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        onSaved={load}
+      />
     </div>
   );
 }

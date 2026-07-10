@@ -1423,6 +1423,44 @@ app.get('/api/patients/:id', authenticateToken, requirePermission('patients:view
   }
 });
 
+// Update patient demographics — used by front-office staff to correct
+// or enrich registration details after the initial intake.
+app.put('/api/patients/:id', authenticateToken, requirePermission('patients:edit'), async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const patient = await prisma.patient.findFirst({
+      where: { id, tenantId: req.user.tenantId },
+    });
+    if (!patient) {
+      return res.status(404).json({ error: 'NOT_FOUND', message: 'Patient not found' });
+    }
+
+    const { name, dob, gender, contact, email, address, bloodGroup, emergencyContact, allergies, purpose } = req.body;
+
+    const updated = await prisma.patient.update({
+      where: { id },
+      data: {
+        ...(name !== undefined && { name }),
+        ...(dob !== undefined && { dob: dob ? new Date(dob) : null }),
+        ...(gender !== undefined && { gender }),
+        ...(contact !== undefined && { contact }),
+        ...(email !== undefined && { email }),
+        ...(address !== undefined && { address }),
+        ...(bloodGroup !== undefined && { bloodGroup }),
+        ...(emergencyContact !== undefined && { emergencyContact }),
+        ...(allergies !== undefined && { allergies }),
+        ...(purpose !== undefined && { purpose }),
+      },
+    });
+
+    res.json(updated);
+  } catch (error) {
+    logger.error('Update patient error:', error);
+    res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to update patient' });
+  }
+});
+
 // Users/Doctors routes — this is the FIRST GET /api/users handler in this
 // file and Express resolves first-match-wins, so the comprehensive admin
 // payload (with profile/phone/bloodGroup) goes through here. The second
