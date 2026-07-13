@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Clock, CheckCircle, AlertCircle, Calendar, FileText, Plus, Activity, Radio, Scissors, ClipboardCheck, Stethoscope } from 'lucide-react';
+import { Clock, CheckCircle, AlertCircle, Calendar, FileText, Plus, Activity, Radio, Scissors, ClipboardCheck, Stethoscope, Pencil } from 'lucide-react';
 import api from '../services/api';
 import { useToast } from '../components/Toast';
 import OTLiveStatusDialog from '../components/OTLiveStatusDialog';
@@ -27,7 +27,10 @@ interface Surgery {
   procedureName: string;
   surgeonId: string | null;
   surgeonName: string;
+  otRoomId: string | null;
   otRoom: string;
+  anesthetistId: string | null;
+  rawScheduledDate: string;
   scheduledDate: string;
   scheduledTime: string;
   duration: number;
@@ -42,12 +45,16 @@ interface Surgery {
 interface OTRoom {
   id: string;
   name: string;
+  type: string;
+  floor: string | null;
   status: string;
-  currentSurgery?: {
-    patientName: string;
-    procedureName: string;
-    startTime: string;
-  };
+  currentSurgery?: string | null;
+}
+
+interface OTRoomFormData {
+  name: string;
+  type: string;
+  floor: string;
 }
 
 interface SurgeryFormData {
@@ -76,6 +83,7 @@ export default function OperationTheatre() {
   const [procedures, setProcedures] = useState<ProcedureOption[]>([]);
   const [doctors, setDoctors] = useState<DoctorOption[]>([]);
   const [selectedSurgery, setSelectedSurgery] = useState<Surgery | null>(null);
+  const [editingSurgeryId, setEditingSurgeryId] = useState<string | null>(null);
   const [isScheduleDialogOpen, setIsScheduleDialogOpen] = useState(false);
   const [isDetailsDialogOpen, setIsDetailsDialogOpen] = useState(false);
   const [liveStatusSurgery, setLiveStatusSurgery] = useState<Surgery | null>(null);
@@ -83,6 +91,9 @@ export default function OperationTheatre() {
   const [checklistSurgery, setChecklistSurgery] = useState<Surgery | null>(null);
   const [anesthesiaSurgery, setAnesthesiaSurgery] = useState<Surgery | null>(null);
   const [loading, setLoading] = useState(false);
+  const [isAddRoomDialogOpen, setIsAddRoomDialogOpen] = useState(false);
+  const [roomFormData, setRoomFormData] = useState<OTRoomFormData>({ name: '', type: '', floor: '' });
+  const [roomStatusUpdating, setRoomStatusUpdating] = useState<string | null>(null);
 
   const [surgeryFormData, setSurgeryFormData] = useState<SurgeryFormData>({
     patientId: '',
@@ -150,22 +161,25 @@ export default function OperationTheatre() {
       const transformedSurgeries = response.data.map((s: any) => ({
         id: s.id,
         patientId: s.patientId,
-        patientName: s.patient?.name || 'Unknown',
-        patientMRN: s.patient?.mrn || 'N/A',
+        patientName: s.patientName || 'Unknown',
+        patientMRN: s.patientMRN || 'N/A',
         age: s.patient?.age || 0,
         gender: s.patient?.gender || 'Unknown',
         procedureName: s.procedureName,
-        surgeonId: s.surgeonId || s.surgeon?.id || null,
-        surgeonName: s.surgeon?.name || s.surgeonName || 'Unassigned',
-        otRoom: s.otRoom?.name || 'TBD',
+        surgeonId: s.surgeonId || null,
+        surgeonName: s.surgeonName || 'Unassigned',
+        otRoomId: s.otRoomId || null,
+        otRoom: s.otRoom || 'TBD',
+        anesthetistId: s.anesthetistId || null,
+        rawScheduledDate: s.scheduledDate ? new Date(s.scheduledDate).toISOString().slice(0, 10) : '',
         scheduledDate: s.scheduledDate ? new Date(s.scheduledDate).toLocaleDateString() : 'TBD',
         scheduledTime: s.scheduledTime || 'TBD',
         duration: s.estimatedDuration || 0,
-        status: s.status,
-        priority: s.priority,
+        status: s.status ? String(s.status).toUpperCase() : s.status,
+        priority: s.priority ? String(s.priority).toUpperCase() : s.priority,
         anesthesiaType: s.anesthesiaType,
         preOpChecklist: s.preOpChecklistComplete || false,
-        notes: s.notes || '',
+        notes: s.postOpNotes || '',
         currentStage: s.currentStage || null,
       }));
       setSurgeries(transformedSurgeries);
@@ -193,6 +207,43 @@ export default function OperationTheatre() {
     return data?.error || data?.message || e?.message || fallback;
   };
 
+  const handleAddOTRoom = async () => {
+    if (!roomFormData.name.trim()) { toast.warning('Room name required'); return; }
+    if (!roomFormData.type.trim()) { toast.warning('Room type required'); return; }
+
+    setLoading(true);
+    try {
+      await api.post('/api/ot-rooms', {
+        name: roomFormData.name.trim(),
+        type: roomFormData.type.trim(),
+        floor: roomFormData.floor.trim() || undefined,
+      });
+      await fetchOTRooms();
+      setIsAddRoomDialogOpen(false);
+      setRoomFormData({ name: '', type: '', floor: '' });
+      toast.success('OT room added');
+    } catch (error: any) {
+      console.error('Error adding OT room:', error);
+      toast.error('Could not add OT room', errMsg(error, 'Try again.'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRoomStatusChange = async (roomId: string, status: string) => {
+    setRoomStatusUpdating(roomId);
+    try {
+      await api.patch(`/api/ot-rooms/${roomId}`, { status });
+      await fetchOTRooms();
+      toast.success('Room status updated');
+    } catch (error: any) {
+      console.error('Error updating room status:', error);
+      toast.error('Could not update room status', errMsg(error, 'Try again.'));
+    } finally {
+      setRoomStatusUpdating(null);
+    }
+  };
+
   const handleScheduleSurgery = async () => {
     if (!surgeryFormData.patientId) { toast.warning('Patient required'); return; }
     if (!surgeryFormData.procedureName) { toast.warning('Procedure required'); return; }
@@ -204,7 +255,7 @@ export default function OperationTheatre() {
 
     setLoading(true);
     try {
-      await api.post('/api/surgeries', {
+      const payload = {
         patientId: surgeryFormData.patientId,
         procedureName: surgeryFormData.procedureName,
         surgeonId: surgeryFormData.surgeonId,
@@ -216,15 +267,21 @@ export default function OperationTheatre() {
         anesthesiaType: surgeryFormData.anesthesiaType || undefined,
         anesthetistId: surgeryFormData.anesthetistId || undefined,
         notes: surgeryFormData.notes || undefined,
-      });
+      };
+
+      if (editingSurgeryId) {
+        await api.put(`/api/surgeries/${editingSurgeryId}`, payload);
+      } else {
+        await api.post('/api/surgeries', payload);
+      }
 
       await fetchSurgeries();
       setIsScheduleDialogOpen(false);
       resetForm();
-      toast.success('Surgery scheduled');
+      toast.success(editingSurgeryId ? 'Surgery updated' : 'Surgery scheduled');
     } catch (error: any) {
-      console.error('Error scheduling surgery:', error);
-      toast.error('Could not schedule surgery', errMsg(error, 'Try again.'));
+      console.error('Error saving surgery:', error);
+      toast.error(editingSurgeryId ? 'Could not update surgery' : 'Could not schedule surgery', errMsg(error, 'Try again.'));
     } finally {
       setLoading(false);
     }
@@ -277,6 +334,7 @@ export default function OperationTheatre() {
   };
 
   const resetForm = () => {
+    setEditingSurgeryId(null);
     setSurgeryFormData({
       patientId: '',
       procedureName: '',
@@ -290,6 +348,29 @@ export default function OperationTheatre() {
       anesthetistId: '',
       notes: ''
     });
+  };
+
+  const openScheduleDialog = () => {
+    resetForm();
+    setIsScheduleDialogOpen(true);
+  };
+
+  const openEditDialog = (surgery: Surgery) => {
+    setEditingSurgeryId(surgery.id);
+    setSurgeryFormData({
+      patientId: surgery.patientId,
+      procedureName: surgery.procedureName,
+      surgeonId: surgery.surgeonId || '',
+      otRoomId: surgery.otRoomId || '',
+      scheduledDate: surgery.rawScheduledDate,
+      scheduledTime: surgery.scheduledTime,
+      duration: surgery.duration ? String(surgery.duration) : '',
+      priority: surgery.priority,
+      anesthesiaType: surgery.anesthesiaType || '',
+      anesthetistId: surgery.anesthetistId || '',
+      notes: surgery.notes || ''
+    });
+    setIsScheduleDialogOpen(true);
   };
 
   const openDetailsDialog = (surgery: Surgery) => {
@@ -370,7 +451,7 @@ export default function OperationTheatre() {
             <p className="text-sm text-slate-500 mt-0.5">Surgery scheduling, OT management, and procedure tracking</p>
           </div>
         </div>
-        <Button onClick={() => setIsScheduleDialogOpen(true)} className="gap-1.5 h-10 px-4 rounded-xl shadow-sm bg-slate-900 hover:bg-slate-800">
+        <Button onClick={openScheduleDialog} className="gap-1.5 h-10 px-4 rounded-xl shadow-sm bg-slate-900 hover:bg-slate-800">
           <Plus className="w-4 h-4" />
           Schedule Surgery
         </Button>
@@ -438,10 +519,21 @@ export default function OperationTheatre() {
       {/* OT Rooms Status */}
       <Card>
         <CardHeader>
-          <CardTitle>OT Rooms Status</CardTitle>
-          <CardDescription>Real-time operation theatre availability</CardDescription>
+          <div className="flex justify-between items-center">
+            <div>
+              <CardTitle>OT Rooms Status</CardTitle>
+              <CardDescription>Real-time operation theatre availability</CardDescription>
+            </div>
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setIsAddRoomDialogOpen(true)}>
+              <Plus className="w-4 h-4" />
+              Add OT Room
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
+          {otRooms.length === 0 ? (
+            <div className="text-center py-8 text-slate-500 text-sm">No OT rooms configured yet — add one to get started.</div>
+          ) : (
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             {otRooms.map((room) => (
               <Card key={room.id} className={`border-2 ${getOTRoomStatus(room.status)}`}>
@@ -454,15 +546,23 @@ export default function OperationTheatre() {
                   </div>
                 </CardHeader>
                 <CardContent>
+                  <Select
+                    value={room.status?.toLowerCase()}
+                    onValueChange={(value) => handleRoomStatusChange(room.id, value)}
+                    disabled={roomStatusUpdating === room.id}
+                  >
+                    <SelectTrigger className="h-8 text-xs mb-3">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="available">Available</SelectItem>
+                      <SelectItem value="in_use">Occupied</SelectItem>
+                      <SelectItem value="cleaning">Cleaning</SelectItem>
+                      <SelectItem value="maintenance">Maintenance</SelectItem>
+                    </SelectContent>
+                  </Select>
                   {room.status?.toLowerCase() === 'in_use' && room.currentSurgery ? (
-                    <div className="space-y-2">
-                      <div className="font-medium text-sm">{room.currentSurgery.patientName}</div>
-                      <div className="text-xs text-slate-600">{room.currentSurgery.procedureName}</div>
-                      <div className="flex items-center gap-1 text-xs text-slate-500">
-                        <Clock className="w-3 h-3" />
-                        Started: {room.currentSurgery.startTime}
-                      </div>
-                    </div>
+                    <div className="text-xs text-slate-600">{room.currentSurgery}</div>
                   ) : (
                     <div className="text-sm text-slate-500">
                       {room.status?.toLowerCase() === 'available' ? 'Ready for use' : 'Being prepared'}
@@ -472,8 +572,53 @@ export default function OperationTheatre() {
               </Card>
             ))}
           </div>
+          )}
         </CardContent>
       </Card>
+
+      {/* Add OT Room Dialog */}
+      <Dialog open={isAddRoomDialogOpen} onOpenChange={(open) => { setIsAddRoomDialogOpen(open); if (!open) setRoomFormData({ name: '', type: '', floor: '' }); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add OT Room</DialogTitle>
+            <DialogDescription>Register a new operation theatre room to track in the system</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Room Name *</Label>
+              <Input
+                placeholder="OT-5"
+                value={roomFormData.name}
+                onChange={(e) => setRoomFormData({ ...roomFormData, name: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Type *</Label>
+              <Input
+                placeholder="General, Cardiac, Neuro, Orthopedic..."
+                value={roomFormData.type}
+                onChange={(e) => setRoomFormData({ ...roomFormData, type: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Floor</Label>
+              <Input
+                placeholder="2nd Floor"
+                value={roomFormData.floor}
+                onChange={(e) => setRoomFormData({ ...roomFormData, floor: e.target.value })}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setIsAddRoomDialogOpen(false); setRoomFormData({ name: '', type: '', floor: '' }); }} disabled={loading}>
+              Cancel
+            </Button>
+            <Button onClick={handleAddOTRoom} disabled={loading}>
+              {loading ? 'Adding...' : 'Add Room'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Surgery Schedule */}
       <Card>
@@ -533,6 +678,11 @@ export default function OperationTheatre() {
                             {surgery.status === 'SCHEDULED' && (
                               <Button size="sm" onClick={() => handleStartSurgery(surgery.id)}>
                                 Start
+                              </Button>
+                            )}
+                            {surgery.status === 'SCHEDULED' && (
+                              <Button size="sm" variant="outline" onClick={() => openEditDialog(surgery)} title="Edit surgery">
+                                <Pencil className="w-4 h-4" />
                               </Button>
                             )}
                             {surgery.status === 'IN_PROGRESS' && (
@@ -599,6 +749,9 @@ export default function OperationTheatre() {
                           <div className="flex gap-2">
                             <Button size="sm" onClick={() => handleStartSurgery(surgery.id)}>
                               Start
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => openEditDialog(surgery)} title="Edit surgery">
+                              <Pencil className="w-4 h-4" />
                             </Button>
                             <Button size="sm" variant="outline" onClick={() => setLiveStatusSurgery(surgery)}>
                               <Radio className="w-3 h-3 mr-1" /> Live
@@ -729,11 +882,13 @@ export default function OperationTheatre() {
       </Card>
 
       {/* Schedule Surgery Dialog */}
-      <Dialog open={isScheduleDialogOpen} onOpenChange={setIsScheduleDialogOpen}>
+      <Dialog open={isScheduleDialogOpen} onOpenChange={(open) => { setIsScheduleDialogOpen(open); if (!open) resetForm(); }}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Schedule Surgery</DialogTitle>
-            <DialogDescription>Book an operation theatre and schedule a surgical procedure</DialogDescription>
+            <DialogTitle>{editingSurgeryId ? 'Edit Surgery' : 'Schedule Surgery'}</DialogTitle>
+            <DialogDescription>
+              {editingSurgeryId ? 'Update the details of this scheduled surgery' : 'Book an operation theatre and schedule a surgical procedure'}
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="grid grid-cols-2 gap-4">
@@ -821,7 +976,7 @@ export default function OperationTheatre() {
                   <SelectContent>
                     {otRooms.length === 0 ? (
                       <SelectItem value="__none__" disabled>
-                        No OT rooms — add one in Master Data
+                        No OT rooms — use "Add OT Room" above to add one
                       </SelectItem>
                     ) : (
                       otRooms
@@ -913,11 +1068,11 @@ export default function OperationTheatre() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsScheduleDialogOpen(false)} disabled={loading}>
+            <Button variant="outline" onClick={() => { setIsScheduleDialogOpen(false); resetForm(); }} disabled={loading}>
               Cancel
             </Button>
             <Button onClick={handleScheduleSurgery} disabled={loading}>
-              {loading ? 'Scheduling...' : 'Schedule Surgery'}
+              {loading ? 'Saving...' : editingSurgeryId ? 'Save Changes' : 'Schedule Surgery'}
             </Button>
           </DialogFooter>
         </DialogContent>
