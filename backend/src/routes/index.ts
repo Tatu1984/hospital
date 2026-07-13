@@ -235,6 +235,7 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   // OT / Surgery
   'GET /api/surgeries': ['surgery:view'],
   'POST /api/surgeries': ['surgery:schedule'],
+  'PUT /api/surgeries/:id': ['surgery:schedule'],
   'POST /api/surgeries/:id/start': ['surgery:start'],
   'POST /api/surgeries/:id/complete': ['surgery:complete'],
   'POST /api/surgeries/:id/cancel': ['surgery:cancel'],
@@ -284,6 +285,7 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   'POST /api/internal/demo-seed': ['system:manage'],
   'GET /api/ot-rooms': ['ot:view'],
   'POST /api/ot-rooms': ['ot:create'],
+  'PATCH /api/ot-rooms/:id': ['ot:edit'],
   'GET /api/ot/rooms': ['ot:view'],
 
   // Lab
@@ -557,6 +559,7 @@ export const ROUTE_VALIDATORS: Record<string, z.ZodTypeAny> = {
 
   // Surgery
   'POST /api/surgeries': scheduleSurgerySchema,
+  'PUT /api/surgeries/:id': scheduleSurgerySchema,
 
   // Lab
   'POST /api/lab-orders': createLabOrderSchema,

@@ -5039,27 +5039,71 @@ app.get('/api/surgeries', authenticateToken, async (req: any, res: Response) => 
   }
 });
 
+// Resolves the *Id fields on a surgery payload (patient/surgeon/anesthetist/OT room)
+// into their denormalised name fields, scoped to the caller's tenant. Shared by
+// create and update so both stay in sync on how names get derived.
+async function resolveSurgeryRefs(tenantId: string, body: any) {
+  const { patientId, patientName, patientMRN, surgeonId, surgeonName, anesthetistId, anesthetistName, otRoomId, otRoom } = body;
+
+  let resolvedPatientName = patientName;
+  let resolvedPatientMRN = patientMRN;
+  if (patientId) {
+    const patient = await prisma.patient.findFirst({ where: { id: patientId, tenantId } });
+    if (!patient) return { error: 'Patient not found' as const };
+    resolvedPatientName = resolvedPatientName || patient.name;
+    resolvedPatientMRN = resolvedPatientMRN || patient.mrn;
+  }
+
+  let resolvedSurgeonName = surgeonName;
+  if (surgeonId) {
+    const surgeon = await prisma.user.findFirst({ where: { id: surgeonId, tenantId } });
+    if (!surgeon) return { error: 'Surgeon not found' as const };
+    resolvedSurgeonName = resolvedSurgeonName || surgeon.name;
+  }
+
+  let resolvedAnesthetistName = anesthetistName;
+  if (anesthetistId) {
+    const anesthetist = await prisma.user.findFirst({ where: { id: anesthetistId, tenantId } });
+    if (!anesthetist) return { error: 'Anesthetist not found' as const };
+    resolvedAnesthetistName = resolvedAnesthetistName || anesthetist.name;
+  }
+
+  let resolvedOtRoom = otRoom;
+  if (otRoomId) {
+    const room = await prisma.oTRoom.findFirst({ where: { id: otRoomId, tenantId } });
+    if (!room) return { error: 'OT room not found' as const };
+    resolvedOtRoom = resolvedOtRoom || room.name;
+  }
+
+  return {
+    patientName: resolvedPatientName,
+    patientMRN: resolvedPatientMRN,
+    surgeonName: resolvedSurgeonName,
+    anesthetistName: resolvedAnesthetistName,
+    otRoom: resolvedOtRoom,
+  };
+}
+
 app.post('/api/surgeries', authenticateToken, async (req: any, res: Response) => {
   try {
-    const { patientId, patientName, patientMRN, procedureName, surgeonId, surgeonName, anesthetistName, otRoom, scheduledDate, scheduledTime, estimatedDuration, anesthesiaType, priority, notes } = req.body;
+    const { patientId, procedureName, surgeonId, anesthetistId, otRoomId, scheduledDate, scheduledTime, estimatedDuration, anesthesiaType, priority, notes } = req.body;
 
-    // If a patient is supplied, make sure they belong to this tenant.
-    if (patientId) {
-      const owned = await prisma.patient.findFirst({ where: { id: patientId, tenantId: req.user.tenantId } });
-      if (!owned) return res.status(404).json({ error: 'Patient not found' });
-    }
+    const resolved = await resolveSurgeryRefs(req.user.tenantId, req.body);
+    if ('error' in resolved) return res.status(404).json({ error: resolved.error });
 
     const surgery = await prisma.surgery.create({
       data: {
         tenantId: req.user.tenantId,
         patientId,
-        patientName,
-        patientMRN,
+        patientName: resolved.patientName,
+        patientMRN: resolved.patientMRN,
         procedureName,
         surgeonId,
-        surgeonName,
-        anesthetistName,
-        otRoom,
+        surgeonName: resolved.surgeonName,
+        anesthetistId,
+        anesthetistName: resolved.anesthetistName,
+        otRoomId,
+        otRoom: resolved.otRoom,
         scheduledDate: new Date(scheduledDate),
         scheduledTime,
         estimatedDuration: estimatedDuration ? parseInt(estimatedDuration) : null,
@@ -5072,6 +5116,49 @@ app.post('/api/surgeries', authenticateToken, async (req: any, res: Response) =>
     res.status(201).json(surgery);
   } catch (error) {
     console.error('Schedule surgery error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/surgeries/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const existing = await prisma.surgery.findFirst({ where: { id, tenantId: req.user.tenantId } });
+    if (!existing) return res.status(404).json({ error: 'Surgery not found' });
+    if (existing.status !== 'scheduled') {
+      return res.status(400).json({ error: 'Only scheduled surgeries can be edited' });
+    }
+
+    const { patientId, procedureName, surgeonId, anesthetistId, otRoomId, scheduledDate, scheduledTime, estimatedDuration, anesthesiaType, priority, notes } = req.body;
+
+    const resolved = await resolveSurgeryRefs(req.user.tenantId, req.body);
+    if ('error' in resolved) return res.status(404).json({ error: resolved.error });
+
+    const surgery = await prisma.surgery.update({
+      where: { id },
+      data: {
+        patientId,
+        patientName: resolved.patientName,
+        patientMRN: resolved.patientMRN,
+        procedureName,
+        surgeonId,
+        surgeonName: resolved.surgeonName,
+        anesthetistId,
+        anesthetistName: resolved.anesthetistName,
+        otRoomId,
+        otRoom: resolved.otRoom,
+        scheduledDate: new Date(scheduledDate),
+        scheduledTime,
+        estimatedDuration: estimatedDuration ? parseInt(estimatedDuration) : null,
+        anesthesiaType,
+        priority: priority || existing.priority,
+        postOpNotes: notes,
+      },
+    });
+
+    res.json(surgery);
+  } catch (error) {
+    console.error('Update surgery error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -5110,8 +5197,36 @@ app.post('/api/ot-rooms', authenticateToken, async (req: any, res: Response) => 
     });
 
     res.status(201).json(room);
-  } catch (error) {
+  } catch (error: any) {
+    if (error.code === 'P2002') return res.status(409).json({ error: 'An OT room with this name already exists' });
     console.error('Create OT room error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+const OT_ROOM_STATUSES = ['available', 'in_use', 'cleaning', 'maintenance'];
+
+app.patch('/api/ot-rooms/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const existing = await prisma.oTRoom.findFirst({ where: { id, tenantId: req.user.tenantId } });
+    if (!existing) return res.status(404).json({ error: 'OT room not found' });
+
+    const { name, type, floor, equipment, status } = req.body;
+    if (status !== undefined && !OT_ROOM_STATUSES.includes(status)) {
+      return res.status(400).json({ error: `status must be one of ${OT_ROOM_STATUSES.join(', ')}` });
+    }
+
+    const data: any = { name, type, floor, equipment, status };
+    // A room manually taken out of use no longer has a surgery in progress.
+    if (status !== undefined && status !== 'in_use') data.currentSurgery = null;
+    Object.keys(data).forEach((k) => data[k] === undefined && delete data[k]);
+
+    const room = await prisma.oTRoom.update({ where: { id }, data });
+    res.json(room);
+  } catch (error: any) {
+    if (error.code === 'P2002') return res.status(409).json({ error: 'An OT room with this name already exists' });
+    console.error('Update OT room error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
