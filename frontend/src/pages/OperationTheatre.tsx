@@ -41,7 +41,7 @@ interface Surgery {
 
 interface OTRoom {
   id: string;
-  roomNumber: string;
+  name: string;
   status: string;
   currentSurgery?: {
     patientName: string;
@@ -157,7 +157,7 @@ export default function OperationTheatre() {
         procedureName: s.procedureName,
         surgeonId: s.surgeonId || s.surgeon?.id || null,
         surgeonName: s.surgeon?.name || s.surgeonName || 'Unassigned',
-        otRoom: s.otRoom?.roomNumber || 'TBD',
+        otRoom: s.otRoom?.name || 'TBD',
         scheduledDate: s.scheduledDate ? new Date(s.scheduledDate).toLocaleDateString() : 'TBD',
         scheduledTime: s.scheduledTime || 'TBD',
         duration: s.estimatedDuration || 0,
@@ -326,12 +326,12 @@ export default function OperationTheatre() {
   };
 
   const getOTRoomStatus = (status: string) => {
-    switch (status) {
-      case 'OCCUPIED':
+    switch (status?.toLowerCase()) {
+      case 'in_use':
         return 'bg-red-100 border-red-300';
-      case 'AVAILABLE':
+      case 'available':
         return 'bg-green-100 border-green-300';
-      case 'CLEANING':
+      case 'cleaning':
         return 'bg-yellow-100 border-yellow-300';
       default:
         return 'bg-slate-100 border-slate-300';
@@ -447,14 +447,14 @@ export default function OperationTheatre() {
               <Card key={room.id} className={`border-2 ${getOTRoomStatus(room.status)}`}>
                 <CardHeader className="pb-3">
                   <div className="flex justify-between items-center">
-                    <CardTitle className="text-lg">{room.roomNumber}</CardTitle>
-                    <Badge variant={room.status === 'AVAILABLE' ? 'default' : 'secondary'}>
+                    <CardTitle className="text-lg">{room.name}</CardTitle>
+                    <Badge variant={room.status?.toLowerCase() === 'available' ? 'default' : 'secondary'}>
                       {room.status}
                     </Badge>
                   </div>
                 </CardHeader>
                 <CardContent>
-                  {room.status === 'OCCUPIED' && room.currentSurgery ? (
+                  {room.status?.toLowerCase() === 'in_use' && room.currentSurgery ? (
                     <div className="space-y-2">
                       <div className="font-medium text-sm">{room.currentSurgery.patientName}</div>
                       <div className="text-xs text-slate-600">{room.currentSurgery.procedureName}</div>
@@ -465,7 +465,7 @@ export default function OperationTheatre() {
                     </div>
                   ) : (
                     <div className="text-sm text-slate-500">
-                      {room.status === 'AVAILABLE' ? 'Ready for use' : 'Being prepared'}
+                      {room.status?.toLowerCase() === 'available' ? 'Ready for use' : 'Being prepared'}
                     </div>
                   )}
                 </CardContent>
@@ -825,10 +825,10 @@ export default function OperationTheatre() {
                       </SelectItem>
                     ) : (
                       otRooms
-                        .filter((r) => r.status === 'AVAILABLE' || surgeryFormData.otRoomId === r.id)
+                        .filter((r) => r.status?.toLowerCase() === 'available' || surgeryFormData.otRoomId === r.id)
                         .map((room) => (
                           <SelectItem key={room.id} value={room.id}>
-                            {room.roomNumber}
+                            {room.name}
                           </SelectItem>
                         ))
                     )}

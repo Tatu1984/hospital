@@ -1046,28 +1046,33 @@ app.post('/api/auth/logout', async (req: Request, res: Response) => {
 //      row is written.
 
 app.post('/api/auth/forgot-password', async (req: Request, res: Response) => {
-  const { email } = req.body || {};
-  if (!email || typeof email !== 'string') {
-    return res.status(400).json({ error: 'email is required' });
+  const { username } = req.body || {};
+  if (!username || typeof username !== 'string') {
+    return res.status(400).json({ error: 'username is required' });
   }
   try {
-    const user = await prisma.user.findFirst({ where: { email, isActive: true } });
+    const user = await prisma.user.findFirst({ where: { username, isActive: true }, include: { tenant: true } });
     if (user) {
-      const resetToken = jwt.sign(
-        { userId: user.id, type: 'password-reset' },
-        process.env.REFRESH_TOKEN_SECRET!,
-        { expiresIn: '30m' } as jwt.SignOptions
-      );
-      auditLogger.securityEvent('PASSWORD_RESET_REQUESTED', { userId: user.id, email, ip: clientIp(req) });
+      auditLogger.securityEvent('PASSWORD_RESET_REQUESTED', { userId: user.id, username, ip: clientIp(req) });
       void writeAudit({ prisma, req, userId: user.id, tenantId: user.tenantId, action: 'PASSWORD_RESET_REQUESTED', resource: 'Authentication', resourceId: user.id });
-      // No email gateway wired yet. Until SMTP/SES is configured, the token
-      // is delivered out-of-band by an operator who reads it from a private
-      // channel (not stdout). Set PASSWORD_RESET_LOG_TOKEN=true ONLY in dev.
-      if (process.env.PASSWORD_RESET_LOG_TOKEN === 'true' && process.env.NODE_ENV !== 'production') {
-        // eslint-disable-next-line no-console
-        console.log(`[password-reset:DEV] userId=${user.id} token=${resetToken}`);
+      // No self-service reset link — an admin verifies identity out of band
+      // and resets the password manually (POST /api/users/:id/reset-password),
+      // then relays the new password to the user. ADMIN_EMAIL is who gets paged.
+      const adminEmail = process.env.ADMIN_EMAIL;
+      if (adminEmail) {
+        void notificationService.send({
+          type: 'PASSWORD_RESET_ADMIN_ALERT',
+          recipientEmail: adminEmail,
+          message: '',
+          data: {
+            requestingUsername: user.username,
+            requestingEmail: user.email,
+            hospitalName: user.tenant?.name || 'HospitalPro',
+            timestamp: new Date().toLocaleString(),
+          },
+        });
       } else {
-        logger.info('password-reset token issued', { userId: user.id });
+        logger.warn('Password reset requested but ADMIN_EMAIL is not configured — no alert sent', { userId: user.id });
       }
     }
     // Don't reveal whether the email matched a user.
@@ -1415,6 +1420,44 @@ app.get('/api/patients/:id', authenticateToken, requirePermission('patients:view
       error: 'INTERNAL_ERROR',
       message: 'Failed to fetch patient',
     });
+  }
+});
+
+// Update patient demographics — used by front-office staff to correct
+// or enrich registration details after the initial intake.
+app.put('/api/patients/:id', authenticateToken, requirePermission('patients:edit'), async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const patient = await prisma.patient.findFirst({
+      where: { id, tenantId: req.user.tenantId },
+    });
+    if (!patient) {
+      return res.status(404).json({ error: 'NOT_FOUND', message: 'Patient not found' });
+    }
+
+    const { name, dob, gender, contact, email, address, bloodGroup, emergencyContact, allergies, purpose } = req.body;
+
+    const updated = await prisma.patient.update({
+      where: { id },
+      data: {
+        ...(name !== undefined && { name }),
+        ...(dob !== undefined && { dob: dob ? new Date(dob) : null }),
+        ...(gender !== undefined && { gender }),
+        ...(contact !== undefined && { contact }),
+        ...(email !== undefined && { email }),
+        ...(address !== undefined && { address }),
+        ...(bloodGroup !== undefined && { bloodGroup }),
+        ...(emergencyContact !== undefined && { emergencyContact }),
+        ...(allergies !== undefined && { allergies }),
+        ...(purpose !== undefined && { purpose }),
+      },
+    });
+
+    res.json(updated);
+  } catch (error) {
+    logger.error('Update patient error:', error);
+    res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to update patient' });
   }
 });
 
