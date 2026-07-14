@@ -350,7 +350,7 @@ function EditPatientDialog({
   onOpenChange: (v: boolean) => void;
   onSaved: () => void;
 }) {
-  const { showToast } = useToast();
+  const { success: showSuccess, error: showError } = useToast();
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
     name: patient.name ?? '',
@@ -389,7 +389,7 @@ function EditPatientDialog({
 
   async function handleSave() {
     if (!form.name.trim()) {
-      showToast('Patient name is required', 'error');
+      showError('Patient name is required');
       return;
     }
     try {
@@ -407,11 +407,11 @@ function EditPatientDialog({
         allergies: nullify(form.allergies),
         purpose: nullify(form.purpose),
       });
-      showToast('Patient details updated', 'success');
+      showSuccess('Patient details updated');
       onOpenChange(false);
       onSaved();
     } catch (e: any) {
-      showToast(e?.response?.data?.message || 'Failed to update patient', 'error');
+      showError(e?.response?.data?.message || 'Failed to update patient');
     } finally {
       setSaving(false);
     }
