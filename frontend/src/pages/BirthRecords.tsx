@@ -28,7 +28,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
-  Baby, Plus, FileText, Printer, Search, TrendingUp, Weight, Heart, Calendar,
+  Baby, Plus, FileText, Printer, Search, TrendingUp, Weight, Heart, Calendar, Pencil,
 } from 'lucide-react';
 import {
   AreaChart, Area, ResponsiveContainer, PieChart, Pie, Cell, Tooltip,
@@ -76,7 +76,9 @@ interface BirthRecord {
   motherOccupation?: string | null;
   motherAgeAtBirth?: number | null;
   parentsAddress?: string | null;
+  parentsReligion?: string | null;
   parentsNationality?: string | null;
+  birthOrder?: number | null;
   certificateNumber?: string | null;
   certificateIssuedAt?: string | null;
   notes?: string | null;
@@ -100,6 +102,7 @@ export default function BirthRecords() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState<any>(emptyForm());
   const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [pdf, setPdf] = useState<PdfDoc | null>(null);
   const [search, setSearch] = useState('');
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
@@ -157,7 +160,39 @@ export default function BirthRecords() {
   }
   useEffect(() => { void load(); }, []);
 
-  function openNew() { setForm(emptyForm()); setDialogOpen(true); }
+  function openNew() { setEditingId(null); setForm(emptyForm()); setDialogOpen(true); }
+
+  function openEdit(r: BirthRecord) {
+    const local = new Date(new Date(r.birthDate).getTime() - new Date(r.birthDate).getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    setEditingId(r.id);
+    setForm({
+      motherPatientId: r.motherPatientId,
+      babyName: r.babyName || '',
+      babyGender: r.babyGender,
+      birthDate: local,
+      placeOfBirth: r.placeOfBirth || '',
+      deliveryType: r.deliveryType,
+      birthOrder: r.birthOrder ?? 1,
+      weightGrams: r.weightGrams ?? '',
+      lengthCm: r.lengthCm ?? '',
+      headCircumferenceCm: r.headCircumferenceCm ?? '',
+      apgar1Min: r.apgar1Min ?? '',
+      apgar5Min: r.apgar5Min ?? '',
+      liveBirth: r.liveBirth,
+      outcome: r.outcome || 'alive',
+      attendingDoctorId: r.attendingDoctor?.id || '',
+      fatherName: r.fatherName || '',
+      fatherOccupation: r.fatherOccupation || '',
+      motherOccupation: r.motherOccupation || '',
+      motherAgeAtBirth: r.motherAgeAtBirth ?? '',
+      parentsAddress: r.parentsAddress || '',
+      parentsReligion: r.parentsReligion || '',
+      parentsNationality: r.parentsNationality || 'Indian',
+      notes: r.notes || '',
+    });
+    setDetail(null);
+    setDialogOpen(true);
+  }
 
   async function save() {
     if (!form.motherPatientId) { toast.error('Pick the mother (search by name or MRN)'); return; }
@@ -173,9 +208,15 @@ export default function BirthRecords() {
         const d = doctors.find(x => x.id === form.attendingDoctorId);
         if (d) payload.attendingDoctorName = d.name;
       }
-      await api.post('/api/birth-records', payload);
+      if (editingId) {
+        await api.put(`/api/birth-records/${editingId}`, payload);
+        toast.success('Birth record updated');
+      } else {
+        await api.post('/api/birth-records', payload);
+        toast.success('Birth recorded', 'Newborn registered as Patient.');
+      }
       setDialogOpen(false);
-      toast.success('Birth recorded', 'Newborn registered as Patient.');
+      setEditingId(null);
       void load();
     } catch (e: any) {
       toast.error('Save failed', e?.response?.data?.error || 'Try again');
@@ -545,6 +586,9 @@ export default function BirthRecords() {
               </SheetBody>
               <SheetFooter>
                 <Button variant="outline" onClick={() => setDetail(null)}>Close</Button>
+                <Button variant="outline" onClick={() => openEdit(detail)} className="gap-1.5">
+                  <Pencil className="w-4 h-4" /> Edit
+                </Button>
                 <Button onClick={() => issueAndPrint(detail)} className="gap-1.5 bg-slate-900 hover:bg-slate-800">
                   {detail.certificateNumber ? <Printer className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
                   {detail.certificateNumber ? 'Print certificate' : 'Issue & print'}
@@ -556,17 +600,25 @@ export default function BirthRecords() {
       </Sheet>
 
       {/* ============ CREATE DIALOG (kept modal — form-heavy) ============ */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <Dialog open={dialogOpen} onOpenChange={(o) => { setDialogOpen(o); if (!o) setEditingId(null); }}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto rounded-2xl">
           <DialogHeader>
-            <DialogTitle className="text-xl">Record birth</DialogTitle>
+            <DialogTitle className="text-xl">{editingId ? 'Edit birth record' : 'Record birth'}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <Section title="Mother">
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
                   <Label className="text-xs text-slate-500">Mother (search by name or MRN) *</Label>
-                  <PatientPicker patients={patients} value={form.motherPatientId} onChange={(p) => setForm({ ...form, motherPatientId: p?.id || '', parentsAddress: p?.address || form.parentsAddress })} />
+                  {editingId ? (
+                    <div className="flex items-center gap-2 border border-slate-200 rounded-lg p-2.5 bg-slate-50/60 text-sm">
+                      <span className="font-medium text-slate-900">{patients.find(p => p.id === form.motherPatientId)?.name || '—'}</span>
+                      <span className="text-slate-500 text-xs">({patients.find(p => p.id === form.motherPatientId)?.mrn || '—'})</span>
+                      <span className="text-slate-400 text-xs ml-auto">can't be changed after the record is created</span>
+                    </div>
+                  ) : (
+                    <PatientPicker patients={patients} value={form.motherPatientId} onChange={(p) => setForm({ ...form, motherPatientId: p?.id || '', parentsAddress: p?.address || form.parentsAddress })} />
+                  )}
                 </div>
                 <FormInput label="Mother age at birth (yrs)" type="number" value={form.motherAgeAtBirth} onChange={(v) => setForm({ ...form, motherAgeAtBirth: v })} />
                 <FormInput label="Mother occupation" value={form.motherOccupation} onChange={(v) => setForm({ ...form, motherOccupation: v })} />
@@ -624,13 +676,17 @@ export default function BirthRecords() {
               </div>
             </Section>
 
-            <p className="text-xs text-slate-500 px-1">
-              Saving creates a new Patient row for the baby (MRN auto-assigned). For stillbirth, no Patient is created.
-            </p>
+            {!editingId && (
+              <p className="text-xs text-slate-500 px-1">
+                Saving creates a new Patient row for the baby (MRN auto-assigned). For stillbirth, no Patient is created.
+              </p>
+            )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>Cancel</Button>
-            <Button onClick={save} disabled={saving} className="bg-slate-900 hover:bg-slate-800">{saving ? 'Saving…' : 'Save & register newborn'}</Button>
+            <Button variant="outline" onClick={() => { setDialogOpen(false); setEditingId(null); }} disabled={saving}>Cancel</Button>
+            <Button onClick={save} disabled={saving} className="bg-slate-900 hover:bg-slate-800">
+              {saving ? 'Saving…' : editingId ? 'Update record' : 'Save & register newborn'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

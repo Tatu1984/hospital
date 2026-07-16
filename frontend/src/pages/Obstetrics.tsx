@@ -489,19 +489,20 @@ export default function Obstetrics() {
                   { value: 'moderate', label: 'Moderate' },
                   { value: 'high', label: 'High' },
                 ]} />
-              <FormSelect label="Blood group" value={newForm.bloodGroup}
-                onChange={(v) => setNewForm({ ...newForm, bloodGroup: v })}
+              <FormSelect label="Blood group"
+                value={newForm.bloodGroup && newForm.rhFactor ? `${newForm.bloodGroup}${newForm.rhFactor === 'positive' ? '+' : '-'}` : ''}
+                onChange={(v) => {
+                  if (v === '_') { setNewForm({ ...newForm, bloodGroup: '', rhFactor: '' }); return; }
+                  const group = v.slice(0, -1);
+                  const rhFactor = v.endsWith('+') ? 'positive' : 'negative';
+                  setNewForm({ ...newForm, bloodGroup: group, rhFactor });
+                }}
                 options={[
                   { value: '_', label: '—' },
-                  { value: 'A', label: 'A' }, { value: 'B', label: 'B' },
-                  { value: 'AB', label: 'AB' }, { value: 'O', label: 'O' },
-                ]} />
-              <FormSelect label="Rh factor" value={newForm.rhFactor}
-                onChange={(v) => setNewForm({ ...newForm, rhFactor: v })}
-                options={[
-                  { value: '_', label: '—' },
-                  { value: 'positive', label: 'Positive' },
-                  { value: 'negative', label: 'Negative' },
+                  { value: 'A+', label: 'A+' }, { value: 'A-', label: 'A-' },
+                  { value: 'B+', label: 'B+' }, { value: 'B-', label: 'B-' },
+                  { value: 'AB+', label: 'AB+' }, { value: 'AB-', label: 'AB-' },
+                  { value: 'O+', label: 'O+' }, { value: 'O-', label: 'O-' },
                 ]} />
             </div>
             <div>

@@ -3260,6 +3260,19 @@ app.get('/api/appointments', authenticateToken, async (req: any, res: Response) 
       const cap = new Date(today);
       cap.setUTCDate(cap.getUTCDate() + 30);
       where.appointmentDate = { gte: today, lt: cap };
+    } else if (!patientId && !doctorId) {
+      // No date filter and no patient/doctor scope — an unbounded call like
+      // this would otherwise pull every appointment ever created for the
+      // tenant. Default to a 6-week operational window (2 weeks back, 4
+      // weeks ahead) so recent history stays visible without the query
+      // growing without bound as appointment history accumulates.
+      const today = new Date();
+      today.setUTCHours(0, 0, 0, 0);
+      const start = new Date(today);
+      start.setUTCDate(start.getUTCDate() - 14);
+      const end = new Date(today);
+      end.setUTCDate(end.getUTCDate() + 30);
+      where.appointmentDate = { gte: start, lt: end };
     }
     if (patientId) where.patientId = patientId;
     if (doctorId) where.doctorId = doctorId;
@@ -3272,6 +3285,10 @@ app.get('/api/appointments', authenticateToken, async (req: any, res: Response) 
         doctor: { select: { id: true, name: true } },
       },
       orderBy: [{ appointmentDate: 'asc' }, { appointmentTime: 'asc' }],
+      // Hard safety cap regardless of filters — a single patient/doctor with
+      // years of appointment history shouldn't be able to return an
+      // unbounded result set either.
+      take: 1000,
     });
 
     res.json(appointments);
