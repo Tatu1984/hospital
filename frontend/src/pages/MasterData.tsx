@@ -13,6 +13,8 @@ import api from '../services/api';
 import { useScanner } from '../hooks/useScanner';
 import { WARD_CATEGORIES, labelFor } from '../lib/wardCategories';
 
+const OT_ROOM_STATUSES = ['available', 'in_use', 'cleaning', 'maintenance'];
+
 interface MasterItem {
   id: string;
   code: string;
@@ -20,7 +22,7 @@ interface MasterItem {
   description?: string;
   category?: string;
   price?: number;
-  status: 'active' | 'inactive';
+  status: 'active' | 'inactive' | string;
   [key: string]: any;
 }
 
@@ -65,9 +67,11 @@ export default function MasterData() {
     },
   });
 
+  // OT rooms live in their own table/endpoint (/api/ot-rooms), not the
+  // generic master-data table — same data OperationTheatre.tsx manages.
   const fetchItems = async (type: string) => {
     try {
-      const response = await api.get(`/api/master/${type}`);
+      const response = type === 'ot-rooms' ? await api.get('/api/ot-rooms') : await api.get(`/api/master/${type}`);
       setItems(response.data);
     } catch (error) {
       console.error(`Error fetching ${type}:`, error);
@@ -77,7 +81,11 @@ export default function MasterData() {
   const handleAdd = async () => {
     setLoading(true);
     try {
-      await api.post(`/api/master/${activeTab}`, { ...formData, status: 'active' });
+      if (activeTab === 'ot-rooms') {
+        await api.post('/api/ot-rooms', { name: formData.name, type: formData.type, floor: formData.floor });
+      } else {
+        await api.post(`/api/master/${activeTab}`, { ...formData, status: 'active' });
+      }
       await fetchItems(activeTab);
       setIsAddDialogOpen(false);
       setFormData({});
@@ -95,7 +103,16 @@ export default function MasterData() {
 
     setLoading(true);
     try {
-      await api.put(`/api/master/${activeTab}/${selectedItem.id}`, formData);
+      if (activeTab === 'ot-rooms') {
+        await api.patch(`/api/ot-rooms/${selectedItem.id}`, {
+          name: formData.name,
+          type: formData.type,
+          floor: formData.floor,
+          status: formData.status,
+        });
+      } else {
+        await api.put(`/api/master/${activeTab}/${selectedItem.id}`, formData);
+      }
       await fetchItems(activeTab);
       setIsEditDialogOpen(false);
       setSelectedItem(null);
@@ -357,6 +374,26 @@ export default function MasterData() {
           </>
         );
 
+      case 'ot-rooms':
+        return (
+          <>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Room Name *</Label>
+                <Input value={formData.name || ''} onChange={(e) => setFormData({ ...formData, name: e.target.value })} placeholder="OT-5" />
+              </div>
+              <div className="space-y-2">
+                <Label>Type *</Label>
+                <Input value={formData.type || ''} onChange={(e) => setFormData({ ...formData, type: e.target.value })} placeholder="General, Cardiac, Neuro, Orthopedic..." />
+              </div>
+              <div className="space-y-2">
+                <Label>Floor</Label>
+                <Input value={formData.floor || ''} onChange={(e) => setFormData({ ...formData, floor: e.target.value })} placeholder="3" />
+              </div>
+            </div>
+          </>
+        );
+
       case 'beds':
         return (
           <>
@@ -468,6 +505,7 @@ export default function MasterData() {
       'procedures': 'Procedures',
       'departments': 'Departments',
       'wards': 'Wards/Rooms',
+      'ot-rooms': 'OT Rooms',
       'beds': 'Beds',
       'packages': 'Service Packages'
     };
@@ -508,18 +546,19 @@ export default function MasterData() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-8">
+        <TabsList className="grid w-full grid-cols-9">
           <TabsTrigger value="drugs">Drugs</TabsTrigger>
           <TabsTrigger value="lab-tests">Lab Tests</TabsTrigger>
           <TabsTrigger value="radiology-tests">Radiology</TabsTrigger>
           <TabsTrigger value="procedures">Procedures</TabsTrigger>
           <TabsTrigger value="departments">Departments</TabsTrigger>
           <TabsTrigger value="wards">Wards/Rooms</TabsTrigger>
+          <TabsTrigger value="ot-rooms">OT Rooms</TabsTrigger>
           <TabsTrigger value="beds">Beds</TabsTrigger>
           <TabsTrigger value="packages">Packages</TabsTrigger>
         </TabsList>
 
-        {['drugs', 'lab-tests', 'radiology-tests', 'procedures', 'departments', 'wards', 'beds', 'packages'].map(tab => (
+        {['drugs', 'lab-tests', 'radiology-tests', 'procedures', 'departments', 'wards', 'ot-rooms', 'beds', 'packages'].map(tab => (
           <TabsContent key={tab} value={tab}>
             <Card>
               <CardHeader>
@@ -602,6 +641,12 @@ export default function MasterData() {
                           <TableHead>Floor</TableHead>
                         </>
                       )}
+                      {tab === 'ot-rooms' && (
+                        <>
+                          <TableHead>Type</TableHead>
+                          <TableHead>Floor</TableHead>
+                        </>
+                      )}
                       {tab === 'beds' && (
                         <>
                           <TableHead>Ward</TableHead>
@@ -666,6 +711,12 @@ export default function MasterData() {
                               <TableCell>{item.floor || '—'}</TableCell>
                             </>
                           )}
+                          {tab === 'ot-rooms' && (
+                            <>
+                              <TableCell>{item.type}</TableCell>
+                              <TableCell>{item.floor || '—'}</TableCell>
+                            </>
+                          )}
                           {tab === 'beds' && (
                             <>
                               <TableCell>{item.wardName || '—'}</TableCell>
@@ -685,7 +736,7 @@ export default function MasterData() {
                             </>
                           )}
                           <TableCell>
-                            <Badge variant={item.status === 'active' ? 'default' : 'secondary'}>
+                            <Badge variant={item.status === 'active' || item.status === 'available' ? 'default' : 'secondary'}>
                               {item.status}
                             </Badge>
                           </TableCell>
@@ -694,9 +745,11 @@ export default function MasterData() {
                               <Button variant="outline" size="sm" onClick={() => openEditDialog(item)}>
                                 <Edit className="w-4 h-4" />
                               </Button>
-                              <Button variant="destructive" size="sm" onClick={() => handleDelete(item.id)}>
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
+                              {tab !== 'ot-rooms' && (
+                                <Button variant="destructive" size="sm" onClick={() => handleDelete(item.id)}>
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              )}
                             </div>
                           </TableCell>
                         </TableRow>
@@ -721,15 +774,28 @@ export default function MasterData() {
             {getFormFields(activeTab)}
             <div className="space-y-2 mt-4">
               <Label>Status</Label>
-              <Select value={formData.status || 'active'} onValueChange={(value) => setFormData({ ...formData, status: value })}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="inactive">Inactive</SelectItem>
-                </SelectContent>
-              </Select>
+              {activeTab === 'ot-rooms' ? (
+                <Select value={formData.status || 'available'} onValueChange={(value) => setFormData({ ...formData, status: value })}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {OT_ROOM_STATUSES.map((s) => (
+                      <SelectItem key={s} value={s}>{s.replace('_', ' ')}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Select value={formData.status || 'active'} onValueChange={(value) => setFormData({ ...formData, status: value })}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="inactive">Inactive</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
             </div>
           </div>
           <DialogFooter>
