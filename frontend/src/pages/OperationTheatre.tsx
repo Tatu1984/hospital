@@ -51,12 +51,6 @@ interface OTRoom {
   currentSurgery?: string | null;
 }
 
-interface OTRoomFormData {
-  name: string;
-  type: string;
-  floor: string;
-}
-
 interface SurgeryFormData {
   patientId: string;
   procedureName: string;
@@ -91,9 +85,6 @@ export default function OperationTheatre() {
   const [checklistSurgery, setChecklistSurgery] = useState<Surgery | null>(null);
   const [anesthesiaSurgery, setAnesthesiaSurgery] = useState<Surgery | null>(null);
   const [loading, setLoading] = useState(false);
-  const [isAddRoomDialogOpen, setIsAddRoomDialogOpen] = useState(false);
-  const [roomFormData, setRoomFormData] = useState<OTRoomFormData>({ name: '', type: '', floor: '' });
-  const [roomStatusUpdating, setRoomStatusUpdating] = useState<string | null>(null);
 
   const [surgeryFormData, setSurgeryFormData] = useState<SurgeryFormData>({
     patientId: '',
@@ -205,43 +196,6 @@ export default function OperationTheatre() {
       return d.field ? `${d.field}: ${d.message}` : d.message;
     }
     return data?.error || data?.message || e?.message || fallback;
-  };
-
-  const handleAddOTRoom = async () => {
-    if (!roomFormData.name.trim()) { toast.warning('Room name required'); return; }
-    if (!roomFormData.type.trim()) { toast.warning('Room type required'); return; }
-
-    setLoading(true);
-    try {
-      await api.post('/api/ot-rooms', {
-        name: roomFormData.name.trim(),
-        type: roomFormData.type.trim(),
-        floor: roomFormData.floor.trim() || undefined,
-      });
-      await fetchOTRooms();
-      setIsAddRoomDialogOpen(false);
-      setRoomFormData({ name: '', type: '', floor: '' });
-      toast.success('OT room added');
-    } catch (error: any) {
-      console.error('Error adding OT room:', error);
-      toast.error('Could not add OT room', errMsg(error, 'Try again.'));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleRoomStatusChange = async (roomId: string, status: string) => {
-    setRoomStatusUpdating(roomId);
-    try {
-      await api.patch(`/api/ot-rooms/${roomId}`, { status });
-      await fetchOTRooms();
-      toast.success('Room status updated');
-    } catch (error: any) {
-      console.error('Error updating room status:', error);
-      toast.error('Could not update room status', errMsg(error, 'Try again.'));
-    } finally {
-      setRoomStatusUpdating(null);
-    }
   };
 
   const handleScheduleSurgery = async () => {
@@ -524,15 +478,11 @@ export default function OperationTheatre() {
               <CardTitle>OT Rooms Status</CardTitle>
               <CardDescription>Real-time operation theatre availability</CardDescription>
             </div>
-            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setIsAddRoomDialogOpen(true)}>
-              <Plus className="w-4 h-4" />
-              Add OT Room
-            </Button>
           </div>
         </CardHeader>
         <CardContent>
           {otRooms.length === 0 ? (
-            <div className="text-center py-8 text-slate-500 text-sm">No OT rooms configured yet — add one to get started.</div>
+            <div className="text-center py-8 text-slate-500 text-sm">No OT rooms configured yet — add one from Master Data.</div>
           ) : (
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             {otRooms.map((room) => (
@@ -546,21 +496,6 @@ export default function OperationTheatre() {
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <Select
-                    value={room.status?.toLowerCase()}
-                    onValueChange={(value) => handleRoomStatusChange(room.id, value)}
-                    disabled={roomStatusUpdating === room.id}
-                  >
-                    <SelectTrigger className="h-8 text-xs mb-3">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="available">Available</SelectItem>
-                      <SelectItem value="in_use">Occupied</SelectItem>
-                      <SelectItem value="cleaning">Cleaning</SelectItem>
-                      <SelectItem value="maintenance">Maintenance</SelectItem>
-                    </SelectContent>
-                  </Select>
                   {room.status?.toLowerCase() === 'in_use' && room.currentSurgery ? (
                     <div className="text-xs text-slate-600">{room.currentSurgery}</div>
                   ) : (
@@ -575,50 +510,6 @@ export default function OperationTheatre() {
           )}
         </CardContent>
       </Card>
-
-      {/* Add OT Room Dialog */}
-      <Dialog open={isAddRoomDialogOpen} onOpenChange={(open) => { setIsAddRoomDialogOpen(open); if (!open) setRoomFormData({ name: '', type: '', floor: '' }); }}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Add OT Room</DialogTitle>
-            <DialogDescription>Register a new operation theatre room to track in the system</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label>Room Name *</Label>
-              <Input
-                placeholder="OT-5"
-                value={roomFormData.name}
-                onChange={(e) => setRoomFormData({ ...roomFormData, name: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Type *</Label>
-              <Input
-                placeholder="General, Cardiac, Neuro, Orthopedic..."
-                value={roomFormData.type}
-                onChange={(e) => setRoomFormData({ ...roomFormData, type: e.target.value })}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Floor</Label>
-              <Input
-                placeholder="2nd Floor"
-                value={roomFormData.floor}
-                onChange={(e) => setRoomFormData({ ...roomFormData, floor: e.target.value })}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setIsAddRoomDialogOpen(false); setRoomFormData({ name: '', type: '', floor: '' }); }} disabled={loading}>
-              Cancel
-            </Button>
-            <Button onClick={handleAddOTRoom} disabled={loading}>
-              {loading ? 'Adding...' : 'Add Room'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Surgery Schedule */}
       <Card>
@@ -976,7 +867,7 @@ export default function OperationTheatre() {
                   <SelectContent>
                     {otRooms.length === 0 ? (
                       <SelectItem value="__none__" disabled>
-                        No OT rooms — use "Add OT Room" above to add one
+                        No OT rooms — add one from Master Data
                       </SelectItem>
                     ) : (
                       otRooms
