@@ -13,7 +13,7 @@ import { NextFunction, Request, Response, Router, RequestHandler } from 'express
 import bcrypt from 'bcryptjs';
 import { prisma } from './shared/prisma';
 import { authenticateToken } from './middleware';
-import { writeAudit } from './utils/audit';
+import { writeAudit, writeAuditMany } from './utils/audit';
 import { searchIcd10, getIcd10ByCode } from './data/icd10';
 import { createHash, randomBytes } from 'crypto';
 
@@ -2867,15 +2867,12 @@ clinicalModulesRouter.get('/mtp', auth, async (req: AuthedReq, res: Response) =>
       include: { patient: { select: { id: true, name: true, mrn: true } } },
     });
     // MTP Act confidentiality — log every read of the register, including
-    // the specific row IDs that the caller saw.
-    for (const r of rows) {
-      void writeAudit({
-        prisma, req,
-        action: 'MTP_READ',
-        resource: 'MTPRecord',
-        resourceId: r.id,
-      });
-    }
+    // the specific row IDs that the caller saw. Batched into one INSERT
+    // instead of one write per row (this list can return up to 200 rows).
+    void writeAuditMany({
+      prisma, req,
+      entries: rows.map((r) => ({ action: 'MTP_READ', resource: 'MTPRecord', resourceId: r.id })),
+    });
     res.json(rows);
   } catch (e: any) {
     console.error('list mtp', e);

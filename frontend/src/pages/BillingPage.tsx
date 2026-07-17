@@ -120,7 +120,7 @@ export default function BillingPage() {
 
   const fetchBills = async () => {
     try {
-      const response = await api.get('/api/billing');
+      const response = await api.get('/api/bills');
       setBills(response.data);
     } catch (error) {
       console.error('Error fetching bills:', error);
@@ -198,7 +198,7 @@ export default function BillingPage() {
         paymentMode: billFormData.paymentMode
       };
 
-      const response = await api.post('/api/billing', billData);
+      const response = await api.post('/api/bills', billData);
 
       const newBill: Bill = {
         id: response.data.id || Date.now().toString(),

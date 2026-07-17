@@ -525,6 +525,9 @@ model Order {
   patient     Patient    @relation(fields: [patientId], references: [id])
   results     Result[]
 
+  @@index([patientId])
+  @@index([orderType])
+  @@index([orderedAt])
   @@map("orders")
 }
 
@@ -580,6 +583,9 @@ model Invoice {
   journalEntries JournalEntry[]
   doctorRevenues DoctorRevenue[]
 
+  @@index([patientId])
+  @@index([status])
+  @@index([createdAt])
   @@map("invoices")
 }
 

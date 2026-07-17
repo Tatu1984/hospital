@@ -349,6 +349,7 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   'POST /api/invoices/:id/payment': ['invoices:payment'],
   'POST /api/invoices/:id/discount': ['invoices:discount'],
   'GET /api/bills': ['invoices:view'],
+  'POST /api/bills': ['invoices:create'],
   'GET /api/ipd-billing/:admissionId': ['billing:view'],
   'POST /api/ipd-billing': ['billing:create'],
   'POST /api/ipd-billing/:admissionId/pay': ['billing:payment'],
