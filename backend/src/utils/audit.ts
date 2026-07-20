@@ -98,3 +98,58 @@ export async function writeAudit({
     logger.warn('writeAudit failed', { action, resource, error: e?.message });
   }
 }
+
+interface WriteAuditManyParams {
+  prisma: PrismaClient;
+  req?: AuthedReq;
+  userId?: string | null;
+  tenantId?: string | null;
+  entries: Array<{
+    action: string;
+    resource: string;
+    resourceId?: string | null;
+    oldValue?: unknown;
+    newValue?: unknown;
+  }>;
+}
+
+/**
+ * Batched variant of writeAudit — one INSERT for many rows instead of one
+ * per row. Use when logging a set of events that share the same actor/
+ * tenant/request context (e.g. "log every row a confidential-register list
+ * returned") so a 200-row page view doesn't fire 200 individual writes.
+ * Same fire-and-forget semantics as writeAudit: never throws into the
+ * caller, logs to Winston on failure.
+ */
+export async function writeAuditMany({
+  prisma,
+  req,
+  userId,
+  tenantId,
+  entries,
+}: WriteAuditManyParams): Promise<void> {
+  if (entries.length === 0) return;
+  const resolvedTenantId = tenantId ?? req?.user?.tenantId ?? null;
+  if (!resolvedTenantId) {
+    logger.warn('writeAuditMany skipped: no tenantId available', { count: entries.length });
+    return;
+  }
+  try {
+    await prisma.auditLog.createMany({
+      data: entries.map((e) => ({
+        tenantId: resolvedTenantId,
+        userId: userId ?? req?.user?.userId ?? null,
+        performedBy: req?.user?.userId ?? null,
+        action: e.action,
+        resource: e.resource,
+        resourceId: e.resourceId ?? null,
+        oldValue: e.oldValue === undefined ? undefined : (e.oldValue as any),
+        newValue: e.newValue === undefined ? undefined : (e.newValue as any),
+        ipAddress: clientIp(req),
+        userAgent: (req?.headers?.['user-agent'] as string) ?? null,
+      })),
+    });
+  } catch (e: any) {
+    logger.warn('writeAuditMany failed', { count: entries.length, error: e?.message });
+  }
+}

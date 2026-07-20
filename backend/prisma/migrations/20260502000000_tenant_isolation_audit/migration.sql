@@ -117,7 +117,38 @@ WHERE l."employeeId" = e.id AND l."tenantId" IS NULL;
 DO $$
 DECLARE
   default_tenant TEXT;
+  needs_backfill BOOLEAN;
 BEGIN
+  -- On a brand-new install (fresh DB, CI test DB) every table below is
+  -- empty, so there's nothing to backfill — skip the guard entirely rather
+  -- than demanding a tenant exist before the schema has even finished
+  -- migrating. Only a live install with legacy NULL tenantId rows and no
+  -- tenant to attribute them to is a real misconfiguration worth failing on.
+  SELECT
+    EXISTS (SELECT 1 FROM "icu_beds"             WHERE "tenantId" IS NULL) OR
+    EXISTS (SELECT 1 FROM "icu_vitals"           WHERE "tenantId" IS NULL) OR
+    EXISTS (SELECT 1 FROM "housekeeping_tasks"   WHERE "tenantId" IS NULL) OR
+    EXISTS (SELECT 1 FROM "diet_orders"          WHERE "tenantId" IS NULL) OR
+    EXISTS (SELECT 1 FROM "ambulance_trips"      WHERE "tenantId" IS NULL) OR
+    EXISTS (SELECT 1 FROM "incidents"            WHERE "tenantId" IS NULL) OR
+    EXISTS (SELECT 1 FROM "feedbacks"            WHERE "tenantId" IS NULL) OR
+    EXISTS (SELECT 1 FROM "blood_donors"         WHERE "tenantId" IS NULL) OR
+    EXISTS (SELECT 1 FROM "blood_donations"      WHERE "tenantId" IS NULL) OR
+    EXISTS (SELECT 1 FROM "blood_inventory"      WHERE "tenantId" IS NULL) OR
+    EXISTS (SELECT 1 FROM "blood_requests"       WHERE "tenantId" IS NULL) OR
+    EXISTS (SELECT 1 FROM "blood_issuances"      WHERE "tenantId" IS NULL) OR
+    EXISTS (SELECT 1 FROM "employees"            WHERE "tenantId" IS NULL) OR
+    EXISTS (SELECT 1 FROM "employee_attendances" WHERE "tenantId" IS NULL) OR
+    EXISTS (SELECT 1 FROM "leave_requests"       WHERE "tenantId" IS NULL) OR
+    EXISTS (SELECT 1 FROM "inventory_items"      WHERE "tenantId" IS NULL) OR
+    EXISTS (SELECT 1 FROM "stocks"               WHERE "tenantId" IS NULL) OR
+    EXISTS (SELECT 1 FROM "purchase_orders"      WHERE "tenantId" IS NULL)
+  INTO needs_backfill;
+
+  IF NOT needs_backfill THEN
+    RETURN;
+  END IF;
+
   SELECT id INTO default_tenant FROM "tenants" ORDER BY "createdAt" ASC LIMIT 1;
   IF default_tenant IS NULL THEN
     RAISE EXCEPTION 'No tenant rows exist; run seed before this migration.';

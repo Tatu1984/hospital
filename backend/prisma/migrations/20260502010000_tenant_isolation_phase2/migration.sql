@@ -46,7 +46,24 @@ WHERE al."performedBy" = u.id AND al."tenantId" IS NULL;
 DO $$
 DECLARE
   default_tenant TEXT;
+  needs_backfill BOOLEAN;
 BEGIN
+  -- Fresh DB (no rows anywhere yet) has nothing to backfill — skip the
+  -- guard rather than demanding a tenant exist before the schema itself
+  -- has finished migrating. See 20260502000000_tenant_isolation_audit for
+  -- the same fix and rationale.
+  SELECT
+    EXISTS (SELECT 1 FROM "ambulance_vehicles" WHERE "tenantId" IS NULL) OR
+    EXISTS (SELECT 1 FROM "emergency_cases"    WHERE "tenantId" IS NULL) OR
+    EXISTS (SELECT 1 FROM "surgeries"          WHERE "tenantId" IS NULL) OR
+    EXISTS (SELECT 1 FROM "ot_rooms"           WHERE "tenantId" IS NULL) OR
+    EXISTS (SELECT 1 FROM "audit_logs"         WHERE "tenantId" IS NULL)
+  INTO needs_backfill;
+
+  IF NOT needs_backfill THEN
+    RETURN;
+  END IF;
+
   SELECT id INTO default_tenant FROM "tenants" ORDER BY "createdAt" ASC LIMIT 1;
   IF default_tenant IS NULL THEN
     RAISE EXCEPTION 'No tenant rows exist; run seed before this migration.';

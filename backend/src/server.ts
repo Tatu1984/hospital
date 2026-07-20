@@ -3260,6 +3260,19 @@ app.get('/api/appointments', authenticateToken, async (req: any, res: Response) 
       const cap = new Date(today);
       cap.setUTCDate(cap.getUTCDate() + 30);
       where.appointmentDate = { gte: today, lt: cap };
+    } else if (!patientId && !doctorId) {
+      // No date filter and no patient/doctor scope — an unbounded call like
+      // this would otherwise pull every appointment ever created for the
+      // tenant. Default to a 6-week operational window (2 weeks back, 4
+      // weeks ahead) so recent history stays visible without the query
+      // growing without bound as appointment history accumulates.
+      const today = new Date();
+      today.setUTCHours(0, 0, 0, 0);
+      const start = new Date(today);
+      start.setUTCDate(start.getUTCDate() - 14);
+      const end = new Date(today);
+      end.setUTCDate(end.getUTCDate() + 30);
+      where.appointmentDate = { gte: start, lt: end };
     }
     if (patientId) where.patientId = patientId;
     if (doctorId) where.doctorId = doctorId;
@@ -3272,6 +3285,10 @@ app.get('/api/appointments', authenticateToken, async (req: any, res: Response) 
         doctor: { select: { id: true, name: true } },
       },
       orderBy: [{ appointmentDate: 'asc' }, { appointmentTime: 'asc' }],
+      // Hard safety cap regardless of filters — a single patient/doctor with
+      // years of appointment history shouldn't be able to return an
+      // unbounded result set either.
+      take: 1000,
     });
 
     res.json(appointments);
@@ -7119,6 +7136,8 @@ app.get('/api/reports/dashboard', authenticateToken, async (req: any, res: Respo
 app.get('/api/bills', authenticateToken, async (req: any, res: Response) => {
   try {
     const invoices = await prisma.invoice.findMany({
+      // Invoice has no direct tenantId — scope through Patient.tenantId.
+      where: { patient: { tenantId: req.user.tenantId } },
       include: {
         patient: { select: { name: true, mrn: true } },
         payments: true,
@@ -7155,6 +7174,67 @@ app.get('/api/bills', authenticateToken, async (req: any, res: Response) => {
     res.json(bills);
   } catch (error) {
     console.error('Get bills error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Bills - alias for invoice creation. BillingPage.tsx builds its own bill
+// items (with a computed `total` per line, plus a flat discount/tax amount
+// rather than Invoice's per-item `amount`), so this maps that shape onto
+// Invoice.create instead of reusing POST /api/invoices directly.
+app.post('/api/bills', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { patientId, billType, items, discount, tax, paymentMode } = req.body;
+    if (!patientId) return res.status(400).json({ error: 'patientId is required' });
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'At least one bill item is required' });
+    }
+
+    const patient = await prisma.patient.findFirst({
+      where: { id: patientId, tenantId: req.user.tenantId },
+      select: { id: true, name: true, mrn: true },
+    });
+    if (!patient) return res.status(404).json({ error: 'Patient not found' });
+
+    const subtotal = items.reduce((sum: number, item: any) => sum + (Number(item.total) || 0), 0);
+    const discountAmt = Number(discount) || 0;
+    const taxAmt = Number(tax) || 0;
+    const total = subtotal - discountAmt + taxAmt;
+
+    const invoice = await prisma.invoice.create({
+      data: {
+        patientId: patient.id,
+        type: billType || 'OP',
+        items,
+        subtotal,
+        discount: discountAmt,
+        tax: taxAmt,
+        total,
+        balance: total,
+        status: 'draft',
+      },
+    });
+
+    res.status(201).json({
+      id: invoice.id,
+      billNo: `INV-${invoice.id.substring(0, 8)}`,
+      patientId: invoice.patientId,
+      patientName: patient.name,
+      patientMRN: patient.mrn,
+      billType: invoice.type,
+      items,
+      subtotal: Number(invoice.subtotal),
+      discount: Number(invoice.discount),
+      tax: Number(invoice.tax),
+      total: Number(invoice.total),
+      paid: 0,
+      balance: Number(invoice.balance),
+      status: 'Pending',
+      paymentMode: paymentMode || '',
+      date: invoice.createdAt.toISOString(),
+    });
+  } catch (error) {
+    console.error('Create bill error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
