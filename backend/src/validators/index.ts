@@ -565,7 +565,7 @@ export const ambulanceVehicleSchema = z.object({
 
 // Housekeeping validators
 export const housekeepingTaskSchema = z.object({
-  taskType: z.enum(['BED_CLEANING', 'ROOM_CLEANING', 'LINEN_CHANGE', 'WASTE_DISPOSAL', 'SANITIZATION', 'GENERAL_CLEANING']),
+  taskType: z.enum(['BED_CLEANING', 'ROOM_CLEANING', 'LINEN_CHANGE', 'WASTE_DISPOSAL', 'SANITIZATION', 'GENERAL_CLEANING', 'FLOOR_MOPPING', 'BATHROOM_CLEANING', 'DEEP_CLEANING']),
   location: z.string().min(1).max(200),
   bedId: idSchema.optional(),
   wardId: idSchema.optional(),
