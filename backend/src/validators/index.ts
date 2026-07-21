@@ -238,15 +238,12 @@ export const createInvoiceSchema = z.object({
   patientId: idSchema,
   encounterId: idSchema.optional(),
   admissionId: idSchema.optional(),
+  type: z.string().max(20).optional(),
   items: z.array(z.object({
-    description: z.string().min(1).max(200),
-    quantity: z.number().int().min(1).max(10000),
-    unitPrice: z.number().min(0).max(10000000),
-    discount: z.number().min(0).max(100).default(0),
-    taxRate: z.number().min(0).max(50).default(0),
+    name: z.string().min(1).max(200),
+    amount: z.number().min(0).max(10000000),
+    quantity: z.number().int().min(1).max(10000).optional(),
   })).min(1),
-  discountPercent: z.number().min(0).max(100).default(0),
-  notes: z.string().max(1000).optional(),
 });
 
 export const paymentSchema = z.object({
@@ -255,6 +252,15 @@ export const paymentSchema = z.object({
   paymentMode: z.enum(['CASH', 'CARD', 'UPI', 'CHEQUE', 'BANK_TRANSFER', 'INSURANCE']),
   referenceNumber: z.string().max(100).optional(),
   notes: z.string().max(500).optional(),
+});
+
+// Matches what PatientProfile.tsx's PaymentForm actually sends to
+// POST /api/invoices/:id/payment — invoiceId travels via the URL param, not
+// the body, and `mode` is lowercase (cash/card/upi/bank/cheque/tpa).
+export const invoicePaymentSchema = z.object({
+  amount: z.number().min(0.01).max(100000000),
+  mode: z.enum(['cash', 'card', 'upi', 'bank', 'cheque', 'tpa']),
+  transactionRef: z.string().max(100).optional(),
 });
 
 // Emergency validators. Optional fields accept null. Triage level uses a

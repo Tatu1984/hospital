@@ -43,6 +43,7 @@ import {
   radiologyResultSchema,
   createInvoiceSchema,
   paymentSchema,
+  invoicePaymentSchema,
   createEmergencySchema,
   scheduleSurgerySchema,
   bloodDonorSchema,
@@ -583,7 +584,7 @@ export const ROUTE_VALIDATORS: Record<string, z.ZodTypeAny> = {
 
   // Billing
   'POST /api/invoices': createInvoiceSchema,
-  'POST /api/invoices/:id/payment': paymentSchema,
+  'POST /api/invoices/:id/payment': invoicePaymentSchema,
   'POST /api/ipd-billing/:admissionId/pay': paymentSchema,
 
   // ICU
