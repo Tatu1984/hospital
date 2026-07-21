@@ -161,7 +161,13 @@ export default function Housekeeping() {
     }
 
     try {
-      await api.post('/api/housekeeping/tasks', taskForm);
+      const { area, assignedTo, scheduledTime, notes, ...rest } = taskForm;
+      const payload: Record<string, unknown> = { ...rest };
+      if (assignedTo) payload.assignedTo = assignedTo;
+      if (scheduledTime) payload.scheduledTime = new Date(scheduledTime).toISOString();
+      if (notes) payload.notes = notes;
+
+      await api.post('/api/housekeeping/tasks', payload);
       success('Task Created', 'Cleaning task has been created successfully');
       setShowAddTask(false);
       setTaskForm({
@@ -183,7 +189,13 @@ export default function Housekeeping() {
     if (!selectedTask) return;
 
     try {
-      await api.put(`/api/housekeeping/tasks/${selectedTask.id}`, taskForm);
+      const { area, assignedTo, scheduledTime, notes, ...rest } = taskForm;
+      const payload: Record<string, unknown> = { ...rest };
+      if (assignedTo) payload.assignedTo = assignedTo;
+      if (scheduledTime) payload.scheduledTime = new Date(scheduledTime).toISOString();
+      if (notes) payload.notes = notes;
+
+      await api.put(`/api/housekeeping/tasks/${selectedTask.id}`, payload);
       success('Task Updated', 'Cleaning task has been updated successfully');
       setShowEditTask(false);
       setSelectedTask(null);

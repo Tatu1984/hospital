@@ -197,11 +197,9 @@ describe('Billing Validators', () => {
         patientId: '550e8400-e29b-41d4-a716-446655440000',
         items: [
           {
-            description: 'Consultation Fee',
+            name: 'Consultation Fee',
+            amount: 500,
             quantity: 1,
-            unitPrice: 500,
-            discount: 0,
-            taxRate: 18,
           },
         ],
       });

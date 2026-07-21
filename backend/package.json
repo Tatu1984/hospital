@@ -42,6 +42,7 @@
   },
   "devDependencies": {
     "@prisma/client": "^5.7.1",
+    "@vitest/coverage-v8": "^4.1.10",
     "@types/bcryptjs": "^2.4.6",
     "@types/compression": "^1.8.1",
     "@types/cors": "^2.8.17",
