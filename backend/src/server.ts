@@ -53,6 +53,7 @@ import {
   requestId,
   metricsMiddleware,
   metricsSnapshot,
+  assertPHIEncryptionKeyOK,
 } from './middleware';
 
 // Import validators
@@ -171,18 +172,13 @@ if ((process.env.JWT_SECRET || '').length < 32) {
 }
 
 // PHI encryption key gate — blocks production boot if PHI_ENCRYPTION_KEY is
-// missing, weak, or reuses JWT_SECRET. Lazy-imported so this file doesn't
-// pull the hipaa middleware module before the env-var check above runs.
-{
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { assertPHIEncryptionKeyOK } = require('./middleware/hipaa');
-  try {
-    assertPHIEncryptionKeyOK();
-  } catch (e: any) {
-    // eslint-disable-next-line no-console
-    console.error(`❌ ${e.message}`);
-    process.exit(1);
-  }
+// missing, weak, or reuses JWT_SECRET.
+try {
+  assertPHIEncryptionKeyOK();
+} catch (e: any) {
+  // eslint-disable-next-line no-console
+  console.error(`❌ ${e.message}`);
+  process.exit(1);
 }
 
 const app = express();
