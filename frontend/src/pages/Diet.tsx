@@ -188,7 +188,7 @@ export default function Diet() {
 
   const handleUpdateOrderStatus = async (orderId: string, newStatus: string) => {
     try {
-      await api.put(`/api/diet/orders/${orderId}/status`, { status: newStatus });
+      await api.put(`/api/diet/orders/${orderId}`, { status: newStatus });
       success('Status Updated', `Order status updated to ${newStatus}`);
       fetchOrders();
     } catch (err: any) {
