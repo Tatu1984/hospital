@@ -584,7 +584,7 @@ export const housekeepingTaskSchema = z.object({
 // Diet validators
 export const dietOrderSchema = z.object({
   patientId: idSchema,
-  admissionId: idSchema,
+  admissionId: idSchema.optional(),
   dietType: z.enum(['REGULAR', 'SOFT', 'LIQUID', 'DIABETIC', 'LOW_SODIUM', 'RENAL', 'CARDIAC', 'NPO', 'CLEAR_LIQUID', 'FULL_LIQUID', 'HIGH_PROTEIN', 'LOW_FAT', 'GLUTEN_FREE', 'VEGETARIAN', 'CUSTOM']),
   mealType: z.enum(['BREAKFAST', 'LUNCH', 'DINNER', 'SNACK']),
   specialInstructions: z.string().max(1000).optional(),

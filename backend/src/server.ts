@@ -6792,13 +6792,13 @@ app.get('/api/diet/orders', authenticateToken, async (req: any, res: Response) =
       orderBy: { orderDate: 'desc' },
     });
 
-    res.json(orders.map((o: { patient: { name: any; mrn: any; }; orderDate: { toLocaleTimeString: () => any; }; }) => ({
+    res.json(orders.map((o: { patient: { name: any; mrn: any; }; orderDate: Date; }) => ({
       ...o,
       patientName: o.patient.name,
       patientMRN: o.patient.mrn,
       ward: 'Ward A', // Could be enriched with admission data
       bedNumber: 'Bed-1',
-      scheduledTime: o.orderDate.toLocaleTimeString(),
+      scheduledTime: o.orderDate.toISOString(),
     })));
   } catch (error) {
     console.error('Get diet orders error:', error);
