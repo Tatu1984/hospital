@@ -249,7 +249,7 @@ const MainLayout = () => {
                   <Stethoscope className="w-4 h-4 text-white" />
                 </div>
                 <div>
-                  <span className="font-semibold text-[15px] text-slate-900 tracking-tight">HospitalPro</span>
+                  <span className="font-semibold text-[15px] text-slate-900 tracking-tight">HospitalPros</span>
                 </div>
               </div>
               <Button
