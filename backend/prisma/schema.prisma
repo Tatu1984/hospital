@@ -681,8 +681,68 @@ model Drug {
   barcode     String? @unique
   rfidTag     String? @unique
   isActive    Boolean @default(true)
+  stockBatches DrugStock[]
 
   @@map("drugs")
+}
+
+// Batch-level pharmacy stock for a Drug — separate from the generic
+// InventoryItem-backed Stock model, since pharmacy batches carry
+// expiry/MRP/purchase-price fields the generic inventory model doesn't.
+model DrugStock {
+  id             String   @id @default(uuid())
+  tenantId       String
+  drugId         String
+  batchNumber    String
+  expiryDate     DateTime
+  quantity       Int
+  purchasePrice  Decimal  @db.Decimal(10, 2)
+  mrp            Decimal  @db.Decimal(10, 2)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  drug           Drug     @relation(fields: [drugId], references: [id])
+
+  @@index([tenantId])
+  @@index([drugId])
+  @@map("drug_stocks")
+}
+
+// Maps onto a pharmacy_sales table that already exists in the database
+// from a prior (reverted) migration — fields mirror the live columns
+// exactly rather than the desired shape, plus a new tenantId column.
+model PharmacySale {
+  id             String             @id @default(uuid())
+  tenantId       String
+  invoiceNumber  String             @unique
+  patientName    String?
+  patientMRN     String?
+  patientId      String?
+  prescriptionId String?
+  total          Decimal            @db.Decimal(10, 2)
+  paymentMode    String             @default("cash")
+  createdBy      String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  items          PharmacySaleItem[]
+
+  @@index([tenantId])
+  @@index([prescriptionId])
+  @@map("pharmacy_sales")
+}
+
+model PharmacySaleItem {
+  id          String       @id @default(uuid())
+  saleId      String
+  drugId      String
+  drugName    String
+  batchNumber String?
+  quantity    Int
+  unitPrice   Decimal      @db.Decimal(10, 2)
+  total       Decimal      @db.Decimal(10, 2)
+  sale        PharmacySale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@index([saleId])
+  @@map("pharmacy_sale_items")
 }
 
 model LabTestMaster {

@@ -68,6 +68,8 @@ import {
   labTestMasterSchema,
   procedureMasterSchema,
   wardMasterSchema,
+  pharmacyAddStockSchema,
+  pharmacySaleSchema,
 } from '../validators';
 
 // ============================================
@@ -325,6 +327,10 @@ export const ROUTE_PERMISSIONS: Record<string, Permission[]> = {
   'GET /api/drugs/by-tag': ['pharmacy:view'],
   'GET /api/pharmacy/drugs': ['pharmacy:view'],
   'GET /api/pharmacy/stock': ['pharmacy:view'],
+  'POST /api/pharmacy/stock': ['pharmacy:manage'],
+  'PUT /api/pharmacy/stock/:id': ['pharmacy:manage'],
+  'GET /api/pharmacy/sales': ['pharmacy:view'],
+  'POST /api/pharmacy/sales': ['pharmacy:dispense'],
   'GET /api/pharmacy/pending-prescriptions': ['pharmacy:dispense'],
 
   // Blood Bank
@@ -574,6 +580,9 @@ export const ROUTE_VALIDATORS: Record<string, z.ZodTypeAny> = {
   // Pharmacy / drugs
   'POST /api/drugs': drugMasterSchema,
   'PUT /api/drugs/:id': drugMasterSchema.partial(),
+  'POST /api/pharmacy/stock': pharmacyAddStockSchema,
+  'PUT /api/pharmacy/stock/:id': z.object({ quantity: z.coerce.number().int().min(0).max(1_000_000) }),
+  'POST /api/pharmacy/sales': pharmacySaleSchema,
 
   // Blood bank
   'POST /api/blood-bank/donors': bloodDonorSchema,

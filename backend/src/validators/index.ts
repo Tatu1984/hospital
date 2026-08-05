@@ -536,6 +536,53 @@ export const drugMasterSchema = z.object({
   rfidTag: z.string().trim().min(1).max(128).optional().nullable(),
 });
 
+// Pharmacy "Add Stock" dialog — creates one batch record for a drug.
+export const pharmacyAddStockSchema = z.object({
+  drugId: idSchema,
+  batchNumber: z.string().trim().min(1).max(50),
+  expiryDate: dateSchema,
+  quantity: z.preprocess(
+    (v) => (typeof v === 'string' && v ? Number(v) : v),
+    z.number().int().min(1).max(1_000_000)
+  ),
+  purchasePrice: z.preprocess(
+    (v) => (typeof v === 'string' && v ? Number(v) : v),
+    z.number().min(0).max(1_000_000).optional().nullable()
+  ),
+  mrp: z.preprocess(
+    (v) => (typeof v === 'string' && v ? Number(v) : v),
+    z.number().min(0).max(1_000_000)
+  ),
+});
+
+// Pharmacy POS checkout — one sale with one or more line items from the cart.
+export const pharmacySaleSchema = z.object({
+  patientName: z.string().trim().max(200).optional().nullable(),
+  patientMRN: z.string().trim().max(50).optional().nullable(),
+  paymentMode: z.enum(['cash', 'card', 'upi', 'insurance']).default('cash'),
+  items: z.array(z.object({
+    drugId: idSchema,
+    drugName: z.string().trim().min(1).max(200),
+    batchNumber: z.string().trim().max(50).optional().nullable(),
+    quantity: z.preprocess(
+      (v) => (typeof v === 'string' && v ? Number(v) : v),
+      z.number().int().min(1).max(10_000)
+    ),
+    unitPrice: z.preprocess(
+      (v) => (typeof v === 'string' && v ? Number(v) : v),
+      z.number().min(0).max(1_000_000)
+    ),
+    total: z.preprocess(
+      (v) => (typeof v === 'string' && v ? Number(v) : v),
+      z.number().min(0).max(10_000_000)
+    ),
+  })).min(1),
+  total: z.preprocess(
+    (v) => (typeof v === 'string' && v ? Number(v) : v),
+    z.number().min(0).max(10_000_000)
+  ),
+});
+
 // Ambulance validators
 // Trip create — kept loose because the handler accepts trips with no
 // assigned vehicle (assigned later via /:id/assign) and walk-in patients

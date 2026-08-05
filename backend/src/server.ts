@@ -7321,27 +7321,194 @@ app.get('/api/pharmacy/drugs', authenticateToken, async (req: any, res: Response
   }
 });
 
-// Pharmacy stock
+// Pharmacy stock — batch-level, backed by DrugStock
 app.get('/api/pharmacy/stock', authenticateToken, async (req: any, res: Response) => {
   try {
-    const drugs = await prisma.drug.findMany({
-      where: { isActive: true },
-      orderBy: { name: 'asc' },
+    const stock = await prisma.drugStock.findMany({
+      where: { tenantId: req.user.tenantId },
+      include: { drug: { select: { name: true } } },
+      orderBy: { expiryDate: 'asc' },
     });
 
-    res.json(drugs.map((d: { id: string; name: any; price: any; }) => ({
-      id: d.id,
-      drugId: d.id,
-      drugName: d.name,
-      drugCode: d.id.substring(0, 8).toUpperCase(),
-      batchNumber: `BATCH-${d.id.substring(0, 6)}`,
-      quantity: 100, // Placeholder
-      unitPrice: Number(d.price),
-      expiryDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-      supplier: 'Generic Supplier',
+    res.json(stock.map((s) => ({
+      id: s.id,
+      drugId: s.drugId,
+      drugName: s.drug.name,
+      batchNumber: s.batchNumber,
+      expiryDate: s.expiryDate.toISOString(),
+      quantity: s.quantity,
+      mrp: Number(s.mrp),
+      purchasePrice: Number(s.purchasePrice),
     })));
   } catch (error) {
     console.error('Get pharmacy stock error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/pharmacy/stock', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { drugId, batchNumber, expiryDate, quantity, purchasePrice, mrp } = req.body;
+
+    const drug = await prisma.drug.findUnique({ where: { id: drugId } });
+    if (!drug) {
+      return res.status(404).json({ error: 'Drug not found' });
+    }
+
+    const stock = await prisma.drugStock.create({
+      data: {
+        tenantId: req.user.tenantId,
+        drugId,
+        batchNumber,
+        expiryDate: new Date(expiryDate),
+        quantity,
+        purchasePrice: purchasePrice ?? 0,
+        mrp,
+      },
+    });
+
+    res.status(201).json({
+      id: stock.id,
+      drugId: stock.drugId,
+      drugName: drug.name,
+      batchNumber: stock.batchNumber,
+      expiryDate: stock.expiryDate.toISOString(),
+      quantity: stock.quantity,
+      mrp: Number(stock.mrp),
+      purchasePrice: Number(stock.purchasePrice),
+    });
+  } catch (error) {
+    console.error('Add pharmacy stock error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/pharmacy/stock/:id', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { quantity } = req.body;
+
+    const existing = await prisma.drugStock.findFirst({
+      where: { id, tenantId: req.user.tenantId },
+    });
+    if (!existing) {
+      return res.status(404).json({ error: 'Stock batch not found' });
+    }
+
+    const stock = await prisma.drugStock.update({
+      where: { id },
+      data: { quantity },
+    });
+
+    res.json({ id: stock.id, quantity: stock.quantity });
+  } catch (error) {
+    console.error('Update pharmacy stock error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Pharmacy sales (POS)
+app.get('/api/pharmacy/sales', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const sales = await prisma.pharmacySale.findMany({
+      where: { tenantId: req.user.tenantId },
+      include: { items: true },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    });
+
+    res.json(sales.map((s) => ({
+      id: s.id,
+      invoiceNumber: s.invoiceNumber,
+      patientName: s.patientName,
+      patientMRN: s.patientMRN,
+      items: s.items.map((i) => ({
+        drugId: i.drugId,
+        drugName: i.drugName,
+        batchNumber: i.batchNumber,
+        quantity: i.quantity,
+        unitPrice: Number(i.unitPrice),
+        total: Number(i.total),
+      })),
+      total: Number(s.total),
+      paymentMode: s.paymentMode,
+      timestamp: s.createdAt.toISOString(),
+    })));
+  } catch (error) {
+    console.error('Get pharmacy sales error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/pharmacy/sales', authenticateToken, async (req: any, res: Response) => {
+  try {
+    const { patientName, patientMRN, paymentMode, items, total } = req.body;
+    const invoiceNumber = `INV-${Date.now()}`;
+
+    const sale = await prisma.$transaction(async (tx) => {
+      const created = await tx.pharmacySale.create({
+        data: {
+          tenantId: req.user.tenantId,
+          invoiceNumber,
+          patientName: patientName || null,
+          patientMRN: patientMRN || null,
+          paymentMode,
+          total,
+          createdBy: req.user.id,
+          items: {
+            create: items.map((item: any) => ({
+              drugId: item.drugId,
+              drugName: item.drugName,
+              batchNumber: item.batchNumber || null,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              total: item.total,
+            })),
+          },
+        },
+        include: { items: true },
+      });
+
+      // Deplete stock FIFO by expiry for each sold drug.
+      for (const item of items) {
+        let remaining = item.quantity;
+        const batches = await tx.drugStock.findMany({
+          where: { tenantId: req.user.tenantId, drugId: item.drugId, quantity: { gt: 0 } },
+          orderBy: { expiryDate: 'asc' },
+        });
+        for (const batch of batches) {
+          if (remaining <= 0) break;
+          const deduct = Math.min(batch.quantity, remaining);
+          await tx.drugStock.update({
+            where: { id: batch.id },
+            data: { quantity: batch.quantity - deduct },
+          });
+          remaining -= deduct;
+        }
+      }
+
+      return created;
+    });
+
+    res.status(201).json({
+      id: sale.id,
+      invoiceNumber: sale.invoiceNumber,
+      patientName: sale.patientName,
+      patientMRN: sale.patientMRN,
+      items: sale.items.map((i) => ({
+        drugId: i.drugId,
+        drugName: i.drugName,
+        batchNumber: i.batchNumber,
+        quantity: i.quantity,
+        unitPrice: Number(i.unitPrice),
+        total: Number(i.total),
+      })),
+      total: Number(sale.total),
+      paymentMode: sale.paymentMode,
+      timestamp: sale.createdAt.toISOString(),
+    });
+  } catch (error) {
+    console.error('Create pharmacy sale error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
