@@ -5,6 +5,7 @@ import api from '../services/api';
 import { ErrorBoundary } from './ErrorBoundary';
 import AlertBanner from './AlertBanner';
 import RaiseAlarmButton from './RaiseAlarmButton';
+import LocationConsentGate from './LocationConsentGate';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -52,6 +53,7 @@ import {
   Trash2,
   Scale,
   Hash,
+  MapPin,
 } from 'lucide-react';
 
 // Roles for which the "My Earnings" finance entry shows in the sidebar.
@@ -221,6 +223,9 @@ const MainLayout = () => {
         // session derivation, failed-login dashboard, and per-user timeline.
         // Gated to ADMIN / QUALITY / management roles via rolePermissions.
         { path: '/activity-monitor', icon: Network, label: 'Activity Monitor' },
+        // IP tracking + login risk: per-login geolocation (IP + precise GPS),
+        // anomaly/risk scoring, active sessions, and location-consent state.
+        { path: '/login-security', icon: MapPin, label: 'Login Security' },
         { path: '/system-control', icon: ShieldCheck, label: 'System Control' },
       ]
     }
@@ -233,6 +238,9 @@ const MainLayout = () => {
 
   return (
     <div className="flex h-screen bg-slate-50/60 overflow-hidden">
+      {/* Precise-location consent prompt — shown once per session until the
+          user grants/denies; refreshes the fix silently when already granted. */}
+      <LocationConsentGate />
       {/* Sidebar — refreshed: narrower, tighter typography, subtle active state,
           dark-mode-friendly neutral palette. */}
       <aside

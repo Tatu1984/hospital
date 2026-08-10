@@ -77,6 +77,7 @@ const PatientChart = lazy(() => import('./pages/PatientChart'));
 const DoctorFinance = lazy(() => import('./pages/DoctorFinance'));
 const Dialysis = lazy(() => import('./pages/Dialysis'));
 const ActivityMonitor = lazy(() => import('./pages/ActivityMonitor'));
+const LoginSecurity = lazy(() => import('./pages/LoginSecurity'));
 const BirthRecords = lazy(() => import('./pages/BirthRecords'));
 const Consultations = lazy(() => import('./pages/Consultations'));
 const DrugCatalog = lazy(() => import('./pages/DrugCatalog'));
@@ -366,6 +367,7 @@ const AppRoutes = () => {
         <Route path="system-control" element={<RoleProtectedRoute path="system-control"><SystemControl /></RoleProtectedRoute>} />
         <Route path="audit-log" element={<RoleProtectedRoute path="audit-log"><AuditLog /></RoleProtectedRoute>} />
         <Route path="activity-monitor" element={<RoleProtectedRoute path="activity-monitor"><ActivityMonitor /></RoleProtectedRoute>} />
+        <Route path="login-security" element={<RoleProtectedRoute path="login-security"><LoginSecurity /></RoleProtectedRoute>} />
 
         {/* India compliance — Phase 3.
             Form-F (PCPNDT 1994) ultrasound register, MTP register, and

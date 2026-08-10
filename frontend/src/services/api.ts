@@ -135,14 +135,40 @@ api.interceptors.response.use(
   }
 );
 
+// Coarse client hints used for device fingerprinting + timezone-mismatch
+// detection on the backend. None of this is sensitive; it just sharpens the
+// login-security signals. The precise GPS fix is gathered separately (and only
+// with explicit consent) by LocationConsentGate.
+function collectClientContext() {
+  try {
+    return {
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      screen: typeof window !== 'undefined' && window.screen ? `${window.screen.width}x${window.screen.height}` : undefined,
+      language: typeof navigator !== 'undefined' ? navigator.language : undefined,
+      platform: typeof navigator !== 'undefined' ? (navigator as any).platform : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
 export const authAPI = {
   login: (username: string, password: string) =>
-    api.post('/api/auth/login', { username, password }),
+    api.post('/api/auth/login', { username, password, clientContext: collectClientContext() }),
   refresh: () => api.post('/api/auth/refresh', {}),
   logout: () => api.post('/api/auth/logout'),
   me: () => api.get('/api/auth/me'),
   changePassword: (currentPassword: string, newPassword: string) =>
     api.post('/api/auth/change-password', { currentPassword, newPassword }),
+};
+
+// Login-security / IP-tracking endpoints.
+export const securityAPI = {
+  getConsent: () => api.get('/api/auth/location-consent'),
+  setConsent: (body: { status: 'GRANTED' | 'DENIED'; latitude?: number; longitude?: number; accuracy?: number }) =>
+    api.post('/api/auth/location-consent', body),
+  loginSecurity: (limit = 300) => api.get('/api/admin/login-security', { params: { limit } }),
+  approveEvent: (id: string, label?: string) => api.post(`/api/admin/auth-events/${id}/approve`, { label }),
 };
 
 export const userAPI = {

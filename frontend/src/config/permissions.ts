@@ -198,7 +198,7 @@ export const rolePermissions: Record<Role, string[]> = {
 
   // QUALITY - Quality management
   QUALITY: [
-    '/', 'quality', 'mis-report', 'audit-log', 'activity-monitor',
+    '/', 'quality', 'mis-report', 'audit-log', 'activity-monitor', 'login-security',
     // Phase-2 clinical quality modules
     'hai-surveillance', 'mnm-reviews', 'nabh-dashboard', 'bmw-tracking',
   ],
@@ -227,7 +227,7 @@ export const rolePermissions: Record<Role, string[]> = {
     'equipment-maintenance',
     'billing', 'ipd-billing', 'tpa', 'referral-commission',
     'doctor-accounting', 'tally',
-    'mis-report', 'quality', 'audit-log', 'activity-monitor',
+    'mis-report', 'quality', 'audit-log', 'activity-monitor', 'login-security',
     'consultations',
     // Phase-2 quality / governance modules
     'implants', 'hai-surveillance', 'bmw-tracking', 'mnm-reviews', 'nabh-dashboard',
