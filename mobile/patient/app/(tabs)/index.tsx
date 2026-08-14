@@ -5,7 +5,7 @@ import { View, Text, ScrollView, ActivityIndicator, RefreshControl, TouchableOpa
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { MotiView } from 'moti';
-import { Calendar, Pill, Receipt, Radio, ChevronRight } from 'lucide-react-native';
+import { Calendar, Pill, Receipt, Radio, ChevronRight, Siren } from 'lucide-react-native';
 import { patientsAPI } from '@/lib/api';
 
 interface HomeData {
@@ -78,6 +78,16 @@ export default function HomeScreen() {
           />
         )}
 
+        {/* Always visible — ambulance requests need to be one tap away. */}
+        <DashboardCard
+          delay={75}
+          tone="emergency"
+          icon={<Siren color="white" size={20} />}
+          title="Request an ambulance"
+          subtitle="Emergency or scheduled transport"
+          onPress={() => router.push('/ambulance')}
+        />
+
         {/* Tap → Appointments tab if one exists, else Book screen. */}
         <DashboardCard
           delay={100}
@@ -120,11 +130,11 @@ interface DashboardCardProps {
   onPress: () => void;
   delay?: number;
   disabled?: boolean;
-  tone?: 'default' | 'urgent';
+  tone?: 'default' | 'urgent' | 'emergency';
 }
 
 function DashboardCard({ icon, title, subtitle, onPress, delay = 0, disabled, tone = 'default' }: DashboardCardProps) {
-  const bg = tone === 'urgent' ? 'bg-orange-500' : 'bg-primary-600';
+  const bg = tone === 'urgent' ? 'bg-orange-500' : tone === 'emergency' ? 'bg-destructive' : 'bg-primary-600';
   return (
     <MotiView
       from={{ opacity: 0, translateY: 12 }}

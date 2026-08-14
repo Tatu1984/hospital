@@ -28,6 +28,7 @@ import {
   Cake,
   Droplet,
   AlertTriangle,
+  History,
 } from 'lucide-react-native';
 import { useAuth } from '@/lib/auth';
 import { patientsAPI } from '@/lib/api';
@@ -159,6 +160,14 @@ export default function PatientProfileScreen() {
 
         {/* Action tiles */}
         <View className="mt-4 bg-white rounded-2xl overflow-hidden">
+          <Tile
+            icon={<History color="#0f1729" size={18} />}
+            tint="bg-primary-50"
+            label="Medical history"
+            sub="Visits, diagnoses, and doctors you've seen"
+            onPress={() => router.push('/medical-history')}
+          />
+          <Divider />
           <Tile
             icon={<Pencil color="#2563eb" size={18} />}
             tint="bg-blue-50"

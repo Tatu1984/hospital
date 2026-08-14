@@ -78,7 +78,22 @@ api.interceptors.response.use(
   },
 );
 
+export interface SignupPayload {
+  username: string;
+  password: string;
+  name: string;
+  email: string;
+  contact: string;
+  dob?: string | null;
+  gender?: string | null;
+  address?: string | null;
+  bloodGroup?: string | null;
+  allergies?: string | null;
+  emergencyContact?: string | null;
+}
+
 export const authAPI = {
+  signup: (data: SignupPayload) => api.post('/api/mobile/v1/auth/signup', data),
   login: (username: string, password: string) =>
     api.post('/api/mobile/v1/auth/login', { username, password, platform: 'ios' }),
   logout: () => api.post('/api/auth/logout').catch(() => undefined),
@@ -87,6 +102,7 @@ export const authAPI = {
 export const patientsAPI = {
   getMyHome: () => api.get('/api/mobile/v1/patients/me'),
   updateMyProfile: (data: any) => api.patch('/api/mobile/v1/patients/me', data),
+  getMyHistory: () => api.get('/api/mobile/v1/patients/me/history'),
 };
 
 export const appointmentsAPI = {
@@ -98,6 +114,17 @@ export const appointmentsAPI = {
     api.post('/api/mobile/v1/appointments', data),
   cancel: (id: string, reason?: string) =>
     api.post(`/api/mobile/v1/appointments/${id}/cancel`, { reason }),
+};
+
+export const ambulanceAPI = {
+  listMine: () => api.get('/api/mobile/v1/ambulance/trips'),
+  book: (data: {
+    pickupLocation: string;
+    dropLocation: string;
+    tripType: 'EMERGENCY' | 'TRANSFER' | 'DISCHARGE' | 'ROUTINE';
+    urgency: 'HIGH' | 'MEDIUM' | 'LOW';
+    notes?: string | null;
+  }) => api.post('/api/mobile/v1/ambulance/trips', data),
 };
 
 export const reportsAPI = {

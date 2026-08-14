@@ -14,6 +14,7 @@ router.use(authenticateToken);
 
 router.get('/me', controller.getMyHome);
 router.patch('/me', controller.updateMyProfile);
+router.get('/me/history', controller.getMyHistory);
 // Comprehensive patient chart — used by the doctor portal + doctor app.
 router.get('/:patientId/chart', controller.getChart);
 

@@ -91,6 +91,7 @@ export const PUBLIC_ROUTES: ReadonlySet<string> = new Set([
   'POST /api/auth/reset-password',
   // Mobile auth + health — public so unauth'd clients can get a token
   // and so monitoring can probe the mobile namespace without credentials.
+  'POST /api/mobile/v1/auth/signup',
   'POST /api/mobile/v1/auth/login',
   'POST /api/mobile/v1/auth/request-otp',
   'POST /api/mobile/v1/auth/verify-otp',

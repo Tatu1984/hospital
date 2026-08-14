@@ -10,6 +10,7 @@ import appointmentsRoutes from './appointments/appointment.routes';
 import reportsRoutes from './reports/report.routes';
 import ordersRoutes from './orders/order.routes';
 import doctorsRoutes from './doctors/doctor.routes';
+import ambulanceRoutes from './ambulance/ambulance.routes';
 
 const router = Router();
 
@@ -19,6 +20,7 @@ router.use('/appointments', appointmentsRoutes);
 router.use('/reports', reportsRoutes);
 router.use('/orders', ordersRoutes);
 router.use('/doctors', doctorsRoutes);
+router.use('/ambulance', ambulanceRoutes);
 
 // Health probe for the mobile namespace specifically — useful for canary
 // alerts that want to distinguish the mobile API from the desktop API.

@@ -8,6 +8,7 @@ const router = Router();
 // /api/mobile/v1/auth, and the global isPublicRoute() check in
 // routes/index.ts has matching entries so the auth middleware doesn't
 // reject these requests.
+router.post('/signup', controller.signup);
 router.post('/login', controller.loginWithPassword);
 router.post('/request-otp', controller.requestOtp);
 router.post('/verify-otp', controller.verifyOtp);

@@ -3,6 +3,7 @@
 // phone OTP" toggle that swaps the form.
 import { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Alert, KeyboardAvoidingView, Platform } from 'react-native';
+import { router } from 'expo-router';
 import { MotiView } from 'moti';
 import { Stethoscope } from 'lucide-react-native';
 import { useAuth } from '@/lib/auth';
@@ -80,6 +81,12 @@ export default function LoginScreen() {
           <Text className="text-center text-xs text-slate-400 mt-6">
             Phone-OTP login coming soon. Use your username and password for now.
           </Text>
+
+          <TouchableOpacity onPress={() => router.push('/signup')} className="mt-4">
+            <Text className="text-center text-sm text-slate-600">
+              New here? <Text className="text-primary-600 font-semibold">Create an account</Text>
+            </Text>
+          </TouchableOpacity>
         </MotiView>
       </View>
     </KeyboardAvoidingView>

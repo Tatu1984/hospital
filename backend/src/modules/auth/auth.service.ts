@@ -7,7 +7,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import * as repo from './auth.repository';
 import { getUserPermissions } from '../../rbac';
-import { MobileLoginInput, MobileLoginResponse } from './auth.model';
+import { MobileLoginInput, MobileLoginResponse, SignupInput } from './auth.model';
 import {
   checkAccountLockout,
   recordFailedLogin,
@@ -26,42 +26,28 @@ export class AccountLockedError extends Error {
     this.unlockAt = unlockAt;
   }
 }
+export class UsernameOrEmailTakenError extends Error {
+  constructor() { super('That username or email is already registered'); }
+}
 
 const DOCTOR_ROLE_IDS = new Set(['DOCTOR', 'CONSULTANT', 'SURGEON']);
 
-export async function loginWithPassword(input: MobileLoginInput): Promise<MobileLoginResponse> {
-  const user = await repo.findUserByUsername(input.username);
-  if (!user) throw new InvalidCredentialsError();
-
-  const lock = await checkAccountLockout(user.id);
-  if (lock.locked) throw new AccountLockedError(lock.unlockAt);
-
-  const ok = await bcrypt.compare(input.password, user.passwordHash);
-  if (!ok) {
-    await recordFailedLogin(user.id);
-    throw new InvalidCredentialsError();
-  }
-  await clearFailedLogins(user.id);
-
-  // Resolve linked Patient row, if any. Doctors won't have one; patient-app
-  // users will. Used by patient.controller.ts to decide which Patient to
-  // load on /me.
-  const linkedPatient = await repo.findLinkedPatient(user.tenantId, user.email);
-
+// Shared by login and signup — mints the same access/refresh token pair and
+// response shape for a given User row + its (possibly just-created) linked
+// Patient row.
+function issueTokens(
+  user: { id: string; username: string; tenantId: string; branchId: string; roleIds: string[]; extraPermissions?: string[] | null; revokedPermissions?: string[] | null; name: string; email: string },
+  linkedPatient: { id: string } | null,
+): MobileLoginResponse {
   const accessTokenPayload = {
     userId: user.id,
     username: user.username,
     tenantId: user.tenantId,
     branchId: user.branchId,
     roleIds: user.roleIds,
-    // Bake the user's per-user permission overrides into the access token
-    // so the route-level RBAC gate (dynamicRBAC) sees them on every
-    // request without a DB hit. Same trade-off as the desktop login.
     extraPermissions: user.extraPermissions || [],
     revokedPermissions: user.revokedPermissions || [],
     patientId: linkedPatient?.id || null,
-    // Mobile flag so the auth middleware can branch its rate-limit / refresh
-    // policy if we add per-platform tuning later. Harmless if unused.
     plat: 'mobile' as const,
   };
   const token = jwt.sign(
@@ -74,8 +60,6 @@ export async function loginWithPassword(input: MobileLoginInput): Promise<Mobile
     process.env.REFRESH_TOKEN_SECRET!,
     { expiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || '30d' } as jwt.SignOptions,
   );
-
-  // lastLoginAt is already stamped inside clearFailedLogins above.
 
   const isDoctor = user.roleIds.some((r) => DOCTOR_ROLE_IDS.has(r));
   const isPatient = !!linkedPatient;
@@ -97,4 +81,50 @@ export async function loginWithPassword(input: MobileLoginInput): Promise<Mobile
       isPatient,
     },
   };
+}
+
+export async function signup(input: SignupInput): Promise<MobileLoginResponse> {
+  const taken = await repo.usernameOrEmailTaken(input.username, input.email);
+  if (taken) throw new UsernameOrEmailTakenError();
+
+  const passwordHash = await bcrypt.hash(input.password, 10);
+  const { user, patient } = await repo.createPatientAccount({
+    username: input.username,
+    passwordHash,
+    name: input.name,
+    email: input.email,
+    contact: input.contact,
+    dob: input.dob,
+    gender: input.gender,
+    address: input.address,
+    bloodGroup: input.bloodGroup,
+    allergies: input.allergies,
+    emergencyContact: input.emergencyContact,
+  });
+
+  return issueTokens(user, patient);
+}
+
+export async function loginWithPassword(input: MobileLoginInput): Promise<MobileLoginResponse> {
+  const user = await repo.findUserByUsername(input.username);
+  if (!user) throw new InvalidCredentialsError();
+
+  const lock = await checkAccountLockout(user.id);
+  if (lock.locked) throw new AccountLockedError(lock.unlockAt);
+
+  const ok = await bcrypt.compare(input.password, user.passwordHash);
+  if (!ok) {
+    await recordFailedLogin(user.id);
+    throw new InvalidCredentialsError();
+  }
+  await clearFailedLogins(user.id);
+
+  // Resolve linked Patient row, if any. Doctors won't have one; patient-app
+  // users will. Used by patient.controller.ts to decide which Patient to
+  // load on /me.
+  const linkedPatient = await repo.findLinkedPatient(user.tenantId, user.email);
+
+  // lastLoginAt is already stamped inside clearFailedLogins above.
+
+  return issueTokens(user, linkedPatient);
 }

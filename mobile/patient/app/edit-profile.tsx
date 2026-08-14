@@ -108,7 +108,7 @@ export default function EditProfileScreen() {
         <TouchableOpacity
           onPress={save}
           disabled={saving}
-          className="bg-blue-600 px-4 py-2 rounded-xl flex-row items-center"
+          className="bg-primary-600 px-4 py-2 rounded-xl flex-row items-center"
         >
           {saving ? (
             <ActivityIndicator color="white" size="small" />

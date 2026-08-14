@@ -77,7 +77,9 @@ export default function BookScreen() {
         type: 'consultation',
         reason: reason.trim() || undefined,
       });
-      router.back();
+      Alert.alert('Appointment booked', 'Your appointment request has been sent.', [
+        { text: 'OK', onPress: () => router.back() },
+      ]);
     } catch (e: any) {
       Alert.alert('Booking failed', e?.response?.data?.error || 'Try again.');
     } finally {
@@ -96,7 +98,10 @@ export default function BookScreen() {
         {/* Step 1 — doctor */}
         <Text className="text-xs uppercase tracking-wide font-semibold text-slate-500 mb-2">1. Choose doctor</Text>
         {loadingDoctors ? (
-          <ActivityIndicator color="#2563eb" />
+          <View className="bg-white rounded-xl p-4 flex-row items-center">
+            <ActivityIndicator color="#0f1729" />
+            <Text className="ml-3 text-sm text-slate-500">Loading doctors…</Text>
+          </View>
         ) : doctors.length === 0 ? (
           <View className="bg-white rounded-xl p-4">
             <Text className="text-sm text-slate-500">No doctors available right now.</Text>
@@ -110,7 +115,7 @@ export default function BookScreen() {
                 onPress={() => setDoctorId(d.id)}
                 className={`rounded-xl p-4 mb-2 flex-row items-center ${selected ? 'bg-primary-600' : 'bg-white'}`}
               >
-                <Stethoscope color={selected ? 'white' : '#2563eb'} size={20} />
+                <Stethoscope color={selected ? 'white' : '#0f1729'} size={20} />
                 <View className="flex-1 ml-3">
                   <Text className={`font-semibold ${selected ? 'text-white' : 'text-slate-900'}`}>{d.name}</Text>
                   {d.speciality && <Text className={`text-xs mt-0.5 ${selected ? 'text-white/80' : 'text-slate-500'}`}>{d.speciality}</Text>}
@@ -147,7 +152,10 @@ export default function BookScreen() {
           <MotiView from={{ opacity: 0, translateY: 8 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 250 }}>
             <Text className="text-xs uppercase tracking-wide font-semibold text-slate-500 mt-6 mb-2">3. Pick a slot</Text>
             {loadingSlots ? (
-              <ActivityIndicator color="#2563eb" />
+              <View className="bg-white rounded-xl p-4 flex-row items-center">
+                <ActivityIndicator color="#0f1729" />
+                <Text className="ml-3 text-sm text-slate-500">Checking available slots…</Text>
+              </View>
             ) : slots && slots.length === 0 ? (
               <View className="bg-white rounded-xl p-4">
                 <Text className="text-sm text-slate-500">No slots available on this day. Try another date.</Text>

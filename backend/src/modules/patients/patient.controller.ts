@@ -55,6 +55,26 @@ export async function updateMyProfile(req: AuthedReq, res: Response) {
   }
 }
 
+// Patient-side medical history / timeline. Same aggregation as getChart
+// below (encounters, admissions, diagnoses, doctors-visited rollup) but
+// self-scoped via req.user.patientId instead of a URL param + RBAC
+// permission, so a patient can only ever read their own record.
+export async function getMyHistory(req: AuthedReq, res: Response) {
+  try {
+    const tenantId = req.user!.tenantId;
+    const patientId = req.user!.patientId;
+    if (!patientId) return res.status(403).json({ error: 'This account is not linked to a patient profile' });
+
+    const dto = await service.getChart(tenantId, patientId);
+    res.json(dto);
+  } catch (err: any) {
+    if (err instanceof PatientNotFoundError) return res.status(404).json({ error: err.message });
+    // eslint-disable-next-line no-console
+    console.error('getMyHistory error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
 // Doctor-side comprehensive chart. The patient id comes from the URL —
 // any user with the patients:view permission can fetch (RBAC is enforced
 // upstream by the routes/index.ts entry).

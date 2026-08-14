@@ -5,22 +5,24 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        // Same accent palette as the web portal so the patient app feels
-        // like the same product. Override `primary` once the client provides
-        // their final brand colour (mid-late May 2026 per project plan).
+        // Matches the web portal's slate theme (frontend/src/index.css
+        // --primary: hsl(222 47% 11%) and --destructive: hsl(0 72% 51%)).
         primary: {
-          50: '#eff6ff',
-          100: '#dbeafe',
-          500: '#3b82f6',
-          600: '#2563eb',
-          700: '#1d4ed8',
-          900: '#1e3a8a',
+          50: '#f8fafc',
+          100: '#f1f5f9',
+          500: '#334155',
+          600: '#0f1729',
+          700: '#0b1220',
+          900: '#020617',
         },
+        secondary: '#f1f5f9',
+        destructive: '#dc2828',
+        muted: '#64748b',
+        border: '#e2e8f0',
       },
       fontFamily: {
-        // System fonts for now — once branding lands we can ship a custom
-        // font via expo-font and update this list in one place.
-        sans: ['System'],
+        // Same family as the web portal (frontend/src/index.css).
+        sans: ['Inter_400Regular'],
       },
     },
   },

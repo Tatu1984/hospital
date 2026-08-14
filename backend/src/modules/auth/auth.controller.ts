@@ -1,7 +1,23 @@
 import { Request, Response } from 'express';
 import * as service from './auth.service';
-import { InvalidCredentialsError, AccountLockedError } from './auth.service';
-import { mobileLoginSchema, requestOtpSchema, verifyOtpSchema } from './auth.model';
+import { InvalidCredentialsError, AccountLockedError, UsernameOrEmailTakenError } from './auth.service';
+import { mobileLoginSchema, requestOtpSchema, verifyOtpSchema, signupSchema } from './auth.model';
+
+export async function signup(req: Request, res: Response) {
+  try {
+    const parsed = signupSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid input', details: parsed.error.flatten() });
+    }
+    const result = await service.signup(parsed.data);
+    res.status(201).json(result);
+  } catch (err: any) {
+    if (err instanceof UsernameOrEmailTakenError) return res.status(409).json({ error: err.message });
+    // eslint-disable-next-line no-console
+    console.error('mobile signup error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
 
 export async function loginWithPassword(req: Request, res: Response) {
   try {

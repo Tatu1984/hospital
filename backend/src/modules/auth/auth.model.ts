@@ -28,6 +28,28 @@ export const verifyOtpSchema = z.object({
 });
 export type VerifyOtpInput = z.infer<typeof verifyOtpSchema>;
 
+// Self-signup — a new patient creating their own account + Patient record
+// from the mobile app, mirroring the fields staff fill in on the desktop
+// registration form (frontend/src/pages/PatientRegistration.tsx).
+const phoneRegex = /^[+]?[\d\s-]{10,15}$/;
+
+export const signupSchema = z.object({
+  username: z.string().min(3).max(50),
+  password: z.string().min(6).max(100),
+  name: z.string().min(1).max(200),
+  email: z.string().email('Invalid email'),
+  contact: z.string().regex(phoneRegex, 'Invalid phone number'),
+  dob: z.string().optional().nullable(),
+  gender: z.string().optional().nullable(),
+  address: z.string().max(500).optional().nullable(),
+  bloodGroup: z.string().max(10).optional().nullable(),
+  allergies: z.string().max(1000).optional().nullable(),
+  emergencyContact: z.string().max(200).optional().nullable(),
+  deviceId: z.string().max(200).optional(),
+  platform: z.enum(['ios', 'android']).optional(),
+});
+export type SignupInput = z.infer<typeof signupSchema>;
+
 export interface MobileLoginResponse {
   token: string;
   refreshToken: string;

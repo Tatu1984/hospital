@@ -1,7 +1,7 @@
 // Auth store using zustand. Tracks the logged-in user + a hydration flag so
 // the root layout can show a splash until SecureStore has been read.
 import { create } from 'zustand';
-import { authAPI, tokens } from './api';
+import { authAPI, tokens, SignupPayload } from './api';
 
 export interface MobileUser {
   id: string;
@@ -22,6 +22,7 @@ interface AuthState {
   hydrated: boolean;
   hydrate: () => Promise<void>;
   login: (username: string, password: string) => Promise<void>;
+  signup: (data: SignupPayload) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -38,6 +39,12 @@ export const useAuth = create<AuthState>((set) => ({
   },
   async login(username, password) {
     const res = await authAPI.login(username, password);
+    const { token, refreshToken, user } = res.data;
+    await tokens.set(token, refreshToken);
+    set({ user, hydrated: true });
+  },
+  async signup(data) {
+    const res = await authAPI.signup(data);
     const { token, refreshToken, user } = res.data;
     await tokens.set(token, refreshToken);
     set({ user, hydrated: true });

@@ -108,7 +108,7 @@ export default function ChangePasswordScreen() {
           <TouchableOpacity
             onPress={save}
             disabled={saving}
-            className="mt-4 bg-blue-600 rounded-2xl p-4 flex-row items-center justify-center"
+            className="mt-4 bg-primary-600 rounded-2xl p-4 flex-row items-center justify-center"
           >
             {saving ? (
               <ActivityIndicator color="white" />
